@@ -4495,6 +4495,7 @@ function TeamGate({ onLinked }) {
   const [checking, setChecking] = useState(false);
   const [codeTaken, setCodeTaken] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [joinError, setJoinError] = useState("");
 
   const wrap = {
     minHeight: "100vh",
@@ -4566,6 +4567,29 @@ function TeamGate({ onLinked }) {
     }
   };
 
+  // Join has to verify the team actually exists first — otherwise a typo'd
+  // code would silently start a brand-new blank team instead of telling the
+  // coach it couldn't find the one they meant to join.
+  const checkAndJoin = async () => {
+    const code = joinInput.trim();
+    if (!code) return;
+    setChecking(true);
+    setJoinError("");
+    try {
+      const ref = doc(db, "teams", code, "data", "main");
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        setJoinError("No team found with that code — double-check it and try again.");
+        setChecking(false);
+        return;
+      }
+      onLinked(code);
+    } catch (err) {
+      setJoinError("Couldn't check that code — check your connection and try again.");
+      setChecking(false);
+    }
+  };
+
   return (
     <div style={wrap}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Inter:wght@400;600;700&display=swap');`}</style>
@@ -4578,7 +4602,7 @@ function TeamGate({ onLinked }) {
             <button style={bigBtn} onClick={() => setMode("create")}>
               Create New Team
             </button>
-            <button style={{ ...bigBtn, border: `1.5px solid ${COLORS.line}`, background: "none" }} onClick={() => setMode("join")}>
+            <button style={{ ...bigBtn, border: `1.5px solid ${COLORS.line}`, background: "none" }} onClick={() => { setJoinInput(""); setJoinError(""); setMode("join"); }}>
               Join Existing Team
             </button>
           </>
@@ -4649,15 +4673,18 @@ function TeamGate({ onLinked }) {
             <input
               autoFocus
               value={joinInput}
-              onChange={(e) => setJoinInput(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === "Enter" && joinInput.trim() && onLinked(joinInput.trim())}
+              onChange={(e) => {
+                setJoinInput(e.target.value.toUpperCase());
+                setJoinError("");
+              }}
+              onKeyDown={(e) => e.key === "Enter" && !checking && joinInput.trim() && checkAndJoin()}
               placeholder="ABC-1234"
               style={{
                 width: "100%",
                 padding: "13px 14px",
-                marginBottom: 12,
+                marginBottom: 8,
                 background: COLORS.bgRaised,
-                border: `1.5px solid ${COLORS.line}`,
+                border: `1.5px solid ${joinError ? COLORS.red : COLORS.line}`,
                 borderRadius: 8,
                 color: COLORS.chalk,
                 fontSize: 18,
@@ -4666,12 +4693,17 @@ function TeamGate({ onLinked }) {
                 textAlign: "center",
               }}
             />
+            {joinError && (
+              <div style={{ color: COLORS.red, fontSize: 11, marginBottom: 10, textAlign: "center" }}>
+                {joinError}
+              </div>
+            )}
             <button
-              style={bigBtn}
-              disabled={!joinInput.trim()}
-              onClick={() => joinInput.trim() && onLinked(joinInput.trim())}
+              style={{ ...bigBtn, marginTop: joinError ? 0 : 4 }}
+              disabled={checking || !joinInput.trim()}
+              onClick={checkAndJoin}
             >
-              Join
+              {checking ? "Checking…" : "Join"}
             </button>
             <button style={backBtn} onClick={() => setMode("choice")}>
               Back
