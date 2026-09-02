@@ -1363,8 +1363,12 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               <input
                 placeholder="#"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={3}
                 value={playerForm.num}
-                onChange={(e) => setPlayerForm((s) => ({ ...s, num: e.target.value }))}
+                onChange={(e) => setPlayerForm((s) => ({ ...s, num: e.target.value.replace(/[^0-9]/g, "") }))}
                 style={{
                   width: 56,
                   padding: "9px 10px",
@@ -3297,8 +3301,12 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               <input
                 placeholder="#"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={3}
                 value={playerForm.num}
-                onChange={(e) => setPlayerForm((s) => ({ ...s, num: e.target.value }))}
+                onChange={(e) => setPlayerForm((s) => ({ ...s, num: e.target.value.replace(/[^0-9]/g, "") }))}
                 style={{
                   width: 56,
                   padding: "9px 10px",
