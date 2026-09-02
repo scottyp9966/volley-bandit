@@ -13,7 +13,7 @@ import { db } from "./firebase.js";
 // were already unlocked with the old password — will be asked for the new
 // one the next time they open the app. Leave it as "" to disable the lock
 // entirely (the app opens with no passcode screen at all).
-const APP_PASSCODE = "";
+const APP_PASSCODE = "volley26";
 
 const COLORS = {
   bg: "#1C2128",
