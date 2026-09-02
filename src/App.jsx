@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon } from "lucide-react";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 
 // ---- Design tokens ----
@@ -4485,9 +4485,12 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, setNum
 // that hasn't been linked to a team yet ----
 function TeamGate({ onLinked }) {
   const [mode, setMode] = useState("choice"); // "choice" | "create" | "join"
-  const [newCode] = useState(() => generateTeamCode());
+  const [codeInput, setCodeInput] = useState(() => generateTeamCode());
   const [joinInput, setJoinInput] = useState("");
   const [copied, setCopied] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [codeTaken, setCodeTaken] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   const wrap = {
     minHeight: "100vh",
@@ -4530,6 +4533,35 @@ function TeamGate({ onLinked }) {
     fontSize: 12,
   };
 
+  // A code someone can actually remember beats a random one — but two teams
+  // can't share a code, so this checks Firestore before letting them continue.
+  const normalizeCode = (raw) =>
+    raw
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, "")
+      .slice(0, 24);
+
+  const checkAndCreate = async () => {
+    const code = codeInput.trim();
+    if (!code) return;
+    setChecking(true);
+    setCreateError("");
+    setCodeTaken(false);
+    try {
+      const ref = doc(db, "teams", code, "data", "main");
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        setCodeTaken(true);
+        setChecking(false);
+        return;
+      }
+      onLinked(code);
+    } catch (err) {
+      setCreateError("Couldn't check that code — check your connection and try again.");
+      setChecking(false);
+    }
+  };
+
   return (
     <div style={wrap}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Inter:wght@400;600;700&display=swap');`}</style>
@@ -4551,37 +4583,55 @@ function TeamGate({ onLinked }) {
         {mode === "create" && (
           <>
             <div style={sub}>
-              This is your team's code. Write it down or copy it — you'll need it to link any
-              other device (a tablet, an assistant coach's phone) to this same data.
+              Pick something you'll actually remember — a team name works well (like
+              GRAFTON-JV2). We've started you off with a random one below; feel free to
+              replace it. You'll need this code to link any other device to this same data.
             </div>
-            <div
-              style={{
-                textAlign: "center",
-                fontFamily: "'Oswald', sans-serif",
-                fontSize: 28,
-                fontWeight: 700,
-                letterSpacing: 2,
-                color: COLORS.orange,
-                background: COLORS.bgRaised,
-                border: `1px solid ${COLORS.line}`,
-                borderRadius: 10,
-                padding: "16px 8px",
-                marginBottom: 12,
+            <input
+              autoFocus
+              value={codeInput}
+              onChange={(e) => {
+                setCodeInput(normalizeCode(e.target.value));
+                setCodeTaken(false);
+                setCreateError("");
               }}
-            >
-              {newCode}
-            </div>
+              onKeyDown={(e) => e.key === "Enter" && !checking && checkAndCreate()}
+              style={{
+                width: "100%",
+                padding: "14px 10px",
+                marginBottom: 8,
+                background: COLORS.bgRaised,
+                border: `1.5px solid ${codeTaken ? COLORS.red : COLORS.line}`,
+                borderRadius: 10,
+                color: COLORS.orange,
+                fontSize: 22,
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                textAlign: "center",
+              }}
+            />
+            {codeTaken && (
+              <div style={{ color: COLORS.red, fontSize: 11, marginBottom: 10, textAlign: "center" }}>
+                That code's already taken — try another.
+              </div>
+            )}
+            {createError && (
+              <div style={{ color: COLORS.red, fontSize: 11, marginBottom: 10, textAlign: "center" }}>
+                {createError}
+              </div>
+            )}
             <button
               onClick={() => {
-                navigator.clipboard?.writeText(newCode);
+                navigator.clipboard?.writeText(codeInput);
                 setCopied(true);
               }}
-              style={{ ...bigBtn, border: `1.5px solid ${COLORS.line}`, background: "none", marginBottom: 16 }}
+              style={{ ...bigBtn, border: `1.5px solid ${COLORS.line}`, background: "none", marginTop: codeTaken || createError ? 0 : 4, marginBottom: 16 }}
             >
               {copied ? "Copied!" : "Copy Code"}
             </button>
-            <button style={bigBtn} onClick={() => onLinked(newCode)}>
-              Continue
+            <button style={bigBtn} disabled={checking || !codeInput.trim()} onClick={checkAndCreate}>
+              {checking ? "Checking…" : "Continue"}
             </button>
             <button style={backBtn} onClick={() => setMode("choice")}>
               Back
