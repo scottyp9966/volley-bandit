@@ -1382,6 +1382,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 autoFocus
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   padding: "9px 10px",
                   background: COLORS.bg,
                   border: `1px solid ${COLORS.line}`,
@@ -1396,6 +1397,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 onChange={(e) => setPlayerForm((s) => ({ ...s, lastName: e.target.value }))}
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   padding: "9px 10px",
                   background: COLORS.bg,
                   border: `1px solid ${COLORS.line}`,
@@ -3314,6 +3316,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 autoFocus
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   padding: "9px 10px",
                   background: COLORS.bg,
                   border: `1px solid ${COLORS.line}`,
@@ -3328,6 +3331,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 onChange={(e) => setPlayerForm((s) => ({ ...s, lastName: e.target.value }))}
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   padding: "9px 10px",
                   background: COLORS.bg,
                   border: `1px solid ${COLORS.line}`,
