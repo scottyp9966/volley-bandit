@@ -1520,7 +1520,46 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       {serveReceiveOpen && (() => {
         const layout = computeServeReceive(roleSystem.system, roleSystem.roles, fillRotation);
         const liberoPlayer = roleSystem.roles.L ? playerFor(roleSystem.roles.L) : null;
-        const positions = ["P4", "P3", "P2", "P5", "P6", "P1"];
+
+        // Rough real-court coordinates per rotational slot (0-100, y=0 at the
+        // net) — this is what actually shows alignment, unlike 6 equal boxes.
+        const BASE_COORD = {
+          P4: { x: 16, y: 14 },
+          P3: { x: 50, y: 10 },
+          P2: { x: 84, y: 14 },
+          P5: { x: 16, y: 58 },
+          P6: { x: 50, y: 62 },
+          P1: { x: 84, y: 58 },
+        };
+        const NET_TARGET = { x: 80, y: 24 }; // where the setter releases to
+
+        const roles = Object.keys(layout.roleAtPos).map((pos) => ({ pos, role: layout.roleAtPos[pos] }));
+        // Passers cluster into a receive line, ordered left-to-right by their
+        // natural court position, regardless of whether that role is
+        // currently front or back row.
+        const passersSorted = [...layout.passerRoles].sort(
+          (a, b) => BASE_COORD[layout.posOfRole[a]].x - BASE_COORD[layout.posOfRole[b]].x
+        );
+        const RECEIVE_Y = 78;
+        const RECEIVE_X = [22, 50, 78];
+
+        const markers = roles.map(({ pos, role }) => {
+          const isLiberoSlot = role === layout.backMBRole;
+          const playerId = isLiberoSlot && liberoPlayer ? roleSystem.roles.L : roleSystem.roles[role];
+          const player = playerFor(playerId);
+          const isPasser = layout.passerRoles.includes(role);
+          const isSetter = role === layout.activeSetterRole;
+          const isBackAttack = layout.backRowAttackRoles.includes(role);
+          let coord = BASE_COORD[pos];
+          if (isPasser) {
+            const idx = passersSorted.indexOf(role);
+            coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
+          } else if (isSetter) {
+            coord = NET_TARGET;
+          }
+          return { pos, role, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos] };
+        });
+
         return (
           <div
             onClick={() => setServeReceiveOpen(false)}
@@ -1556,78 +1595,122 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 {roleSystem.system}
                 {layout.isAlternate ? " · alternate pattern (rotations 1 & 3)" : ""}
               </div>
-              <div style={{ display: "flex", gap: 10, fontSize: 10, color: COLORS.chalkDim, marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 10, fontSize: 10, color: COLORS.chalkDim, marginBottom: 10 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.blue, display: "inline-block" }} />
                   Passer
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.gold, display: "inline-block" }} />
-                  Setter
+                  Setter (moves to net)
                 </span>
               </div>
 
-              <div style={{ textAlign: "center", fontSize: 9, letterSpacing: 2, color: COLORS.chalkDim, marginBottom: 8, textTransform: "uppercase" }}>
-                — net —
-              </div>
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateAreas: `"p4 p3 p2" "p5 p6 p1"`,
-                  gridTemplateColumns: "1fr 1fr 1fr",
-                  gap: 8,
+                  position: "relative",
+                  width: "100%",
+                  aspectRatio: "0.82",
+                  border: `1.5px solid ${COLORS.line}`,
+                  borderRadius: 10,
+                  background: COLORS.bg,
                   marginBottom: 16,
                 }}
               >
-                {positions.map((pos) => {
-                  let role = layout.roleAtPos[pos];
-                  const isLiberoSlot = role === layout.backMBRole;
-                  const playerId = isLiberoSlot && liberoPlayer ? roleSystem.roles.L : roleSystem.roles[role];
-                  const player = playerFor(playerId);
-                  const isPasser = layout.passerRoles.includes(role);
-                  const isSetter = role === layout.activeSetterRole;
-                  const isBackAttack = layout.backRowAttackRoles.includes(role);
-                  const borderColor = isSetter ? COLORS.gold : isPasser ? COLORS.blue : COLORS.line;
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    borderTop: `3px solid ${COLORS.chalkDim}`,
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    top: -14,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    fontSize: 8,
+                    letterSpacing: 2,
+                    color: COLORS.chalkDim,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Net
+                </div>
+
+                {/* Movement line: setter's rotational spot → net target */}
+                {markers
+                  .filter((m) => m.isSetter)
+                  .map((m) => (
+                    <svg key={`line-${m.pos}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                      <line
+                        x1={`${m.baseCoord.x}%`}
+                        y1={`${m.baseCoord.y}%`}
+                        x2={`${m.coord.x}%`}
+                        y2={`${m.coord.y}%`}
+                        stroke={COLORS.gold}
+                        strokeWidth="2"
+                        strokeDasharray="4 3"
+                      />
+                    </svg>
+                  ))}
+
+                {markers.map((m) => {
+                  const borderColor = m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line;
+                  const bg = m.isSetter ? "rgba(255,200,87,0.15)" : m.isPasser ? "rgba(62,124,166,0.15)" : COLORS.bgRaised;
                   return (
                     <div
-                      key={pos}
+                      key={m.pos}
                       style={{
-                        aspectRatio: "1",
-                        background: isSetter ? "rgba(255,200,87,0.1)" : isPasser ? "rgba(62,124,166,0.1)" : COLORS.bg,
+                        position: "absolute",
+                        left: `${m.coord.x}%`,
+                        top: `${m.coord.y}%`,
+                        transform: "translate(-50%, -50%)",
+                        width: 62,
+                        height: 62,
+                        borderRadius: "50%",
                         border: `2px solid ${borderColor}`,
-                        borderRadius: 12,
+                        background: bg,
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
                         justifyContent: "center",
-                        padding: 4,
-                        position: "relative",
+                        textAlign: "center",
                       }}
                     >
-                      <span style={{ position: "absolute", top: 6, left: 8, fontSize: 9, color: COLORS.chalkDim, fontWeight: 700 }}>
-                        {pos}
-                      </span>
-                      {player ? (
+                      {m.player ? (
                         <>
-                          <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 20, fontWeight: 600, lineHeight: 1 }}>
-                            #{player.num}
+                          <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, fontWeight: 600, lineHeight: 1 }}>
+                            #{m.player.num}
                           </span>
-                          <span style={{ fontSize: 9, color: COLORS.chalkDim, marginTop: 2, textAlign: "center" }}>
-                            {displayName(player)}
-                            {isLiberoSlot ? " (L)" : ""}
+                          <span style={{ fontSize: 7, color: COLORS.chalkDim, marginTop: 1 }}>
+                            {displayName(m.player)}
+                          </span>
+                          <span style={{ fontSize: 7, fontWeight: 700, color: borderColor, marginTop: 1 }}>
+                            {m.isLiberoSlot ? "L" : m.player.position || ""}
                           </span>
                         </>
                       ) : (
                         <span style={{ fontSize: 10, color: COLORS.chalkDim }}>—</span>
                       )}
-                      {isSetter && (
-                        <span style={{ position: "absolute", bottom: 4, fontSize: 8, fontWeight: 700, color: COLORS.gold }}>
-                          SET → NET
-                        </span>
-                      )}
-                      {isBackAttack && (
-                        <span style={{ position: "absolute", top: 6, right: 8, fontSize: 8, fontWeight: 700, color: COLORS.green }}>
-                          {roleSystem.system === "5-1" && role === "P3" ? "D" : "PIPE"}
+                      {m.isBackAttack && (
+                        <span
+                          style={{
+                            position: "absolute",
+                            top: -6,
+                            right: -6,
+                            fontSize: 7,
+                            fontWeight: 700,
+                            color: "#1C2128",
+                            background: COLORS.green,
+                            borderRadius: 4,
+                            padding: "1px 3px",
+                          }}
+                        >
+                          {roleSystem.system === "5-1" && m.role === "P3" ? "D" : "PIPE"}
                         </span>
                       )}
                     </div>
@@ -1636,7 +1719,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               </div>
 
               <div style={{ fontSize: 10, color: COLORS.chalkDim, lineHeight: 1.5 }}>
-                Setter releases to the net near position 2 after passing.{" "}
+                Setter releases to the net near position 2 after passing (dashed line shows the move).{" "}
                 {layout.isAlternate
                   ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
                   : "The back-row Outside can hit a pipe."}
