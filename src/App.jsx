@@ -161,6 +161,83 @@ const COURT_LAYOUT = [
   { slot: "P1", area: "back", gridArea: "p1" },
 ];
 
+// ---- Offensive systems (5-1 / 6-2 / 4-2) — a role-based shortcut for
+// filling a lineup, on top of the fully manual court diagram above. Ported
+// from a separate rotation-planning tool; see the role-order math below.
+const OFFENSIVE_SYSTEMS = [
+  { key: "5-1", label: "5-1", p0Label: "Setter", p3Label: "Opposite" },
+  { key: "6-2", label: "6-2", p0Label: "Setter 1", p3Label: "Setter 2" },
+  { key: "4-2", label: "4-2", p0Label: "Setter 1", p3Label: "Setter 2" },
+];
+const ROLE_KEYS = ["P0", "OH1", "MB1", "P3", "OH2", "MB2"];
+const ROLE_LABELS_GENERIC = { P0: "Setter/OPP 1", OH1: "Outside 1", MB1: "Middle 1", P3: "Setter/OPP 2", OH2: "Outside 2", MB2: "Middle 2" };
+
+// Rotation 1 is P0 at court position 1 (right-back, the server's spot).
+// Rotation r is ROLE_KEYS shifted by (r-1) and assigned to positions 1→6 in
+// order — this single formula generates all 6 rotations from one role
+// assignment. Volley Bandit's own P1–P6 numbering already matches the
+// standard convention this assumes (P1/P5/P6 back row, P2/P3/P4 front row).
+function roleOrderForRotation(rotation) {
+  const shift = (rotation - 1) % 6;
+  return [...ROLE_KEYS.slice(shift), ...ROLE_KEYS.slice(0, shift)];
+}
+
+// Fills P1-P6 with the actual assigned player for each role, for a given
+// rotation. Returns null for any role that hasn't been assigned a player yet.
+function slotsForRotation(roles, rotation) {
+  const order = roleOrderForRotation(rotation); // order[0] -> P1, order[1] -> P2, ...
+  const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
+  const slots = {};
+  positions.forEach((pos, i) => {
+    slots[pos] = roles[order[i]] || null;
+  });
+  return slots;
+}
+
+// Serve-receive layout: who passes, who's the active setter this rotation,
+// and which back-row MB is actually the libero on court. Rules differ by
+// system — see the comments inline, ported from the source rotation tool.
+function computeServeReceive(system, roles, rotation) {
+  const order = roleOrderForRotation(rotation);
+  const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
+  const roleAtPos = {};
+  positions.forEach((pos, i) => (roleAtPos[pos] = order[i]));
+  const posOfRole = {};
+  positions.forEach((pos) => (posOfRole[roleAtPos[pos]] = pos));
+
+  const isBack = (pos) => BACK_ROW_SLOTS.includes(pos);
+  const isFront = (pos) => FRONT_ROW_SLOTS.includes(pos);
+
+  // Whichever MB is back row this rotation is displayed as the libero —
+  // exactly one always is, since P0/P3, OH1/OH2, and MB1/MB2 are each
+  // always split one front / one back.
+  const backMBRole = isBack(posOfRole.MB1) ? "MB1" : "MB2";
+
+  let activeSetterRole;
+  if (system === "5-1") activeSetterRole = "P0";
+  else if (system === "6-2") activeSetterRole = isBack(posOfRole.P0) ? "P0" : "P3";
+  else activeSetterRole = isFront(posOfRole.P0) ? "P0" : "P3"; // 4-2
+
+  const isAlternate = system === "5-1" && (rotation === 1 || rotation === 3);
+  let passerRoles;
+  let backRowAttackRoles = [];
+
+  if (system === "4-2") {
+    passerRoles = positions.filter(isBack).map((pos) => roleAtPos[pos]);
+  } else if (isAlternate) {
+    // 5-1 alternate: front-row OH stays at net, Opposite drops back instead
+    const backOHRole = isBack(posOfRole.OH1) ? "OH1" : "OH2";
+    passerRoles = [backOHRole, "P3", backMBRole];
+    backRowAttackRoles = ["P3"]; // "D" ball
+  } else {
+    passerRoles = ["OH1", "OH2", backMBRole];
+    const backOHRole = isBack(posOfRole.OH1) ? "OH1" : "OH2";
+    backRowAttackRoles = [backOHRole]; // pipe
+  }
+
+  return { roleAtPos, posOfRole, activeSetterRole, passerRoles, backMBRole, isAlternate, backRowAttackRoles };
+}
+
 const STAT_BUTTONS = [
   { key: "ace", label: "Ace", group: "Serve", color: COLORS.green },
   { key: "serveErr", label: "Serve Err", group: "Serve", color: COLORS.red },
@@ -316,13 +393,16 @@ function TabBar({ tab, setTab }) {
 }
 
 // ---- Lineup screen: rotation dial court diagram, multi-lineup support ----
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, includePairingsLineup, setIncludePairingsLineup }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, includePairingsLineup, setIncludePairingsLineup, roleSystem, setRoleSystem }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "" });
   const [addingPairing, setAddingPairing] = useState(false);
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
+  const [systemSheetOpen, setSystemSheetOpen] = useState(false);
+  const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
+  const [fillRotation, setFillRotation] = useState(1);
 
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const slots = activeLineup.slots;
@@ -341,6 +421,15 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         l.id === activeLineup.id ? { ...l, liberos: updater(l.liberos || [null, null]) } : l
       )
     );
+  };
+
+  // Fills this lineup's P1–P6 from the offensive-system role assignment for
+  // a given rotation — a fast starting point, not a lock. Every slot stays
+  // exactly as editable afterward as it always is.
+  const roleAssignmentComplete = roleSystem?.roles && ROLE_KEYS.every((k) => roleSystem.roles[k]);
+  const fillFromSystem = (rotation) => {
+    if (!roleAssignmentComplete) return;
+    updateActiveSlots(() => slotsForRotation(roleSystem.roles, rotation));
   };
 
   const assign = (playerId) => {
@@ -610,6 +699,101 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         }}
       >
         {filled}/6 positions set {filled === 6 ? "· ready" : ""}
+      </div>
+
+      {/* Fill from System — optional shortcut on top of manual placement above.
+          Only shows once a system + all 6 roles are assigned via the sheet below. */}
+      <div style={{ marginBottom: 16 }}>
+        {roleAssignmentComplete ? (
+          <>
+            <div
+              style={{
+                fontSize: 11,
+                color: COLORS.chalkDim,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+                marginBottom: 8,
+              }}
+            >
+              Fill From System ({roleSystem.system})
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              {[1, 2, 3, 4, 5, 6].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setFillRotation(r)}
+                  style={{
+                    flex: 1,
+                    padding: "8px 0",
+                    borderRadius: 8,
+                    border: `1.5px solid ${fillRotation === r ? COLORS.orange : COLORS.line}`,
+                    background: fillRotation === r ? "rgba(255,107,53,0.15)" : "transparent",
+                    color: COLORS.chalk,
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => fillFromSystem(fillRotation)}
+              style={{
+                width: "100%",
+                padding: "9px",
+                borderRadius: 8,
+                border: `1.5px solid ${COLORS.blue}`,
+                background: "rgba(62,124,166,0.15)",
+                color: COLORS.chalk,
+                fontSize: 12,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              Fill This Lineup — Rotation {fillRotation}
+            </button>
+            <button
+              onClick={() => setServeReceiveOpen(true)}
+              style={{
+                width: "100%",
+                padding: "9px",
+                borderRadius: 8,
+                border: `1.5px solid ${COLORS.green}`,
+                background: "rgba(76,154,99,0.15)",
+                color: COLORS.chalk,
+                fontSize: 12,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              View Serve-Receive — Rotation {fillRotation}
+            </button>
+            <button
+              onClick={() => setSystemSheetOpen(true)}
+              style={{ background: "none", border: "none", color: COLORS.chalkDim, fontSize: 11, padding: 0 }}
+            >
+              Edit System / Roles
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setSystemSheetOpen(true)}
+            style={{
+              width: "100%",
+              padding: "9px",
+              borderRadius: 8,
+              border: `1px dashed ${COLORS.line}`,
+              background: "none",
+              color: COLORS.chalkDim,
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            Set Up Offensive System (optional shortcut for filling lineups)
+          </button>
+        )}
       </div>
 
       {/* First serve toggle - coin toss result varies set to set */}
@@ -1166,6 +1350,302 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         Tap a bench player above, or the C toggle in the player picker, to set the team captain.
         Tap the pencil to edit a player's number, name, or position.
       </div>
+
+      {systemSheetOpen && (
+        <div
+          onClick={() => setSystemSheetOpen(false)}
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "flex-end",
+            zIndex: 10,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: COLORS.bgRaised,
+              width: "100%",
+              borderRadius: "20px 20px 0 0",
+              padding: 18,
+              maxHeight: "80%",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 4,
+              }}
+            >
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
+                Offensive System
+              </div>
+              <button
+                onClick={() => setSystemSheetOpen(false)}
+                style={{ background: "none", border: "none", color: COLORS.chalkDim }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 14 }}>
+              Assign your roster to roles once, and "Fill From System" can place any
+              lineup for any rotation in one tap. Purely optional — every position stays
+              fully editable by hand either way.
+            </div>
+
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              {OFFENSIVE_SYSTEMS.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setRoleSystem((prev) => ({ ...(prev || {}), system: s.key, roles: prev?.roles || {} }))}
+                  style={{
+                    flex: 1,
+                    padding: "9px 0",
+                    borderRadius: 8,
+                    border: `1.5px solid ${roleSystem?.system === s.key ? COLORS.orange : COLORS.line}`,
+                    background: roleSystem?.system === s.key ? "rgba(255,107,53,0.15)" : "transparent",
+                    color: COLORS.chalk,
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {(() => {
+              const currentSystem = OFFENSIVE_SYSTEMS.find((s) => s.key === roleSystem?.system) || OFFENSIVE_SYSTEMS[0];
+              const roleLabel = (key) => {
+                if (key === "P0") return currentSystem.p0Label;
+                if (key === "P3") return currentSystem.p3Label;
+                return ROLE_LABELS_GENERIC[key];
+              };
+              return ROLE_KEYS.map((key) => (
+                <div key={key} style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+                    {roleLabel(key)}
+                  </label>
+                  <select
+                    value={roleSystem?.roles?.[key] || ""}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      setRoleSystem((prev) => ({
+                        ...(prev || { system: "5-1" }),
+                        roles: { ...(prev?.roles || {}), [key]: val },
+                      }));
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "9px 10px",
+                      marginTop: 4,
+                      background: COLORS.bg,
+                      border: `1px solid ${COLORS.line}`,
+                      borderRadius: 8,
+                      color: COLORS.chalk,
+                      fontSize: 13,
+                    }}
+                  >
+                    <option value="">Select player…</option>
+                    {roster.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        #{p.num} {fullName(p)}
+                        {p.position ? ` (${p.position})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ));
+            })()}
+
+            <div style={{ marginBottom: 10, paddingTop: 6, borderTop: `1px solid ${COLORS.line}` }}>
+              <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+                Libero (used for the Serve-Receive view)
+              </label>
+              <select
+                value={roleSystem?.roles?.L || ""}
+                onChange={(e) => {
+                  const val = e.target.value ? Number(e.target.value) : null;
+                  setRoleSystem((prev) => ({
+                    ...(prev || { system: "5-1" }),
+                    roles: { ...(prev?.roles || {}), L: val },
+                  }));
+                }}
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  marginTop: 4,
+                  background: COLORS.bg,
+                  border: `1px solid ${COLORS.line}`,
+                  borderRadius: 8,
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                }}
+              >
+                <option value="">Select player…</option>
+                {roster.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    #{p.num} {fullName(p)}
+                    {p.position ? ` (${p.position})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setSystemSheetOpen(false)}
+              style={{
+                width: "100%",
+                padding: "11px",
+                marginTop: 8,
+                borderRadius: 8,
+                border: "none",
+                background: COLORS.orange,
+                color: "#1C2128",
+                fontWeight: 700,
+                fontSize: 13,
+              }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {serveReceiveOpen && (() => {
+        const layout = computeServeReceive(roleSystem.system, roleSystem.roles, fillRotation);
+        const liberoPlayer = roleSystem.roles.L ? playerFor(roleSystem.roles.L) : null;
+        const positions = ["P4", "P3", "P2", "P5", "P6", "P1"];
+        return (
+          <div
+            onClick={() => setServeReceiveOpen(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "flex-end",
+              zIndex: 10,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: COLORS.bgRaised,
+                width: "100%",
+                borderRadius: "20px 20px 0 0",
+                padding: 18,
+                maxHeight: "85%",
+                overflowY: "auto",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
+                  Serve-Receive — Rotation {fillRotation}
+                </div>
+                <button onClick={() => setServeReceiveOpen(false)} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 6 }}>
+                {roleSystem.system}
+                {layout.isAlternate ? " · alternate pattern (rotations 1 & 3)" : ""}
+              </div>
+              <div style={{ display: "flex", gap: 10, fontSize: 10, color: COLORS.chalkDim, marginBottom: 12 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.blue, display: "inline-block" }} />
+                  Passer
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.gold, display: "inline-block" }} />
+                  Setter
+                </span>
+              </div>
+
+              <div style={{ textAlign: "center", fontSize: 9, letterSpacing: 2, color: COLORS.chalkDim, marginBottom: 8, textTransform: "uppercase" }}>
+                — net —
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateAreas: `"p4 p3 p2" "p5 p6 p1"`,
+                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: 8,
+                  marginBottom: 16,
+                }}
+              >
+                {positions.map((pos) => {
+                  let role = layout.roleAtPos[pos];
+                  const isLiberoSlot = role === layout.backMBRole;
+                  const playerId = isLiberoSlot && liberoPlayer ? roleSystem.roles.L : roleSystem.roles[role];
+                  const player = playerFor(playerId);
+                  const isPasser = layout.passerRoles.includes(role);
+                  const isSetter = role === layout.activeSetterRole;
+                  const isBackAttack = layout.backRowAttackRoles.includes(role);
+                  const borderColor = isSetter ? COLORS.gold : isPasser ? COLORS.blue : COLORS.line;
+                  return (
+                    <div
+                      key={pos}
+                      style={{
+                        aspectRatio: "1",
+                        background: isSetter ? "rgba(255,200,87,0.1)" : isPasser ? "rgba(62,124,166,0.1)" : COLORS.bg,
+                        border: `2px solid ${borderColor}`,
+                        borderRadius: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 4,
+                        position: "relative",
+                      }}
+                    >
+                      <span style={{ position: "absolute", top: 6, left: 8, fontSize: 9, color: COLORS.chalkDim, fontWeight: 700 }}>
+                        {pos}
+                      </span>
+                      {player ? (
+                        <>
+                          <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 20, fontWeight: 600, lineHeight: 1 }}>
+                            #{player.num}
+                          </span>
+                          <span style={{ fontSize: 9, color: COLORS.chalkDim, marginTop: 2, textAlign: "center" }}>
+                            {displayName(player)}
+                            {isLiberoSlot ? " (L)" : ""}
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 10, color: COLORS.chalkDim }}>—</span>
+                      )}
+                      {isSetter && (
+                        <span style={{ position: "absolute", bottom: 4, fontSize: 8, fontWeight: 700, color: COLORS.gold }}>
+                          SET → NET
+                        </span>
+                      )}
+                      {isBackAttack && (
+                        <span style={{ position: "absolute", top: 6, right: 8, fontSize: 8, fontWeight: 700, color: COLORS.green }}>
+                          {roleSystem.system === "5-1" && role === "P3" ? "D" : "PIPE"}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ fontSize: 10, color: COLORS.chalkDim, lineHeight: 1.5 }}>
+                Setter releases to the net near position 2 after passing.{" "}
+                {layout.isAlternate
+                  ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
+                  : "The back-row Outside can hit a pipe."}
+                {roleSystem.system === "5-1" && !layout.isAlternate ? " If the Opposite is back row, that's a \"D\" ball." : ""}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {addingPairing && (
         <div
@@ -4757,6 +5237,10 @@ export default function App() {
     coachName: "",
     includePairingsRoster: false,
     includePairingsLineup: false,
+    roleSystem: {
+      system: "5-1",
+      roles: { P0: null, OH1: null, MB1: null, P3: null, OH2: null, MB2: null },
+    },
   };
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
@@ -4805,6 +5289,8 @@ export default function App() {
   const setIncludePairingsRoster = fieldSetter(setMainDoc, "includePairingsRoster");
   const includePairingsLineup = mainDoc.includePairingsLineup;
   const setIncludePairingsLineup = fieldSetter(setMainDoc, "includePairingsLineup");
+  const roleSystem = mainDoc.roleSystem || { system: "5-1", roles: {} };
+  const setRoleSystem = fieldSetter(setMainDoc, "roleSystem");
 
   const log = logsDoc.log;
   const setLog = fieldSetter(setLogsDoc, "log");
@@ -5076,6 +5562,8 @@ export default function App() {
             setCaptainId={setCaptainId}
             includePairingsLineup={includePairingsLineup}
             setIncludePairingsLineup={setIncludePairingsLineup}
+            roleSystem={roleSystem}
+            setRoleSystem={setRoleSystem}
           />
         )}
         {tab === "live" && (
