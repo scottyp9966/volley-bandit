@@ -73,6 +73,7 @@ function generateTeamCode() {
 function useTeamDoc(teamCode, docName, defaultValue) {
   const [value, setValue] = useState(defaultValue);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
   const valueRef = useRef(value);
   valueRef.current = value;
 
@@ -89,10 +90,12 @@ function useTeamDoc(teamCode, docName, defaultValue) {
       (snap) => {
         setValue(snap.exists() ? { ...defaultValue, ...snap.data() } : defaultValue);
         setLoaded(true);
+        setError(null);
       },
       (err) => {
         console.warn(`Sync error on ${docName}:`, err);
         setLoaded(true);
+        setError(`Couldn't load ${docName} — check your connection.`);
       }
     );
     return () => unsub();
@@ -105,11 +108,16 @@ function useTeamDoc(teamCode, docName, defaultValue) {
     setValue(next);
     if (teamCode) {
       const ref = doc(db, "teams", teamCode, "data", docName);
-      setDoc(ref, next, { merge: false }).catch((err) => console.warn(`Save error on ${docName}:`, err));
+      setDoc(ref, next, { merge: false })
+        .then(() => setError(null))
+        .catch((err) => {
+          console.warn(`Save error on ${docName}:`, err);
+          setError(`Couldn't save your last change to ${docName} — check your connection.`);
+        });
     }
   };
 
-  return [value, update, loaded];
+  return [value, update, loaded, error];
 }
 
 // Short display form used everywhere except the roster add/edit form itself —
@@ -130,6 +138,18 @@ function downloadCSV(filename, headerRow, rows) {
   };
   const csv = [headerRow, ...rows].map((row) => row.map(escape).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadJSON(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -202,6 +222,7 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
   const oppPositions = taggedPositions("OPP");
   const ohPositions = taggedPositions("OH");
   const mbPositions = taggedPositions("MB");
+  const dsPositions = taggedPositions("DS"); // defensive specialist — a real passer, wasn't recognized before
 
   let activeSetterPos = null;
   if (system === "5-1") activeSetterPos = sPositions[0] || null;
@@ -216,6 +237,10 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
 
   let passerPositions = [];
   let backRowAttackPositions = [];
+  // A DS on court is always a passer when they're back row — 4-2 already
+  // captures this (every back-row player passes there), so this only needs
+  // adding for 5-1/6-2's fixed passer trio.
+  const backRowDS = dsPositions.filter(isBack);
 
   if (system === "4-2") {
     passerPositions = positions.filter(isBack);
@@ -223,10 +248,10 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
     // 5-1 alternate: front-row Outside stays at the net, Opposite drops back to pass
     const backOHPos = ohPositions.find(isBack);
     const oppPos = oppPositions[0];
-    passerPositions = [backOHPos, oppPos, backMBPos].filter(Boolean);
+    passerPositions = [backOHPos, oppPos, backMBPos, ...backRowDS].filter(Boolean);
     if (oppPos) backRowAttackPositions = [oppPos];
   } else {
-    passerPositions = [...ohPositions, backMBPos].filter(Boolean);
+    passerPositions = [...ohPositions, backMBPos, ...backRowDS].filter(Boolean);
     const backOHPos = ohPositions.find(isBack);
     if (backOHPos) backRowAttackPositions = [backOHPos];
   }
@@ -3332,7 +3357,7 @@ function BoxScoreScreen({ log, roster, matches, lineups, activeMatchId, statsVie
 }
 
 // ---- Roster screen: full team, independent of any single lineup ----
-function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, includePairingsRoster, setIncludePairingsRoster, setUnlockedWith, teamCode, setTeamCode }) {
+function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, includePairingsRoster, setIncludePairingsRoster, setUnlockedWith, teamCode, setTeamCode, exportAllData }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "" });
 
@@ -3559,6 +3584,22 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             }}
           >
             Switch Team
+          </button>
+          <button
+            onClick={exportAllData}
+            style={{
+              width: "100%",
+              padding: "8px",
+              marginTop: 6,
+              borderRadius: 8,
+              border: `1px solid ${COLORS.blue}`,
+              background: "rgba(62,124,166,0.1)",
+              color: COLORS.chalk,
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            Export All Data (Backup)
           </button>
         </div>
       </div>
@@ -5251,9 +5292,10 @@ export default function App() {
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
 
-  const [mainDoc, setMainDoc, mainLoaded] = useTeamDoc(teamCode, "main", MAIN_DEFAULT);
-  const [logsDoc, setLogsDoc, logsLoaded] = useTeamDoc(teamCode, "logs", LOGS_DEFAULT);
-  const [brandingDoc, setBrandingDoc, brandingLoaded] = useTeamDoc(teamCode, "branding", BRANDING_DEFAULT);
+  const [mainDoc, setMainDoc, mainLoaded, mainError] = useTeamDoc(teamCode, "main", MAIN_DEFAULT);
+  const [logsDoc, setLogsDoc, logsLoaded, logsError] = useTeamDoc(teamCode, "logs", LOGS_DEFAULT);
+  const [brandingDoc, setBrandingDoc, brandingLoaded, brandingError] = useTeamDoc(teamCode, "branding", BRANDING_DEFAULT);
+  const syncError = mainError || logsError || brandingError;
 
   // Small helper: makes `const setX = fieldSetter(setMainDoc, "x")` behave
   // exactly like the old per-field useState setters — including functional
@@ -5307,6 +5349,20 @@ export default function App() {
   const updateTeamLogo = (dataUrl) => setBrandingDoc((prev) => ({ ...prev, teamLogo: dataUrl }));
 
   const dataLoaded = mainLoaded && logsLoaded && brandingLoaded;
+
+  // A full backup of everything this team's data actually is — the one
+  // recovery path if a team code ever got lost or something went wrong,
+  // since there's no other way to pull this back out of Firestore.
+  const exportAllData = () => {
+    const dateStr = new Date().toISOString().slice(0, 10);
+    downloadJSON(`volley-bandit-backup-${teamCode}-${dateStr}.json`, {
+      teamCode,
+      exportedAt: new Date().toISOString(),
+      main: mainDoc,
+      logs: logsDoc,
+      branding: brandingDoc,
+    });
+  };
 
   const handleNewSet = () => {
     setSetNumber((n) => n + 1);
@@ -5527,6 +5583,25 @@ export default function App() {
         includePairingsLineup={includePairingsLineup}
       />
       <PhoneFrame>
+        {syncError && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 20,
+              background: COLORS.red,
+              color: "#fff",
+              fontSize: 11,
+              fontWeight: 700,
+              textAlign: "center",
+              padding: "6px 10px",
+            }}
+          >
+            {syncError}
+          </div>
+        )}
         <TopBar
           title={titles[tab].title}
           sub={titles[tab].sub}
@@ -5554,6 +5629,7 @@ export default function App() {
             setUnlockedWith={setUnlockedWith}
             teamCode={teamCode}
             setTeamCode={setTeamCode}
+            exportAllData={exportAllData}
           />
         )}
         {tab === "lineup" && (
