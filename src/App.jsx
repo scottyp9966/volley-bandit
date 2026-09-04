@@ -161,81 +161,77 @@ const COURT_LAYOUT = [
   { slot: "P1", area: "back", gridArea: "p1" },
 ];
 
-// ---- Offensive systems (5-1 / 6-2 / 4-2) — a role-based shortcut for
-// filling a lineup, on top of the fully manual court diagram above. Ported
-// from a separate rotation-planning tool; see the role-order math below.
+// ---- Offensive systems (5-1 / 6-2 / 4-2) — used only by the Serve-Receive
+// reference view. Roles are never manually assigned or stored: they're
+// derived fresh from whoever's actually placed on court in a lineup, using
+// each player's existing roster position tag (S/OPP/OH/MB). That keeps this
+// automatically correct after any substitution, with nothing to keep in sync.
 const OFFENSIVE_SYSTEMS = [
-  { key: "5-1", label: "5-1", p0Label: "Setter", p3Label: "Opposite" },
-  { key: "6-2", label: "6-2", p0Label: "Setter 1", p3Label: "Setter 2" },
-  { key: "4-2", label: "4-2", p0Label: "Setter 1", p3Label: "Setter 2" },
+  { key: "5-1", label: "5-1" },
+  { key: "6-2", label: "6-2" },
+  { key: "4-2", label: "4-2" },
 ];
-const ROLE_KEYS = ["P0", "OH1", "MB1", "P3", "OH2", "MB2"];
-const ROLE_LABELS_GENERIC = { P0: "Setter/OPP 1", OH1: "Outside 1", MB1: "Middle 1", P3: "Setter/OPP 2", OH2: "Outside 2", MB2: "Middle 2" };
 
-// Rotation 1 is P0 at court position 1 (right-back, the server's spot).
-// Rotation r is ROLE_KEYS shifted by (r-1) and assigned to positions 1→6 in
-// order — this single formula generates all 6 rotations from one role
-// assignment. Volley Bandit's own P1–P6 numbering already matches the
-// standard convention this assumes (P1/P5/P6 back row, P2/P3/P4 front row).
-function roleOrderForRotation(rotation) {
-  const shift = (rotation - 1) % 6;
-  return [...ROLE_KEYS.slice(shift), ...ROLE_KEYS.slice(0, shift)];
+// Same clockwise shift Advance Rotation already uses on the Live screen —
+// reused here to preview "N rotations from now" without needing any
+// separate abstract role-numbering system.
+function shiftSlotsClockwise(slots, times) {
+  let s = { ...slots };
+  for (let i = 0; i < times; i++) {
+    s = { P1: s.P2, P2: s.P3, P3: s.P4, P4: s.P5, P5: s.P6, P6: s.P1 };
+  }
+  return s;
 }
 
-// Fills P1-P6 with the actual assigned player for each role, for a given
-// rotation. Returns null for any role that hasn't been assigned a player yet.
-function slotsForRotation(roles, rotation) {
-  const order = roleOrderForRotation(rotation); // order[0] -> P1, order[1] -> P2, ...
+// Serve-receive layout: who passes, who's the active setter, and which
+// back-row Middle is actually the libero on court — all derived directly
+// from the given slots (already shifted for whichever rotation is being
+// previewed) plus each on-court player's roster position tag.
+function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
   const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
-  const slots = {};
-  positions.forEach((pos, i) => {
-    slots[pos] = roles[order[i]] || null;
+  const playerAt = {};
+  positions.forEach((pos) => {
+    playerAt[pos] = slots[pos] ? roster.find((p) => p.id === slots[pos]) || null : null;
   });
-  return slots;
-}
-
-// Serve-receive layout: who passes, who's the active setter this rotation,
-// and which back-row MB is actually the libero on court. Rules differ by
-// system — see the comments inline, ported from the source rotation tool.
-function computeServeReceive(system, roles, rotation) {
-  const order = roleOrderForRotation(rotation);
-  const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
-  const roleAtPos = {};
-  positions.forEach((pos, i) => (roleAtPos[pos] = order[i]));
-  const posOfRole = {};
-  positions.forEach((pos) => (posOfRole[roleAtPos[pos]] = pos));
 
   const isBack = (pos) => BACK_ROW_SLOTS.includes(pos);
   const isFront = (pos) => FRONT_ROW_SLOTS.includes(pos);
+  const taggedPositions = (tag) => positions.filter((pos) => playerAt[pos]?.position === tag);
 
-  // Whichever MB is back row this rotation is displayed as the libero —
-  // exactly one always is, since P0/P3, OH1/OH2, and MB1/MB2 are each
-  // always split one front / one back.
-  const backMBRole = isBack(posOfRole.MB1) ? "MB1" : "MB2";
+  const sPositions = taggedPositions("S");
+  const oppPositions = taggedPositions("OPP");
+  const ohPositions = taggedPositions("OH");
+  const mbPositions = taggedPositions("MB");
 
-  let activeSetterRole;
-  if (system === "5-1") activeSetterRole = "P0";
-  else if (system === "6-2") activeSetterRole = isBack(posOfRole.P0) ? "P0" : "P3";
-  else activeSetterRole = isFront(posOfRole.P0) ? "P0" : "P3"; // 4-2
+  let activeSetterPos = null;
+  if (system === "5-1") activeSetterPos = sPositions[0] || null;
+  else if (system === "6-2") activeSetterPos = sPositions.find(isBack) || sPositions[0] || null;
+  else activeSetterPos = sPositions.find(isFront) || sPositions[0] || null; // 4-2
 
-  const isAlternate = system === "5-1" && (rotation === 1 || rotation === 3);
-  let passerRoles;
-  let backRowAttackRoles = [];
+  // Whichever Middle is back row is shown as the libero, if this lineup has
+  // one designated — same rule regardless of system.
+  const backMBPos = mbPositions.find(isBack) || null;
+  const liberoId = (liberoIds || []).find(Boolean) || null;
+  const liberoPlayer = liberoId ? roster.find((p) => p.id === liberoId) : null;
+
+  let passerPositions = [];
+  let backRowAttackPositions = [];
 
   if (system === "4-2") {
-    passerRoles = positions.filter(isBack).map((pos) => roleAtPos[pos]);
+    passerPositions = positions.filter(isBack);
   } else if (isAlternate) {
-    // 5-1 alternate: front-row OH stays at net, Opposite drops back instead
-    const backOHRole = isBack(posOfRole.OH1) ? "OH1" : "OH2";
-    passerRoles = [backOHRole, "P3", backMBRole];
-    backRowAttackRoles = ["P3"]; // "D" ball
+    // 5-1 alternate: front-row Outside stays at the net, Opposite drops back to pass
+    const backOHPos = ohPositions.find(isBack);
+    const oppPos = oppPositions[0];
+    passerPositions = [backOHPos, oppPos, backMBPos].filter(Boolean);
+    if (oppPos) backRowAttackPositions = [oppPos];
   } else {
-    passerRoles = ["OH1", "OH2", backMBRole];
-    const backOHRole = isBack(posOfRole.OH1) ? "OH1" : "OH2";
-    backRowAttackRoles = [backOHRole]; // pipe
+    passerPositions = [...ohPositions, backMBPos].filter(Boolean);
+    const backOHPos = ohPositions.find(isBack);
+    if (backOHPos) backRowAttackPositions = [backOHPos];
   }
 
-  return { roleAtPos, posOfRole, activeSetterRole, passerRoles, backMBRole, isAlternate, backRowAttackRoles };
+  return { playerAt, activeSetterPos, backMBPos, liberoPlayer, passerPositions, backRowAttackPositions };
 }
 
 const STAT_BUTTONS = [
@@ -402,7 +398,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
   const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
-  const [fillRotation, setFillRotation] = useState(1);
+  const [rotationsAhead, setRotationsAhead] = useState(0);
+  const [isAlternate, setIsAlternate] = useState(false);
 
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const slots = activeLineup.slots;
@@ -422,27 +419,6 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       )
     );
   };
-
-  // Roles (who plays Setter/OH1/etc.) are per-lineup, not team-wide — a
-  // different Set can have entirely different personnel on court. This is a
-  // labeling tool for the Serve-Receive reference view only; it never writes
-  // back to the court diagram. Editing who's actually on court only ever
-  // happens through the diagram above.
-  const activeRoles = activeLineup.roles || { P0: null, OH1: null, MB1: null, P3: null, OH2: null, MB2: null, L: null };
-  const updateActiveRoles = (updater) => {
-    setLineups((prev) =>
-      prev.map((l) => (l.id === activeLineup.id ? { ...l, roles: updater(l.roles || activeRoles) } : l))
-    );
-  };
-  const activeRoleAssignmentComplete = ROLE_KEYS.every((k) => activeRoles[k]);
-  // Players eligible for a role: whoever is currently on court in this
-  // lineup, minus whoever's already labeled for a different role — this is
-  // what makes duplicate role assignment impossible.
-  const onCourtPlayerIds = Object.values(slots).filter(Boolean);
-  const eligibleForRole = (roleKey) =>
-    roster.filter(
-      (p) => onCourtPlayerIds.includes(p.id) && (activeRoles[roleKey] === p.id || !ROLE_KEYS.some((k) => k !== roleKey && activeRoles[k] === p.id))
-    );
 
   const assign = (playerId) => {
     if (!picking) return;
@@ -473,13 +449,10 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       : { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null };
     const baseLiberos = fromDuplicate ? [...(activeLineup.liberos || [null, null])] : [null, null];
     const basePairings = fromDuplicate ? [...(activeLineup.pairings || [])] : [];
-    const baseRoles = fromDuplicate
-      ? { ...(activeLineup.roles || {}) }
-      : { P0: null, OH1: null, MB1: null, P3: null, OH2: null, MB2: null, L: null };
     const name = fromDuplicate ? `${activeLineup.name} copy` : `Set ${lineups.length + 1}`;
     setLineups((prev) => [
       ...prev,
-      { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings, roles: baseRoles },
+      { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings },
     ]);
     setActiveLineupId(newId);
   };
@@ -716,11 +689,12 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         {filled}/6 positions set {filled === 6 ? "· ready" : ""}
       </div>
 
-      {/* Serve-Receive reference — pure reference tool. Roles just label
-          whoever's already on court in this lineup; this never edits the
-          court diagram above. Editing who's on court always happens there. */}
+      {/* Serve-Receive reference — pure reference tool, fully derived from
+          whoever's actually on court plus their roster position tag. Nothing
+          here edits the court diagram above; editing who's on court always
+          happens there, including substitutions. */}
       <div style={{ marginBottom: 16 }}>
-        {activeRoleAssignmentComplete ? (
+        {filled === 6 ? (
           <>
             <div
               style={{
@@ -735,22 +709,22 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               Serve-Receive Reference ({roleSystem?.system || "5-1"})
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-              {[1, 2, 3, 4, 5, 6].map((r) => (
+              {[0, 1, 2, 3, 4, 5].map((r) => (
                 <button
                   key={r}
-                  onClick={() => setFillRotation(r)}
+                  onClick={() => setRotationsAhead(r)}
                   style={{
                     flex: 1,
                     padding: "8px 0",
                     borderRadius: 8,
-                    border: `1.5px solid ${fillRotation === r ? COLORS.orange : COLORS.line}`,
-                    background: fillRotation === r ? "rgba(255,107,53,0.15)" : "transparent",
+                    border: `1.5px solid ${rotationsAhead === r ? COLORS.orange : COLORS.line}`,
+                    background: rotationsAhead === r ? "rgba(255,107,53,0.15)" : "transparent",
                     color: COLORS.chalk,
                     fontSize: 12,
                     fontWeight: 700,
                   }}
                 >
-                  {r}
+                  {r === 0 ? "Now" : `+${r}`}
                 </button>
               ))}
             </div>
@@ -768,31 +742,19 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 marginBottom: 6,
               }}
             >
-              View Serve-Receive — Rotation {fillRotation}
+              View Serve-Receive {rotationsAhead === 0 ? "(current)" : `(+${rotationsAhead} rotation${rotationsAhead > 1 ? "s" : ""})`}
             </button>
             <button
               onClick={() => setSystemSheetOpen(true)}
               style={{ background: "none", border: "none", color: COLORS.chalkDim, fontSize: 11, padding: 0 }}
             >
-              Edit Roles for This Lineup
+              Serve-Receive Settings
             </button>
           </>
         ) : (
-          <button
-            onClick={() => setSystemSheetOpen(true)}
-            style={{
-              width: "100%",
-              padding: "9px",
-              borderRadius: 8,
-              border: `1px dashed ${COLORS.line}`,
-              background: "none",
-              color: COLORS.chalkDim,
-              fontSize: 11,
-              fontWeight: 700,
-            }}
-          >
-            Label Roles for This Lineup (optional — enables Serve-Receive reference)
-          </button>
+          <div style={{ fontSize: 11, color: COLORS.chalkDim, textAlign: "center" }}>
+            Fill all 6 positions above to enable the Serve-Receive reference.
+          </div>
         )}
       </div>
 
@@ -1383,7 +1345,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               }}
             >
               <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
-                Offensive System
+                Serve-Receive Settings
               </div>
               <button
                 onClick={() => setSystemSheetOpen(false)}
@@ -1393,12 +1355,15 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               </button>
             </div>
             <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 14 }}>
-              Label who plays which role among the players already on court in this
-              lineup — this only feeds the Serve-Receive reference view below; it never
-              changes who's actually placed on the court diagram above.
+              Who plays what is figured out automatically from each on-court player's
+              position tag (S/OPP/OH/MB) and this lineup's designated libero — nothing to
+              set up here beyond your offensive system.
             </div>
 
-            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", marginBottom: 6 }}>
+              Offensive System
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: roleSystem?.system === "5-1" ? 16 : 4 }}>
               {OFFENSIVE_SYSTEMS.map((s) => (
                 <button
                   key={s.key}
@@ -1419,94 +1384,40 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               ))}
             </div>
 
-            {onCourtPlayerIds.length === 0 ? (
-              <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
-                Place players on the court diagram above first — roles can only be
-                assigned to whoever's actually on court in this lineup.
-              </div>
-            ) : (
-              (() => {
-                const currentSystem = OFFENSIVE_SYSTEMS.find((s) => s.key === roleSystem?.system) || OFFENSIVE_SYSTEMS[0];
-                const roleLabel = (key) => {
-                  if (key === "P0") return currentSystem.p0Label;
-                  if (key === "P3") return currentSystem.p3Label;
-                  return ROLE_LABELS_GENERIC[key];
-                };
-                return ROLE_KEYS.map((key) => (
-                  <div key={key} style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
-                      {roleLabel(key)}
-                    </label>
-                    <select
-                      value={activeRoles[key] || ""}
-                      onChange={(e) => {
-                        const val = e.target.value ? Number(e.target.value) : null;
-                        updateActiveRoles((prev) => ({ ...prev, [key]: val }));
-                      }}
-                      style={{
-                        width: "100%",
-                        padding: "9px 10px",
-                        marginTop: 4,
-                        background: COLORS.bg,
-                        border: `1px solid ${COLORS.line}`,
-                        borderRadius: 8,
-                        color: COLORS.chalk,
-                        fontSize: 13,
-                      }}
-                    >
-                      <option value="">Select player…</option>
-                      {eligibleForRole(key).map((p) => (
-                        <option key={p.id} value={p.id}>
-                          #{p.num} {fullName(p)}
-                          {p.position ? ` (${p.position})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ));
-              })()
-            )}
-
-            <div style={{ marginBottom: 10, paddingTop: 6, borderTop: `1px solid ${COLORS.line}` }}>
-              <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
-                Libero (used for the Serve-Receive view)
-              </label>
-              <select
-                value={activeRoles.L || ""}
-                onChange={(e) => {
-                  const val = e.target.value ? Number(e.target.value) : null;
-                  updateActiveRoles((prev) => ({ ...prev, L: val }));
-                }}
+            {roleSystem?.system === "5-1" && (
+              <button
+                onClick={() => setIsAlternate((v) => !v)}
                 style={{
                   width: "100%",
-                  padding: "9px 10px",
-                  marginTop: 4,
-                  background: COLORS.bg,
-                  border: `1px solid ${COLORS.line}`,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px",
+                  marginBottom: 6,
                   borderRadius: 8,
-                  color: COLORS.chalk,
-                  fontSize: 13,
+                  border: `1px solid ${COLORS.line}`,
+                  background: "none",
+                  textAlign: "left",
                 }}
               >
-                <option value="">Select player…</option>
-                {liberos
-                  .filter(Boolean)
-                  .map((id) => playerFor(id))
-                  .filter(Boolean)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      #{p.num} {fullName(p)}
-                      {p.position ? ` (${p.position})` : ""}
-                    </option>
-                  ))}
-              </select>
-              {liberos.filter(Boolean).length === 0 && (
-                <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 4 }}>
-                  No liberos designated for this lineup yet — set one in the Liberos
-                  section above first.
+                <div
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 4,
+                    border: `1.5px solid ${isAlternate ? COLORS.orange : COLORS.line}`,
+                    background: isAlternate ? COLORS.orange : "transparent",
+                    flexShrink: 0,
+                  }}
+                />
+                <div style={{ fontSize: 12, color: COLORS.chalk }}>
+                  Alternate pattern
+                  <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 2 }}>
+                    Front-row Outside stays at the net; Opposite drops back to pass instead.
+                  </div>
                 </div>
-              )}
-            </div>
+              </button>
+            )}
 
             <button
               onClick={() => setSystemSheetOpen(false)}
@@ -1530,11 +1441,11 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
       {serveReceiveOpen && (() => {
         const system = roleSystem?.system || "5-1";
-        const layout = computeServeReceive(system, activeRoles, fillRotation);
-        const liberoPlayer = activeRoles.L ? playerFor(activeRoles.L) : null;
+        const shiftedSlots = shiftSlotsClockwise(activeLineup.slots, rotationsAhead);
+        const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate);
 
-        // Rough real-court coordinates per rotational slot (0-100, y=0 at the
-        // net) — this is what actually shows alignment, unlike 6 equal boxes.
+        // Rough real-court coordinates per position (0-100, y=0 at the net)
+        // — this is what actually shows alignment, unlike 6 equal boxes.
         const BASE_COORD = {
           P4: { x: 16, y: 14 },
           P3: { x: 50, y: 10 },
@@ -1545,31 +1456,28 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         };
         const NET_TARGET = { x: 80, y: 24 }; // where the setter releases to
 
-        const rolesList = Object.keys(layout.roleAtPos).map((pos) => ({ pos, role: layout.roleAtPos[pos] }));
+        const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
         // Passers cluster into a receive line, ordered left-to-right by their
-        // natural court position, regardless of whether that role is
+        // natural court position, regardless of whether that spot is
         // currently front or back row.
-        const passersSorted = [...layout.passerRoles].sort(
-          (a, b) => BASE_COORD[layout.posOfRole[a]].x - BASE_COORD[layout.posOfRole[b]].x
-        );
+        const passersSorted = [...layout.passerPositions].sort((a, b) => BASE_COORD[a].x - BASE_COORD[b].x);
         const RECEIVE_Y = 78;
         const RECEIVE_X = [22, 50, 78];
 
-        const markers = rolesList.map(({ pos, role }) => {
-          const isLiberoSlot = role === layout.backMBRole;
-          const playerId = isLiberoSlot && liberoPlayer ? activeRoles.L : activeRoles[role];
-          const player = playerFor(playerId);
-          const isPasser = layout.passerRoles.includes(role);
-          const isSetter = role === layout.activeSetterRole;
-          const isBackAttack = layout.backRowAttackRoles.includes(role);
+        const markers = positions.map((pos) => {
+          const isLiberoSlot = pos === layout.backMBPos;
+          const player = isLiberoSlot && layout.liberoPlayer ? layout.liberoPlayer : layout.playerAt[pos];
+          const isPasser = layout.passerPositions.includes(pos);
+          const isSetter = pos === layout.activeSetterPos;
+          const isBackAttack = layout.backRowAttackPositions.includes(pos);
           let coord = BASE_COORD[pos];
           if (isPasser) {
-            const idx = passersSorted.indexOf(role);
+            const idx = passersSorted.indexOf(pos);
             coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
           } else if (isSetter) {
             coord = NET_TARGET;
           }
-          return { pos, role, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos] };
+          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos] };
         });
 
         return (
@@ -1597,7 +1505,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
-                  Serve-Receive — Rotation {fillRotation}
+                  Serve-Receive {rotationsAhead === 0 ? "— Current" : `— +${rotationsAhead} Rotation${rotationsAhead > 1 ? "s" : ""}`}
                 </div>
                 <button onClick={() => setServeReceiveOpen(false)} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
                   <X size={20} />
@@ -1605,7 +1513,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               </div>
               <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 6 }}>
                 {system}
-                {layout.isAlternate ? " · alternate pattern (rotations 1 & 3)" : ""}
+                {isAlternate ? " · alternate pattern" : ""}
               </div>
               <div style={{ display: "flex", gap: 10, fontSize: 10, color: COLORS.chalkDim, marginBottom: 10 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -1722,7 +1630,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                             padding: "1px 3px",
                           }}
                         >
-                          {system === "5-1" && m.role === "P3" ? "D" : "PIPE"}
+                          {system === "5-1" && m.player?.position === "OPP" ? "D" : "PIPE"}
                         </span>
                       )}
                     </div>
@@ -1732,10 +1640,10 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
               <div style={{ fontSize: 10, color: COLORS.chalkDim, lineHeight: 1.5 }}>
                 Setter releases to the net near position 2 after passing (dashed line shows the move).{" "}
-                {layout.isAlternate
+                {isAlternate
                   ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
                   : "The back-row Outside can hit a pipe."}
-                {system === "5-1" && !layout.isAlternate ? " If the Opposite is back row, that's a \"D\" ball." : ""}
+                {system === "5-1" && !isAlternate ? " If the Opposite is back row, that's a \"D\" ball." : ""}
               </div>
             </div>
           </div>
@@ -5322,7 +5230,6 @@ export default function App() {
         slots: { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null },
         liberos: [null, null],
         pairings: [],
-        roles: { P0: null, OH1: null, MB1: null, P3: null, OH2: null, MB2: null, L: null },
       },
     ],
     activeLineupId: 1,
