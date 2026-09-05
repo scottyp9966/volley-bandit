@@ -749,7 +749,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     fontWeight: 700,
                   }}
                 >
-                  {r === 0 ? "Now" : `+${r}`}
+                  {r + 1}
                 </button>
               ))}
             </div>
@@ -767,7 +767,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 marginBottom: 6,
               }}
             >
-              View Serve-Receive {rotationsAhead === 0 ? "(current)" : `(+${rotationsAhead} rotation${rotationsAhead > 1 ? "s" : ""})`}
+              View Serve-Receive — Rotation {rotationsAhead + 1}
             </button>
             <button
               onClick={() => setSystemSheetOpen(true)}
@@ -1530,7 +1530,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
-                  Serve-Receive {rotationsAhead === 0 ? "— Current" : `— +${rotationsAhead} Rotation${rotationsAhead > 1 ? "s" : ""}`}
+                  Serve-Receive — Rotation {rotationsAhead + 1}
                 </div>
                 <button onClick={() => setServeReceiveOpen(false)} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
                   <X size={20} />
@@ -2389,7 +2389,7 @@ function LiveScreen({
               onNewSet();
               setConfirmingNewSet(false);
             }}
-            height={22}
+            height={18}
           />
           <button
             onClick={() => setConfirmingNewSet(false)}
@@ -2539,7 +2539,7 @@ function LiveScreen({
                   label={overLimit ? "Swipe to Confirm (Over Limit)" : "Swipe to Confirm Sub"}
                   color={overLimit ? COLORS.red : COLORS.gold}
                   onConfirm={() => confirmSuggestion(sug)}
-                  height={22}
+                  height={18}
                 />
               </div>
             );
@@ -2576,17 +2576,20 @@ function LiveScreen({
         ))}
       </div>
 
-      {/* Rotation strip - tap to select who the next stat belongs to */}
+      {/* Rotation strip - tap to select who the next stat belongs to.
+          Same 2-row court arrangement as the Lineup screen's diagram, so the
+          layout reads the same in both places instead of a flat scrolling row. */}
       <div
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateAreas: `"p4 p3 p2" "p5 p6 p1"`,
+          gridTemplateColumns: "1fr 1fr 1fr",
           gap: 6,
-          padding: "10px 20px",
-          overflowX: "auto",
+          padding: "8px 20px",
           borderBottom: `1px solid ${COLORS.line}`,
         }}
       >
-        {COURT_LAYOUT.map(({ slot }) => {
+        {COURT_LAYOUT.map(({ slot, gridArea }) => {
           const pid = slots[slot];
           const p = pid ? playerFor(pid) : null;
           const active = selectedSlot === slot;
@@ -2595,23 +2598,32 @@ function LiveScreen({
               key={slot}
               onClick={() => setSelectedSlot(slot)}
               style={{
-                flexShrink: 0,
-                padding: "6px 10px",
+                gridArea,
+                padding: "6px 4px",
                 borderRadius: 8,
                 border: `1.5px solid ${active ? COLORS.orange : COLORS.line}`,
                 background: active ? "rgba(255,107,53,0.15)" : "transparent",
                 color: COLORS.chalk,
-                fontSize: 12,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                minWidth: 52,
+                textAlign: "center",
               }}
             >
-              <span style={{ fontSize: 9, color: COLORS.chalkDim }}>{slot}</span>
-              <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600 }}>
+              <span style={{ fontSize: 8, color: COLORS.chalkDim }}>{slot}</span>
+              <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, fontWeight: 600, lineHeight: 1.1 }}>
                 {p ? `#${p.num}` : "—"}
               </span>
+              {p && (
+                <span style={{ fontSize: 8, color: COLORS.chalkDim, marginTop: 1 }}>
+                  {displayName(p)}
+                </span>
+              )}
+              {p?.position && (
+                <span style={{ fontSize: 7, fontWeight: 700, color: active ? COLORS.orange : COLORS.chalkDim, marginTop: 1 }}>
+                  {p.position}
+                </span>
+              )}
             </button>
           );
         })}
@@ -2620,7 +2632,7 @@ function LiveScreen({
       {/* Selected player banner */}
       <div
         style={{
-          padding: "10px 20px",
+          padding: "6px 20px",
           fontSize: 13,
           color: COLORS.chalkDim,
         }}
@@ -2728,7 +2740,7 @@ function LiveScreen({
 
 // Full-width swipe-to-confirm control, for state-changing actions during live play
 // (rotation, substitution, new set) that would be a real nuisance if mid-tapped.
-function SwipeConfirm({ label, color, onConfirm, disabled, height = 26 }) {
+function SwipeConfirm({ label, color, onConfirm, disabled, height = 20 }) {
   const trackRef = useRef(null);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -2789,7 +2801,7 @@ function SwipeConfirm({ label, color, onConfirm, disabled, height = 26 }) {
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: 700,
           color: COLORS.chalk,
           pointerEvents: "none",
