@@ -468,6 +468,15 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const slots = activeLineup.slots;
   const liberos = activeLineup.liberos || [null, null];
+
+  // Keep the Serve-Receive rotation selector in sync with whatever's actually
+  // happening on the Live screen — re-syncs whenever the active lineup's
+  // tracked rotation changes (including a live rotation advance happening
+  // while this tab isn't even open) or when switching between lineups.
+  useEffect(() => {
+    setRotationsAhead((activeLineup.currentRotation || 1) - 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLineup.id, activeLineup.currentRotation]);
   const assignedIds = new Set(Object.values(slots).filter(Boolean));
 
   const updateActiveSlots = (updater) => {
@@ -516,7 +525,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
     const name = fromDuplicate ? `${activeLineup.name} copy` : `Set ${lineups.length + 1}`;
     setLineups((prev) => [
       ...prev,
-      { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings },
+      { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings, currentRotation: 1 },
     ]);
     setActiveLineupId(newId);
   };
@@ -2204,6 +2213,8 @@ function LiveScreen({
   pointLog,
   setPointLog,
   onNewSet,
+  previousSetSlots,
+  onImportPreviousSetSlots,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
   const [confirmingNewSet, setConfirmingNewSet] = useState(false);
@@ -2268,10 +2279,19 @@ function LiveScreen({
     setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: newSlots } : l)));
   };
 
+  // Tracks which of the 6 rotations this lineup is currently sitting in, so
+  // the Serve-Receive reference on the Lineup screen can automatically
+  // highlight the right one instead of needing to be set by hand.
+  const setActiveRotation = (n) => {
+    setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, currentRotation: n } : l)));
+  };
+
   // Snapshot current match state before a rotation/sub action, so it can be
   // stepped back afterward — not just a single "undo last," but a real stack.
   const pushHistory = (label) => {
-    setMatchHistory((prev) => [...prev, { slots, subCount, liberoSubCount, label }].slice(-10));
+    setMatchHistory((prev) =>
+      [...prev, { slots, subCount, liberoSubCount, currentRotation: activeLineup.currentRotation || 1, label }].slice(-10)
+    );
   };
 
   const undoMatchAction = () => {
@@ -2281,6 +2301,7 @@ function LiveScreen({
       setActiveSlots(last.slots);
       setSubCount(last.subCount);
       setLiberoSubCount(last.liberoSubCount);
+      setActiveRotation(last.currentRotation || 1);
       setSubSuggestions([]); // pending suggestions were computed against state that no longer applies
       return prev.slice(0, -1);
     });
@@ -2298,6 +2319,7 @@ function LiveScreen({
       P6: slots.P1,
     };
     setActiveSlots(rotated);
+    setActiveRotation(((activeLineup.currentRotation || 1) % 6) + 1);
 
     // Check pairings against the new rotation: anyone in the wrong row for their designated role?
     const suggestions = [];
@@ -2448,6 +2470,26 @@ function LiveScreen({
           Sub limit reached for this set — confirming another sub will flag it as over the limit.
         </div>
       )}
+      {previousSetSlots && (
+        <div style={{ padding: "6px 20px 0" }}>
+          <button
+            onClick={onImportPreviousSetSlots}
+            title="Restores the exact Rotation 1 starting lineup from the previous set"
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              borderRadius: 8,
+              border: `1px dashed ${COLORS.line}`,
+              background: "none",
+              color: COLORS.chalkDim,
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            Import Lineup from Previous Set
+          </button>
+        </div>
+      )}
 
       {/* Advance rotation - swipe (capped at 2/3 screen width, not full-width)
           to avoid a mid-play accidental tap - undo sits right-justified in
@@ -2461,7 +2503,7 @@ function LiveScreen({
         }}
       >
         <div style={{ width: "66%" }}>
-          <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} />
+          <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} height={30} />
         </div>
         <button
           onClick={undoMatchAction}
@@ -2498,12 +2540,12 @@ function LiveScreen({
                   background: "rgba(255,200,87,0.10)",
                   border: `1.5px solid ${overLimit ? COLORS.red : COLORS.gold}`,
                   borderRadius: 10,
-                  padding: "8px 10px",
+                  padding: "10px 10px",
                   marginBottom: 8,
                   fontSize: 12,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
                   {sug.isLibero && (
                     <span
                       style={{
@@ -2514,15 +2556,23 @@ function LiveScreen({
                         borderRadius: 4,
                         padding: "1px 4px",
                         flexShrink: 0,
+                        marginTop: 2,
                       }}
                     >
                       LIBERO
                     </span>
                   )}
-                  <span style={{ color: COLORS.chalk, flex: 1 }}>
-                    Sub <b>#{inP?.num} {displayName(inP)}</b> in for <b>#{out?.num} {displayName(out)}</b> ({sug.slot})
-                    {overLimit && <span style={{ color: COLORS.red, fontWeight: 700 }}> · over limit</span>}
-                  </span>
+                  {/* Each player's info kept together on its own line, not
+                      run together mid-sentence with the other player's. */}
+                  <div style={{ color: COLORS.chalk, flex: 1, lineHeight: 1.5 }}>
+                    <div>
+                      Sub in: <b>#{inP?.num} {displayName(inP)}</b>
+                    </div>
+                    <div>
+                      For: <b>#{out?.num} {displayName(out)}</b> ({sug.slot})
+                    </div>
+                    {overLimit && <div style={{ color: COLORS.red, fontWeight: 700 }}>Over sub limit</div>}
+                  </div>
                   <button
                     onClick={() => dismissSuggestion(sug.id)}
                     style={{ background: "none", border: "none", color: COLORS.chalkDim, flexShrink: 0 }}
@@ -2530,12 +2580,34 @@ function LiveScreen({
                     <X size={14} />
                   </button>
                 </div>
-                <SwipeConfirm
-                  label={overLimit ? "Swipe to Confirm (Over Limit)" : "Swipe to Confirm Sub"}
-                  color={overLimit ? COLORS.red : COLORS.gold}
-                  onConfirm={() => confirmSuggestion(sug)}
-                  height={18}
-                />
+                {/* Checkbox instead of swipe — swipes were hard to trigger
+                    reliably on a phone for this smaller, secondary action. */}
+                <button
+                  onClick={() => confirmSuggestion(sug)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${overLimit ? COLORS.red : COLORS.gold}`,
+                    background: "none",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      border: `1.5px solid ${overLimit ? COLORS.red : COLORS.gold}`,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ color: COLORS.chalk, fontSize: 12, fontWeight: 700 }}>
+                    {overLimit ? "Confirm Sub (Over Limit)" : "Confirm Sub"}
+                  </span>
+                </button>
               </div>
             );
           })}
@@ -5331,9 +5403,11 @@ export default function App() {
         slots: { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null },
         liberos: [null, null],
         pairings: [],
+        currentRotation: 1,
       },
     ],
     activeLineupId: 1,
+    previousSetSlots: null,
     score: { us: 0, opp: 0 },
     setNumber: 1,
     subCount: 0,
@@ -5370,6 +5444,8 @@ export default function App() {
   const setLineups = fieldSetter(setMainDoc, "lineups");
   const activeLineupId = mainDoc.activeLineupId;
   const setActiveLineupId = fieldSetter(setMainDoc, "activeLineupId");
+  const previousSetSlots = mainDoc.previousSetSlots;
+  const setPreviousSetSlots = fieldSetter(setMainDoc, "previousSetSlots");
   const score = mainDoc.score;
   const setScore = fieldSetter(setMainDoc, "score");
   const setNumber = mainDoc.setNumber;
@@ -5422,10 +5498,29 @@ export default function App() {
   };
 
   const handleNewSet = () => {
+    const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+    // Reconstruct what Rotation 1 actually looked like, not just whatever's
+    // currently on court — otherwise this only matches by a 1-in-6 chance,
+    // since live rotation could have advanced any number of times since the
+    // set began. Reversing the same clockwise shift the correct number of
+    // steps recovers the exact original starting rotation.
+    const rotation = activeLineup.currentRotation || 1;
+    const rotation1Slots = shiftSlotsClockwise(activeLineup.slots, 7 - rotation);
+    setPreviousSetSlots(rotation1Slots);
+    setLineups((prev) =>
+      prev.map((l) => (l.id === activeLineup.id ? { ...l, currentRotation: 1 } : l))
+    );
     setSetNumber((n) => n + 1);
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
+  };
+
+  const importPreviousSetSlots = () => {
+    if (!previousSetSlots) return;
+    setLineups((prev) =>
+      prev.map((l) => (l.id === activeLineupId ? { ...l, slots: { ...previousSetSlots } } : l))
+    );
   };
 
   const titles = {
@@ -5442,34 +5537,12 @@ export default function App() {
   // Artifacts render inside a sandboxed iframe, where a bare window.print() call
   // can get silently blocked. Opening a separate window with just the printable
   // content and calling print() there is the reliable path around that.
+  // Prints directly in-page using the @media print CSS below (which hides
+  // everything except the active .print-section) — no popup window. Popups
+  // don't behave reliably in an installed iOS PWA (there's no real second
+  // window to open), which is what was leaving the app stuck after printing.
   const handlePrint = () => {
-    const root = document.getElementById("print-root");
-    const activeSection = root?.querySelector(".print-section.active");
-    if (!activeSection) return;
-    const win = window.open("", "_blank", "width=880,height=1120");
-    if (!win) {
-      alert("Please allow pop-ups for this page to print.");
-      return;
-    }
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Print</title>
-          <meta charset="utf-8" />
-          <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-            * { box-sizing: border-box; }
-            body { font-family: 'Inter', system-ui, sans-serif; color: #000; background: #fff; margin: 0; padding: 32px; }
-            table { border-collapse: collapse; }
-          </style>
-        </head>
-        <body>${activeSection.outerHTML}</body>
-      </html>
-    `);
-    win.document.close();
-    win.focus();
-    setTimeout(() => win.print(), 300);
+    window.print();
   };
 
   const [passcodeInput, setPasscodeInput] = useState("");
@@ -5726,6 +5799,8 @@ export default function App() {
             pointLog={pointLog}
             setPointLog={setPointLog}
             onNewSet={handleNewSet}
+            previousSetSlots={previousSetSlots}
+            onImportPreviousSetSlots={importPreviousSetSlots}
           />
         )}
         {tab === "box" && (
