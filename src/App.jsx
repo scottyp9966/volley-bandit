@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle } from "lucide-react";
+import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon } from "lucide-react";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 
@@ -15,7 +15,12 @@ import { db } from "./firebase.js";
 // entirely (the app opens with no passcode screen at all).
 const APP_PASSCODE = "volley26";
 
-const COLORS = {
+// Two palettes, switched via a Settings toggle. COLORS itself stays a
+// mutable object (not reassigned, just its properties updated in place) so
+// every existing style in the app — which reads COLORS.xxx directly — picks
+// up the new values automatically on the next render, without needing every
+// single component rewritten to consume a theme prop or context.
+const DARK_COLORS = {
   bg: "#1C2128",
   bgRaised: "#242A33",
   chalk: "#F5F3EE",
@@ -27,6 +32,19 @@ const COLORS = {
   line: "#333B46",
   gold: "#FFC857",
 };
+const LIGHT_COLORS = {
+  bg: "#E8E8E6",
+  bgRaised: "#FFFFFF",
+  chalk: "#12261A",
+  chalkDim: "#42604C",
+  orange: "#155C2E", // primary accent — key name kept as "orange" everywhere it's referenced, value repurposed to green for this theme
+  blue: "#3E7CA6",
+  green: "#4C9A63",
+  red: "#C1443C",
+  line: "#CBD1CA",
+  gold: "#B8860B", // deepened from the dark theme's pale gold for contrast on a light background
+};
+let COLORS = { ...DARK_COLORS };
 
 
 // Persist state to localStorage so nothing is lost when the tab closes or
@@ -316,7 +334,7 @@ function PhoneFrame({ children }) {
   );
 }
 
-function TopBar({ title, sub, onPrint, teamLogo, onInfo }) {
+function TopBar({ title, sub, onPrint, teamLogo, onInfo, onSettings }) {
   return (
     <div
       style={{
@@ -356,6 +374,24 @@ function TopBar({ title, sub, onPrint, teamLogo, onInfo }) {
         </div>
       </div>
       <div style={{ display: "flex", gap: 6 }}>
+        {onSettings && (
+          <button
+            onClick={onSettings}
+            title="Settings"
+            style={{
+              background: "none",
+              border: `1px solid ${COLORS.line}`,
+              borderRadius: 8,
+              padding: 8,
+              color: COLORS.chalkDim,
+              display: "flex",
+              marginTop: 2,
+              flexShrink: 0,
+            }}
+          >
+            <SettingsIcon size={16} />
+          </button>
+        )}
         {onInfo && (
           <button
             onClick={onInfo}
@@ -453,7 +489,7 @@ function TabBar({ tab, setTab }) {
 }
 
 // ---- Lineup screen: rotation dial court diagram, multi-lineup support ----
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, includePairingsLineup, setIncludePairingsLineup, roleSystem, setRoleSystem }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
@@ -1230,37 +1266,6 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           })}
         </div>
       )}
-
-      <button
-        onClick={() => setIncludePairingsLineup((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "none",
-          border: "none",
-          padding: "0 0 20px",
-          color: COLORS.chalkDim,
-          fontSize: 11,
-        }}
-      >
-        <span
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: 4,
-            border: `1.5px solid ${includePairingsLineup ? COLORS.orange : COLORS.line}`,
-            background: includePairingsLineup ? COLORS.orange : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          {includePairingsLineup && <Check size={11} color="#1C2128" />}
-        </span>
-        Include pairings (per set) when printing the lineup sheet
-      </button>
 
       <div
         style={{
@@ -3442,7 +3447,7 @@ function BoxScoreScreen({ log, roster, matches, lineups, activeMatchId, statsVie
 }
 
 // ---- Roster screen: full team, independent of any single lineup ----
-function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, includePairingsRoster, setIncludePairingsRoster, setUnlockedWith, teamCode, setTeamCode, exportAllData }) {
+function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "" });
 
@@ -3630,63 +3635,6 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             </button>
           )}
         </div>
-
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.line}` }}>
-          <div style={{ fontSize: 10, color: COLORS.chalkDim, marginBottom: 6 }}>
-            Team code: <b style={{ color: COLORS.chalk }}>{teamCode}</b>
-          </div>
-          <button
-            onClick={() => setUnlockedWith("")}
-            style={{
-              width: "100%",
-              padding: "8px",
-              marginBottom: 6,
-              borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: "none",
-              color: COLORS.chalkDim,
-              fontSize: 11,
-              fontWeight: 700,
-            }}
-          >
-            Lock This Device Now
-          </button>
-          <button
-            onClick={() => {
-              if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
-                setTeamCode("");
-              }
-            }}
-            style={{
-              width: "100%",
-              padding: "8px",
-              borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: "none",
-              color: COLORS.chalkDim,
-              fontSize: 11,
-              fontWeight: 700,
-            }}
-          >
-            Switch Team
-          </button>
-          <button
-            onClick={exportAllData}
-            style={{
-              width: "100%",
-              padding: "8px",
-              marginTop: 6,
-              borderRadius: 8,
-              border: `1px solid ${COLORS.blue}`,
-              background: "rgba(62,124,166,0.1)",
-              color: COLORS.chalk,
-              fontSize: 11,
-              fontWeight: 700,
-            }}
-          >
-            Export All Data (Backup)
-          </button>
-        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -3736,37 +3684,6 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           </button>
         )}
       </div>
-
-      <button
-        onClick={() => setIncludePairingsRoster((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "none",
-          border: "none",
-          padding: "0 0 14px",
-          color: COLORS.chalkDim,
-          fontSize: 11,
-        }}
-      >
-        <span
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: 4,
-            border: `1.5px solid ${includePairingsRoster ? COLORS.orange : COLORS.line}`,
-            background: includePairingsRoster ? COLORS.orange : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          {includePairingsRoster && <Check size={11} color="#1C2128" />}
-        </span>
-        Include substitution pairings when printing this roster
-      </button>
 
       {roster.length === 0 && (
         <div style={{ color: COLORS.chalkDim, fontSize: 13, textAlign: "center", marginTop: 40 }}>
@@ -5378,9 +5295,170 @@ function StatInfoSheet({ onClose }) {
   );
 }
 
+// ---- Settings sheet — theme, print preferences, and account/team actions
+// consolidated in one place instead of scattered across Roster and Lineup ----
+function SettingsSheet({
+  onClose,
+  theme,
+  setTheme,
+  includePairingsRoster,
+  setIncludePairingsRoster,
+  includePairingsLineup,
+  setIncludePairingsLineup,
+  teamCode,
+  setTeamCode,
+  setUnlockedWith,
+  exportAllData,
+}) {
+  const checkboxRow = (checked, onToggle, label) => (
+    <button
+      onClick={onToggle}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        background: "none",
+        border: "none",
+        padding: "6px 0",
+        color: COLORS.chalkDim,
+        fontSize: 12,
+        textAlign: "left",
+      }}
+    >
+      <span
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+          border: `1.5px solid ${checked ? COLORS.orange : COLORS.line}`,
+          background: checked ? COLORS.orange : "transparent",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        {checked && <Check size={11} color={COLORS.bg} />}
+      </span>
+      {label}
+    </button>
+  );
+
+  const actionBtn = (onClick, label, style = {}) => (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        padding: "9px",
+        marginBottom: 8,
+        borderRadius: 8,
+        border: `1px solid ${COLORS.line}`,
+        background: "none",
+        color: COLORS.chalk,
+        fontSize: 12,
+        fontWeight: 700,
+        ...style,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex",
+        alignItems: "flex-end",
+        zIndex: 10,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.bgRaised,
+          width: "100%",
+          borderRadius: "20px 20px 0 0",
+          padding: 18,
+          maxHeight: "85%",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
+            Settings
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+          Appearance
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          {["light", "dark"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTheme(t)}
+              style={{
+                flex: 1,
+                padding: "10px",
+                borderRadius: 8,
+                border: `1.5px solid ${theme === t ? COLORS.orange : COLORS.line}`,
+                background: theme === t ? "rgba(255,107,53,0.12)" : "transparent",
+                color: COLORS.chalk,
+                fontWeight: 700,
+                fontSize: 13,
+                textTransform: "capitalize",
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+          Printing
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          {checkboxRow(includePairingsRoster, () => setIncludePairingsRoster((v) => !v), "Include pairings when printing roster")}
+          {checkboxRow(includePairingsLineup, () => setIncludePairingsLineup((v) => !v), "Include pairings when printing lineup sheet")}
+        </div>
+
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+          Team
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
+          Team code: <b style={{ color: COLORS.chalk }}>{teamCode}</b>
+        </div>
+        {actionBtn(() => setUnlockedWith(""), "Lock This Device Now")}
+        {actionBtn(() => {
+          if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
+            setTeamCode("");
+          }
+        }, "Switch Team")}
+        {actionBtn(exportAllData, "Export All Data (Backup)", {
+          border: `1px solid ${COLORS.blue}`,
+          background: "rgba(62,124,166,0.1)",
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState("roster");
   const [showStatInfo, setShowStatInfo] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  // Theme is a per-device display preference, not team data — stays local,
+  // not synced through Firestore, so each device can pick its own.
+  const [theme, setTheme] = usePersisted("vb-theme", "dark");
+  Object.assign(COLORS, theme === "light" ? LIGHT_COLORS : DARK_COLORS);
 
   // Persist which passcode this specific device last unlocked with — if
   // APP_PASSCODE (below) changes, this stops matching and the device
@@ -5737,8 +5815,24 @@ export default function App() {
           onPrint={PRINTABLE_TABS[tab] ? handlePrint : null}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
+          onSettings={() => setShowSettings(true)}
         />
         {showStatInfo && <StatInfoSheet onClose={() => setShowStatInfo(false)} />}
+        {showSettings && (
+          <SettingsSheet
+            onClose={() => setShowSettings(false)}
+            theme={theme}
+            setTheme={setTheme}
+            includePairingsRoster={includePairingsRoster}
+            setIncludePairingsRoster={setIncludePairingsRoster}
+            includePairingsLineup={includePairingsLineup}
+            setIncludePairingsLineup={setIncludePairingsLineup}
+            teamCode={teamCode}
+            setTeamCode={setTeamCode}
+            setUnlockedWith={setUnlockedWith}
+            exportAllData={exportAllData}
+          />
+        )}
         {tab === "roster" && (
           <RosterScreen
             roster={roster}
@@ -5755,12 +5849,6 @@ export default function App() {
             updateTeamLogo={updateTeamLogo}
             log={log}
             setLog={setLog}
-            includePairingsRoster={includePairingsRoster}
-            setIncludePairingsRoster={setIncludePairingsRoster}
-            setUnlockedWith={setUnlockedWith}
-            teamCode={teamCode}
-            setTeamCode={setTeamCode}
-            exportAllData={exportAllData}
           />
         )}
         {tab === "lineup" && (
@@ -5773,8 +5861,6 @@ export default function App() {
             setRoster={setRoster}
             captainId={captainId}
             setCaptainId={setCaptainId}
-            includePairingsLineup={includePairingsLineup}
-            setIncludePairingsLineup={setIncludePairingsLineup}
             roleSystem={roleSystem}
             setRoleSystem={setRoleSystem}
           />
