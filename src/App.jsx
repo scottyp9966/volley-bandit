@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon } from "lucide-react";
+import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle } from "lucide-react";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 
@@ -274,6 +274,21 @@ const STAT_BUTTONS = [
 
 const STAT_LABELS = Object.fromEntries(STAT_BUTTONS.map((s) => [s.key, s.label]));
 
+// Definitions for the "?" info button on the Stats tab — plain-language
+// reference for what each button actually counts.
+const STAT_DEFINITIONS = {
+  ace: "A serve that lands in the opponent's court without being touched, winning the point outright.",
+  serveErr: "A mistake made while serving, such as a fault, that gives the point to the opponent.",
+  kill: "A successful attack that results directly in a point for the team.",
+  attackErr: "A mistake made during an attack, whether forced by the opponent's defense or unforced.",
+  blockSolo: "A block made by a single player, without help from a teammate, that stops the opponent's attack.",
+  blockAst: "A block made together with one or more teammates that stops the opponent's attack.",
+  blockErr: "A blocking attempt that faults (such as a net touch) or fails to stop the attack, giving the opponent the point.",
+  dig: "A successful defensive play that keeps the ball from hitting the ground.",
+  assist: "A set made by a player that leads directly to a kill.",
+  recErr: "A mistake made while receiving a serve or an attack.",
+};
+
 function PhoneFrame({ children }) {
   return (
     <div
@@ -297,7 +312,7 @@ function PhoneFrame({ children }) {
   );
 }
 
-function TopBar({ title, sub, onPrint, teamLogo }) {
+function TopBar({ title, sub, onPrint, teamLogo, onInfo }) {
   return (
     <div
       style={{
@@ -336,24 +351,44 @@ function TopBar({ title, sub, onPrint, teamLogo }) {
           )}
         </div>
       </div>
-      {onPrint && (
-        <button
-          onClick={onPrint}
-          title="Print"
-          style={{
-            background: "none",
-            border: `1px solid ${COLORS.line}`,
-            borderRadius: 8,
-            padding: 8,
-            color: COLORS.chalkDim,
-            display: "flex",
-            marginTop: 2,
-            flexShrink: 0,
-          }}
-        >
-          <Printer size={16} />
-        </button>
-      )}
+      <div style={{ display: "flex", gap: 6 }}>
+        {onInfo && (
+          <button
+            onClick={onInfo}
+            title="Stat definitions"
+            style={{
+              background: "none",
+              border: `1px solid ${COLORS.line}`,
+              borderRadius: 8,
+              padding: 8,
+              color: COLORS.chalkDim,
+              display: "flex",
+              marginTop: 2,
+              flexShrink: 0,
+            }}
+          >
+            <HelpCircle size={16} />
+          </button>
+        )}
+        {onPrint && (
+          <button
+            onClick={onPrint}
+            title="Print"
+            style={{
+              background: "none",
+              border: `1px solid ${COLORS.line}`,
+              borderRadius: 8,
+              padding: 8,
+              color: COLORS.chalkDim,
+              display: "flex",
+              marginTop: 2,
+              flexShrink: 0,
+            }}
+          >
+            <Printer size={16} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -5259,8 +5294,55 @@ function TeamGate({ onLinked }) {
   );
 }
 
+// ---- Stat definitions sheet, opened from the "?" button on the Stats tab ----
+function StatInfoSheet({ onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex",
+        alignItems: "flex-end",
+        zIndex: 10,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.bgRaised,
+          width: "100%",
+          borderRadius: "20px 20px 0 0",
+          padding: 18,
+          maxHeight: "80%",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
+            Stat Definitions
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
+            <X size={20} />
+          </button>
+        </div>
+        {STAT_BUTTONS.map((s) => (
+          <div key={s.key} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: s.color, marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 12, color: COLORS.chalkDim, lineHeight: 1.4 }}>
+              {STAT_DEFINITIONS[s.key]}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState("roster");
+  const [showStatInfo, setShowStatInfo] = useState(false);
 
   // Persist which passcode this specific device last unlocked with — if
   // APP_PASSCODE (below) changes, this stops matching and the device
@@ -5619,7 +5701,9 @@ export default function App() {
           sub={titles[tab].sub}
           onPrint={PRINTABLE_TABS[tab] ? handlePrint : null}
           teamLogo={teamLogo}
+          onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
         />
+        {showStatInfo && <StatInfoSheet onClose={() => setShowStatInfo(false)} />}
         {tab === "roster" && (
           <RosterScreen
             roster={roster}
