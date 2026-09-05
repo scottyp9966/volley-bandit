@@ -261,15 +261,17 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
 
 const STAT_BUTTONS = [
   { key: "ace", label: "Ace", group: "Serve", color: COLORS.green },
+  { key: "serviceAtt", label: "Service Att.", group: "Serve", color: COLORS.blue },
   { key: "serveErr", label: "Serve Err", group: "Serve", color: COLORS.red },
   { key: "kill", label: "Kill", group: "Attack", color: COLORS.green },
+  { key: "assist", label: "Assist", group: "Attack", color: COLORS.green },
   { key: "attackErr", label: "Attack Err", group: "Attack", color: COLORS.red },
+  { key: "dig", label: "Dig", group: "Reception", color: COLORS.green },
+  { key: "recErr", label: "Rec Err", group: "Reception", color: COLORS.red },
+  { key: "passingErr", label: "Passing Err", group: "Reception", color: COLORS.red },
   { key: "blockSolo", label: "Block Solo", group: "Block", color: COLORS.green },
   { key: "blockAst", label: "Block Ast", group: "Block", color: COLORS.green },
   { key: "blockErr", label: "Block Err", group: "Block", color: COLORS.red },
-  { key: "dig", label: "Dig", group: "Other", color: COLORS.blue },
-  { key: "assist", label: "Assist", group: "Other", color: COLORS.blue },
-  { key: "recErr", label: "Rec Err", group: "Other", color: COLORS.red },
 ];
 
 const STAT_LABELS = Object.fromEntries(STAT_BUTTONS.map((s) => [s.key, s.label]));
@@ -278,15 +280,17 @@ const STAT_LABELS = Object.fromEntries(STAT_BUTTONS.map((s) => [s.key, s.label])
 // reference for what each button actually counts.
 const STAT_DEFINITIONS = {
   ace: "A serve that lands in the opponent's court without being touched, winning the point outright.",
+  serviceAtt: "The total number of serves made by a player — used together with Aces and Serve Errors to gauge serving performance.",
   serveErr: "A mistake made while serving, such as a fault, that gives the point to the opponent.",
   kill: "A successful attack that results directly in a point for the team.",
+  assist: "A set made by a player that leads directly to a kill.",
   attackErr: "A mistake made during an attack, whether forced by the opponent's defense or unforced.",
+  dig: "A successful defensive play that keeps the ball from hitting the ground.",
+  recErr: "A mistake made while receiving a serve or an attack.",
+  passingErr: "A mistake made while attempting to pass the ball, such as a mishandle.",
   blockSolo: "A block made by a single player, without help from a teammate, that stops the opponent's attack.",
   blockAst: "A block made together with one or more teammates that stops the opponent's attack.",
   blockErr: "A blocking attempt that faults (such as a net touch) or fails to stop the attack, giving the opponent the point.",
-  dig: "A successful defensive play that keeps the ball from hitting the ground.",
-  assist: "A set made by a player that leads directly to a kill.",
-  recErr: "A mistake made while receiving a serve or an attack.",
 };
 
 function PhoneFrame({ children }) {
@@ -2196,8 +2200,6 @@ function LiveScreen({
   setSubCount,
   liberoSubCount,
   setLiberoSubCount,
-  timeouts,
-  setTimeouts,
   activeMatchId,
   pointLog,
   setPointLog,
@@ -2447,82 +2449,40 @@ function LiveScreen({
         </div>
       )}
 
-      {/* Timeout tracker - 2 per set is the common rule; flagged, not blocked, past that */}
+      {/* Advance rotation - swipe (capped at 2/3 screen width, not full-width)
+          to avoid a mid-play accidental tap - undo sits right-justified in
+          the same row instead of taking its own row below. */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "8px 20px 0",
-          fontSize: 11,
+          padding: "10px 20px 0",
         }}
       >
-        <span style={{ color: COLORS.chalkDim, fontWeight: 700 }}>Timeouts</span>
-        <div style={{ display: "flex", gap: 16 }}>
-          {[
-            { key: "us", label: "Us" },
-            { key: "opp", label: "Opp" },
-          ].map(({ key, label }) => (
-            <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: COLORS.chalkDim }}>{label}</span>
-              <button
-                onClick={() => setTimeouts((t) => ({ ...t, [key]: Math.max(0, t[key] - 1) }))}
-                style={{ background: "none", border: "none", color: COLORS.chalkDim, padding: 2 }}
-              >
-                <Minus size={12} />
-              </button>
-              <span
-                style={{
-                  fontFamily: "'Oswald', sans-serif",
-                  fontWeight: 700,
-                  color: timeouts[key] >= 2 ? COLORS.gold : COLORS.chalk,
-                  minWidth: 24,
-                  textAlign: "center",
-                }}
-              >
-                {timeouts[key]}/2
-              </span>
-              <button
-                onClick={() => setTimeouts((t) => ({ ...t, [key]: t[key] + 1 }))}
-                style={{ background: "none", border: "none", color: COLORS.chalkDim, padding: 2 }}
-              >
-                <Plus size={12} />
-              </button>
-            </div>
-          ))}
+        <div style={{ width: "66%" }}>
+          <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} />
         </div>
+        <button
+          onClick={undoMatchAction}
+          disabled={matchHistory.length === 0}
+          title={matchHistory.length > 0 ? `Undo: ${matchHistory[matchHistory.length - 1].label}` : "Nothing to undo"}
+          style={{
+            width: 58,
+            height: 26,
+            borderRadius: 10,
+            border: `1.5px solid ${COLORS.line}`,
+            background: "none",
+            color: COLORS.chalkDim,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            opacity: matchHistory.length === 0 ? 0.35 : 1,
+          }}
+        >
+          <Undo2 size={16} />
+        </button>
       </div>
-
-      {/* Advance rotation - swipe to avoid a mid-play accidental tap */}
-      <div style={{ padding: "10px 20px 0" }}>
-        <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} />
-      </div>
-
-      {/* Undo the last rotation/sub action - a real step-back stack, not just "undo last ever" */}
-      {matchHistory.length > 0 && (
-        <div style={{ padding: "4px 20px 0" }}>
-          <button
-            onClick={undoMatchAction}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-              padding: "4px 8px",
-              borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: "none",
-              color: COLORS.chalkDim,
-              fontSize: 10,
-              fontWeight: 700,
-            }}
-          >
-            <Undo2 size={11} />
-            Undo: {matchHistory[matchHistory.length - 1].label}
-          </button>
-        </div>
-      )}
 
       {/* Suggested substitutions from pairings, tied to the new rotation */}
       {subSuggestions.length > 0 && (
@@ -2634,31 +2594,33 @@ function LiveScreen({
               onClick={() => setSelectedSlot(slot)}
               style={{
                 gridArea,
-                padding: "6px 4px",
+                padding: "5px 8px",
                 borderRadius: 8,
                 border: `1.5px solid ${active ? COLORS.orange : COLORS.line}`,
                 background: active ? "rgba(255,107,53,0.15)" : "transparent",
                 color: COLORS.chalk,
                 display: "flex",
-                flexDirection: "column",
                 alignItems: "center",
-                textAlign: "center",
               }}
             >
-              <span style={{ fontSize: 8, color: COLORS.chalkDim }}>{slot}</span>
-              <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, fontWeight: 600, lineHeight: 1.1 }}>
+              <span style={{ flex: "0 0 14px", fontSize: 8, color: COLORS.chalkDim, textAlign: "left" }}>
+                {slot}
+              </span>
+              <span style={{ flex: 1, textAlign: "center", fontFamily: "'Oswald', sans-serif", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>
                 {p ? `#${p.num}` : "—"}
               </span>
-              {p && (
-                <span style={{ fontSize: 8, color: COLORS.chalkDim, marginTop: 1 }}>
-                  {displayName(p)}
-                </span>
-              )}
-              {p?.position && (
-                <span style={{ fontSize: 7, fontWeight: 700, color: active ? COLORS.orange : COLORS.chalkDim, marginTop: 1 }}>
-                  {p.position}
-                </span>
-              )}
+              <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-end", textAlign: "right" }}>
+                {p && (
+                  <span style={{ fontSize: 8, color: COLORS.chalkDim, whiteSpace: "nowrap" }}>
+                    {displayName(p)}
+                  </span>
+                )}
+                {p?.position && (
+                  <span style={{ fontSize: 7, fontWeight: 700, color: active ? COLORS.orange : COLORS.chalkDim }}>
+                    {p.position}
+                  </span>
+                )}
+              </div>
             </button>
           );
         })}
@@ -2680,15 +2642,18 @@ function LiveScreen({
         </span>
       </div>
 
-      {/* Stat buttons */}
+      {/* Stat buttons - 3 columns, grouped by action (Serve/Attack/Reception/
+          Block) via STAT_BUTTONS order rather than by outcome, so related
+          buttons for the same play sit together */}
       <div
         style={{
           flex: 1,
           overflowY: "auto",
           padding: "0 20px 10px",
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 8,
+          gridTemplateColumns: "1fr 1fr 1fr",
+          rowGap: 12,
+          columnGap: 8,
           alignContent: "start",
         }}
       >
@@ -2698,13 +2663,14 @@ function LiveScreen({
             disabled={!currentPlayerId}
             onClick={() => recordStat(s.key)}
             style={{
-              padding: "14px 8px",
+              padding: "12px 4px",
               borderRadius: 10,
               border: `1.5px solid ${s.color}`,
               background: `${s.color}22`,
               color: COLORS.chalk,
-              fontSize: 13,
+              fontSize: 11,
               fontWeight: 700,
+              textAlign: "center",
               opacity: currentPlayerId ? 1 : 0.4,
               cursor: currentPlayerId ? "pointer" : "not-allowed",
             }}
@@ -2987,7 +2953,7 @@ function BoxScoreScreen({ log, roster, matches, lineups, activeMatchId, statsVie
     return Object.entries(byLineup).map(([lineupId, stats]) => {
       const lineup = lineups.find((l) => l.id === Number(lineupId));
       const kills = stats.kill || 0;
-      const errors = (stats.attackErr || 0) + (stats.serveErr || 0) + (stats.recErr || 0) + (stats.blockErr || 0);
+      const errors = (stats.attackErr || 0) + (stats.serveErr || 0) + (stats.recErr || 0) + (stats.blockErr || 0) + (stats.passingErr || 0);
       return { name: lineup ? lineup.name : "Before tracking (no lineup tagged)", stats, kills, errors };
     });
   }, [insightsLog, lineups]);
@@ -4535,7 +4501,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, setNum
     return Object.entries(byLineup).map(([lineupId, stats]) => {
       const lineup = lineups.find((l) => l.id === Number(lineupId));
       const kills = stats.kill || 0;
-      const errors = (stats.attackErr || 0) + (stats.serveErr || 0) + (stats.recErr || 0) + (stats.blockErr || 0);
+      const errors = (stats.attackErr || 0) + (stats.serveErr || 0) + (stats.recErr || 0) + (stats.blockErr || 0) + (stats.passingErr || 0);
       return { name: lineup ? lineup.name : "Before tracking", kills, errors };
     });
   })();
@@ -5372,7 +5338,6 @@ export default function App() {
     setNumber: 1,
     subCount: 0,
     liberoSubCount: 0,
-    timeouts: { us: 0, opp: 0 },
     matches: [],
     activeMatchId: null,
     statsView: { section: "boxscore", insightsMatchId: null },
@@ -5413,8 +5378,6 @@ export default function App() {
   const setSubCount = fieldSetter(setMainDoc, "subCount");
   const liberoSubCount = mainDoc.liberoSubCount;
   const setLiberoSubCount = fieldSetter(setMainDoc, "liberoSubCount");
-  const timeouts = mainDoc.timeouts;
-  const setTimeouts = fieldSetter(setMainDoc, "timeouts");
   const matches = mainDoc.matches;
   const setMatches = fieldSetter(setMainDoc, "matches");
   const activeMatchId = mainDoc.activeMatchId;
@@ -5463,7 +5426,6 @@ export default function App() {
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
-    setTimeouts({ us: 0, opp: 0 });
   };
 
   const titles = {
@@ -5760,8 +5722,6 @@ export default function App() {
             setSubCount={setSubCount}
             liberoSubCount={liberoSubCount}
             setLiberoSubCount={setLiberoSubCount}
-            timeouts={timeouts}
-            setTimeouts={setTimeouts}
             activeMatchId={activeMatchId}
             pointLog={pointLog}
             setPointLog={setPointLog}
