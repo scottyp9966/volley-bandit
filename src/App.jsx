@@ -558,7 +558,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       : { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null };
     const baseLiberos = fromDuplicate ? [...(activeLineup.liberos || [null, null])] : [null, null];
     const basePairings = fromDuplicate ? [...(activeLineup.pairings || [])] : [];
-    const name = fromDuplicate ? `${activeLineup.name} copy` : `Set ${lineups.length + 1}`;
+    const name = fromDuplicate ? `${activeLineup.name} copy` : `Lineup ${lineups.length + 1}`;
     setLineups((prev) => [
       ...prev,
       { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings, currentRotation: 1 },
@@ -2453,7 +2453,7 @@ function LiveScreen({
               onNewSet();
               setConfirmingNewSet(false);
             }}
-            height={18}
+            height={30}
           />
           <button
             onClick={() => setConfirmingNewSet(false)}
@@ -3937,7 +3937,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
 }
 
 // ---- Schedule screen: manual add + edit + paste import ----
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView }) {
+function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, onEndMatch }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -4096,10 +4096,10 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               padding: 12,
               marginBottom: 8,
               display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              flexDirection: "column",
             }}
           >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div onClick={() => goToMatch(m)} style={{ cursor: "pointer", flex: 1 }} title="Tap for lineup prep or box score">
               {isActive && (
                 <div style={{ fontSize: 9, fontWeight: 700, color: COLORS.gold, letterSpacing: 0.5, marginBottom: 2 }}>
@@ -4146,6 +4146,29 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
                 <Trash2 size={15} />
               </button>
             </div>
+            </div>
+            {isActive && (
+              <button
+                onClick={() => {
+                  if (window.confirm("End this match? Resets the live scoreboard, sub counts, and every lineup's rotation back to 1 for whatever comes next. Stats already recorded stay exactly as they are.")) {
+                    onEndMatch();
+                  }
+                }}
+                style={{
+                  marginTop: 10,
+                  width: "100%",
+                  padding: "8px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.red}`,
+                  background: "rgba(193,68,60,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                End Match
+              </button>
+            )}
           </div>
         );
       })}
@@ -4724,7 +4747,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, setNum
                 return (
                   <div key={i} style={{ marginBottom: sizing.marginBottom }}>
                     <div style={{ textAlign: "center", fontSize: sizing.setFont, fontWeight: 700 }}>
-                      {l ? l.name : `Set ${i + 1}`}
+                      {l ? l.name : `Lineup ${i + 1}`}
                     </div>
                     <div style={{ textAlign: "center", fontSize: sizing.netFont, fontWeight: 700, marginBottom: sizing.gap / 2 }}>
                       NET
@@ -5477,7 +5500,7 @@ export default function App() {
     lineups: [
       {
         id: 1,
-        name: "Set 1",
+        name: "Lineup 1",
         slots: { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null },
         liberos: [null, null],
         pairings: [],
@@ -5599,6 +5622,21 @@ export default function App() {
     setLineups((prev) =>
       prev.map((l) => (l.id === activeLineupId ? { ...l, slots: { ...previousSetSlots } } : l))
     );
+  };
+
+  // Ends the active match: resets the live scoreboard and every lineup's
+  // rotation back to 1, and clears which match is active so new stat entries
+  // don't accidentally get logged against a match that's already finished.
+  // Stats already recorded stay exactly where they are — this only resets
+  // the live-tracking state for whatever comes next.
+  const endMatch = () => {
+    setScore({ us: 0, opp: 0 });
+    setSetNumber(1);
+    setSubCount(0);
+    setLiberoSubCount(0);
+    setPreviousSetSlots(null);
+    setLineups((prev) => prev.map((l) => ({ ...l, currentRotation: 1 })));
+    setActiveMatchId(null);
   };
 
   const titles = {
@@ -5911,6 +5949,7 @@ export default function App() {
             setActiveMatchId={setActiveMatchId}
             setTab={setTab}
             setStatsView={setStatsView}
+            onEndMatch={endMatch}
           />
         )}
         <TabBar tab={tab} setTab={setTab} />
