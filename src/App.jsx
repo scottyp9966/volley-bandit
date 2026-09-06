@@ -315,18 +315,15 @@ function PhoneFrame({ children }) {
   return (
     <div
       style={{
-        width: 390,
-        height: 780,
+        width: "100%",
+        height: "100dvh", // dynamic viewport height — accounts for mobile browser chrome correctly, unlike 100vh
         background: COLORS.bg,
-        borderRadius: 40,
-        border: `8px solid #0B0D10`,
-        boxShadow: "0 30px 60px rgba(0,0,0,0.5)",
-        overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         fontFamily: "'Inter', system-ui, sans-serif",
         color: COLORS.chalk,
         position: "relative",
+        overflow: "hidden",
       }}
     >
       {children}
@@ -5810,16 +5807,16 @@ export default function App() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        width: "100%",
+        height: "100dvh",
         background: "#0B0D10",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
+        flexDirection: "column",
       }}
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
         * { box-sizing: border-box; }
         button { font-family: inherit; }
         #print-root { display: none; }
