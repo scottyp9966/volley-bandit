@@ -15,6 +15,13 @@ import { db } from "./firebase.js";
 // entirely (the app opens with no passcode screen at all).
 const APP_PASSCODE = "volley26";
 
+// ---- Build version ----
+// A quick way to confirm a device is actually running the latest code,
+// rather than a stale cached build — shown at the bottom of Settings. Bumped
+// with each shipped change; the date is what actually matters (compare it to
+// "today" to know whether an update has really landed on that device yet).
+const APP_VERSION = "2026.09.06";
+
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
 // every existing style in the app — which reads COLORS.xxx directly — picks
@@ -5515,6 +5522,9 @@ function SettingsSheet({
           border: `1px solid ${COLORS.blue}`,
           background: "rgba(62,124,166,0.1)",
         })}
+        <div style={{ textAlign: "center", fontSize: 10, color: COLORS.chalkDim, marginTop: 10 }}>
+          Volley Bandit · Build {APP_VERSION}
+        </div>
       </div>
     </div>
   );
