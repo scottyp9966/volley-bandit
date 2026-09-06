@@ -316,7 +316,10 @@ function PhoneFrame({ children }) {
     <div
       style={{
         width: "100%",
-        height: "100dvh", // dynamic viewport height — accounts for mobile browser chrome correctly, unlike 100vh
+        height: "100%", // fills its parent (already sized to the viewport) rather than
+        // re-declaring its own 100dvh — nesting two independent viewport-relative
+        // heights was coming out slightly taller than the visible screen on some
+        // devices, clipping the tab bar off the bottom with no way to reach it.
         background: COLORS.bg,
         display: "flex",
         flexDirection: "column",
@@ -5812,6 +5815,7 @@ export default function App() {
         background: "#0B0D10",
         display: "flex",
         flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       <style>{`
