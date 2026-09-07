@@ -20,7 +20,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.06";
+const APP_VERSION = "2026.09.07b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -341,7 +341,7 @@ function PhoneFrame({ children }) {
   );
 }
 
-function TopBar({ title, sub, onPrint, teamLogo, onInfo, onSettings }) {
+function TopBar({ title, sub, onPrint, printing, teamLogo, onInfo, onSettings }) {
   return (
     <div
       style={{
@@ -420,16 +420,18 @@ function TopBar({ title, sub, onPrint, teamLogo, onInfo, onSettings }) {
         {onPrint && (
           <button
             onClick={onPrint}
-            title="Print"
+            disabled={printing}
+            title={printing ? "Preparing to print…" : "Print"}
             style={{
-              background: "none",
-              border: `1px solid ${COLORS.line}`,
+              background: printing ? "rgba(255,107,53,0.15)" : "none",
+              border: `1px solid ${printing ? COLORS.orange : COLORS.line}`,
               borderRadius: 8,
               padding: 8,
-              color: COLORS.chalkDim,
+              color: printing ? COLORS.orange : COLORS.chalkDim,
               display: "flex",
               marginTop: 2,
               flexShrink: 0,
+              opacity: printing ? 0.7 : 1,
             }}
           >
             <Printer size={16} />
@@ -496,19 +498,29 @@ function TabBar({ tab, setTab }) {
 }
 
 // ---- Lineup screen: rotation dial court diagram, multi-lineup support ----
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
-  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "" });
+  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "", position2: "" });
   const [addingPairing, setAddingPairing] = useState(false);
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
   const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
   const [rotationsAhead, setRotationsAhead] = useState(0);
   const [isAlternate, setIsAlternate] = useState(false);
+  // Which lineup this SCREEN is showing/editing — deliberately separate from
+  // activeLineupId (the one actually live on the Live screen). Browsing or
+  // prepping any lineup here must never affect what's currently being played;
+  // only "Start Next Set" on Live changes which lineup is truly active. This
+  // does follow along automatically when the active lineup genuinely changes
+  // (Start Next Set, End Match), so navigating here normally shows what's live.
+  const [viewingLineupId, setViewingLineupId] = useState(activeLineupId);
+  useEffect(() => {
+    setViewingLineupId(activeLineupId);
+  }, [activeLineupId]);
 
-  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+  const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0];
   const slots = activeLineup.slots;
   const liberos = activeLineup.liberos || [null, null];
 
@@ -575,14 +587,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       ...prev,
       { id: newId, name, slots: baseSlots, liberos: baseLiberos, pairings: basePairings, currentRotation: 1, setNumber: nextSetNumber },
     ]);
-    setActiveLineupId(newId);
+    setViewingLineupId(newId);
   };
 
   const deleteLineup = (id) => {
     if (lineups.length === 1) return;
     const remaining = lineups.filter((l) => l.id !== id);
     setLineups(remaining);
-    if (activeLineupId === id) setActiveLineupId(remaining[0].id);
+    if (viewingLineupId === id) setViewingLineupId(remaining[0].id);
   };
 
   const renameLineup = (name) => {
@@ -658,12 +670,12 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const servesFirst = activeLineup.servesFirst || "us";
 
   const openAddPlayer = () => {
-    setPlayerForm({ num: "", firstName: "", lastName: "", position: "" });
+    setPlayerForm({ num: "", firstName: "", lastName: "", position: "", position2: "" });
     setPlayerSheet({ mode: "add" });
   };
 
   const openEditPlayer = (p) => {
-    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "" });
+    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
     setPlayerSheet({ mode: "edit", id: p.id });
   };
 
@@ -679,6 +691,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 firstName: playerForm.firstName.trim(),
                 lastName: playerForm.lastName.trim(),
                 position: playerForm.position,
+                position2: playerForm.position2 || "",
               }
             : p
         )
@@ -693,6 +706,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           firstName: playerForm.firstName.trim(),
           lastName: playerForm.lastName.trim(),
           position: playerForm.position,
+          position2: playerForm.position2 || "",
         },
       ]);
     }
@@ -701,24 +715,35 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
   return (
     <div style={{ padding: "16px 20px 20px", overflowY: "auto", flex: 1 }}>
-      {/* Lineup switcher */}
+      {/* Lineup switcher — browsing here is just viewing/editing, never
+          changes which lineup is actually live. A small dot marks whichever
+          one really is live, separate from whichever one you're looking at. */}
       <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
         {lineups.map((l) => (
           <button
             key={l.id}
-            onClick={() => setActiveLineupId(l.id)}
+            onClick={() => setViewingLineupId(l.id)}
             style={{
               flexShrink: 0,
               padding: "7px 12px",
               borderRadius: 8,
-              border: `1.5px solid ${l.id === activeLineupId ? COLORS.orange : COLORS.line}`,
-              background: l.id === activeLineupId ? "rgba(255,107,53,0.15)" : "transparent",
+              border: `1.5px solid ${l.id === viewingLineupId ? COLORS.orange : COLORS.line}`,
+              background: l.id === viewingLineupId ? "rgba(255,107,53,0.15)" : "transparent",
               color: COLORS.chalk,
               fontSize: 12,
-              fontWeight: l.id === activeLineupId ? 700 : 500,
+              fontWeight: l.id === viewingLineupId ? 700 : 500,
               whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
             }}
           >
+            {l.id === activeLineupId && (
+              <span
+                title="Currently live"
+                style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.green, display: "inline-block" }}
+              />
+            )}
             {l.name}
           </button>
         ))}
@@ -2022,6 +2047,31 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 </option>
               ))}
             </select>
+            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+              Secondary Position (optional)
+            </label>
+            <select
+              value={playerForm.position2 || ""}
+              onChange={(e) => setPlayerForm((s) => ({ ...s, position2: e.target.value }))}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                marginTop: 4,
+                marginBottom: 14,
+                background: COLORS.bg,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            >
+              <option value="">None</option>
+              {POSITIONS.map((pos) => (
+                <option key={pos.value} value={pos.value}>
+                  {pos.label}
+                </option>
+              ))}
+            </select>
             <button
               onClick={savePlayer}
               disabled={!playerForm.firstName.trim()}
@@ -2232,7 +2282,6 @@ function LiveScreen({
   setTab,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
-  const [confirmingNewSet, setConfirmingNewSet] = useState(false);
   const [subSuggestions, setSubSuggestions] = useState([]);
   const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, label} — undo for rotation/subs
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
@@ -2418,12 +2467,11 @@ function LiveScreen({
         />
       </div>
 
-      {/* Sub counter + new set */}
+      {/* Sub counter */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
           padding: "8px 20px 0",
           fontSize: 11,
         }}
@@ -2440,55 +2488,7 @@ function LiveScreen({
           </span>
           <span style={{ color: COLORS.chalkDim }}>Libero swaps: {liberoSubCount}</span>
         </div>
-        <button
-          onClick={() => {
-            const nextSetNumber = (activeLineup.setNumber || 1) + 1;
-            const nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
-            if (!nextLineup) {
-              alert(`The lineup for Set ${nextSetNumber} needs to be created — create or duplicate a lineup on the Lineup screen first.`);
-              return;
-            }
-            setConfirmingNewSet(true);
-          }}
-          style={{
-            background: "none",
-            border: `1px solid ${COLORS.line}`,
-            borderRadius: 6,
-            padding: "3px 8px",
-            color: COLORS.chalkDim,
-            fontSize: 10,
-            fontWeight: 700,
-          }}
-        >
-          Start Next Set
-        </button>
       </div>
-      {confirmingNewSet && (
-        <div style={{ padding: "6px 20px 0" }}>
-          <SwipeConfirm
-            label="Swipe to Start Next Set (resets score & subs)"
-            color={COLORS.red}
-            onConfirm={() => {
-              onStartNextSet();
-              setConfirmingNewSet(false);
-            }}
-            height={30}
-          />
-          <button
-            onClick={() => setConfirmingNewSet(false)}
-            style={{
-              background: "none",
-              border: "none",
-              color: COLORS.chalkDim,
-              fontSize: 10,
-              marginTop: 4,
-              padding: 0,
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
       {subCount >= SUB_LIMIT && (
         <div style={{ padding: "4px 20px 0", fontSize: 10, color: COLORS.red }}>
           Sub limit reached for this set — confirming another sub will flag it as over the limit.
@@ -2528,6 +2528,26 @@ function LiveScreen({
         >
           <Undo2 size={16} />
         </button>
+      </div>
+
+      {/* Start Next Set — a direct swipe like Advance Rotation, deliberately
+          grouped down here rather than up near the score buttons, since a
+          mis-tap there was landing dangerously close to resetting the set. */}
+      <div style={{ padding: "8px 20px 0" }}>
+        <SwipeConfirm
+          label={`Swipe to Start Set ${(activeLineup.setNumber || 1) + 1}`}
+          color={COLORS.red}
+          height={30}
+          onConfirm={() => {
+            const nextSetNumber = (activeLineup.setNumber || 1) + 1;
+            const nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
+            if (!nextLineup) {
+              alert(`The lineup for Set ${nextSetNumber} needs to be created — create or duplicate a lineup on the Lineup screen first.`);
+              return;
+            }
+            onStartNextSet();
+          }}
+        />
       </div>
 
       {/* Suggested substitutions from pairings, tied to the new rotation */}
@@ -3523,15 +3543,16 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 // ---- Roster screen: full team, independent of any single lineup ----
 function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
-  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "" });
+  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "", position2: "" });
+  const [sortBy, setSortBy] = useState("number"); // "number" | "position" — display order only, never touches roster's actual stored order
 
   const openAddPlayer = () => {
-    setPlayerForm({ num: "", firstName: "", lastName: "", position: "" });
+    setPlayerForm({ num: "", firstName: "", lastName: "", position: "", position2: "" });
     setPlayerSheet({ mode: "add" });
   };
 
   const openEditPlayer = (p) => {
-    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "" });
+    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
     setPlayerSheet({ mode: "edit", id: p.id });
   };
 
@@ -3547,6 +3568,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 firstName: playerForm.firstName.trim(),
                 lastName: playerForm.lastName.trim(),
                 position: playerForm.position,
+                position2: playerForm.position2 || "",
               }
             : p
         )
@@ -3561,6 +3583,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           firstName: playerForm.firstName.trim(),
           lastName: playerForm.lastName.trim(),
           position: playerForm.position,
+          position2: playerForm.position2 || "",
         },
       ]);
     }
@@ -3765,7 +3788,44 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
         </div>
       )}
 
-      {roster.map((p) => (
+      {roster.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          <span style={{ fontSize: 10, color: COLORS.chalkDim, alignSelf: "center", marginRight: 2 }}>Sort:</span>
+          {[
+            { key: "number", label: "Number" },
+            { key: "position", label: "Position" },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setSortBy(opt.key)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: `1px solid ${sortBy === opt.key ? COLORS.orange : COLORS.line}`,
+                background: sortBy === opt.key ? "rgba(255,107,53,0.15)" : "transparent",
+                color: COLORS.chalk,
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(() => {
+        const posOrder = POSITIONS.map((p) => p.value);
+        const sortedRoster = [...roster].sort((a, b) => {
+          if (sortBy === "position") {
+            const ai = a.position ? posOrder.indexOf(a.position) : posOrder.length;
+            const bi = b.position ? posOrder.indexOf(b.position) : posOrder.length;
+            if (ai !== bi) return ai - bi;
+            return (parseInt(a.num) || 0) - (parseInt(b.num) || 0);
+          }
+          return (parseInt(a.num) || 0) - (parseInt(b.num) || 0);
+        });
+        return sortedRoster.map((p) => (
         <div
           key={p.id}
           style={{
@@ -3829,6 +3889,23 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 {p.position}
               </span>
             )}
+            {p.position2 && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: COLORS.chalkDim,
+                  border: `1px dashed ${COLORS.line}`,
+                  borderRadius: 4,
+                  padding: "1px 5px",
+                  marginTop: 3,
+                  marginLeft: 4,
+                  display: "inline-block",
+                }}
+                title="Secondary position"
+              >
+                {p.position2}
+              </span>
+            )}
           </div>
           <button
             onClick={() => setCaptainId((cur) => (cur === p.id ? null : p.id))}
@@ -3865,7 +3942,8 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             <Trash2 size={14} />
           </button>
         </div>
-      ))}
+        ));
+      })()}
 
       {playerSheet && (
         <div
@@ -3981,6 +4059,31 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
               }}
             >
               <option value="">No position set</option>
+              {POSITIONS.map((pos) => (
+                <option key={pos.value} value={pos.value}>
+                  {pos.label}
+                </option>
+              ))}
+            </select>
+            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+              Secondary Position (optional)
+            </label>
+            <select
+              value={playerForm.position2 || ""}
+              onChange={(e) => setPlayerForm((s) => ({ ...s, position2: e.target.value }))}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                marginTop: 4,
+                marginBottom: 14,
+                background: COLORS.bg,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            >
+              <option value="">None</option>
               {POSITIONS.map((pos) => (
                 <option key={pos.value} value={pos.value}>
                   {pos.label}
@@ -5701,8 +5804,15 @@ export default function App() {
   // everything except the active .print-section) — no popup window. Popups
   // don't behave reliably in an installed iOS PWA (there's no real second
   // window to open), which is what was leaving the app stuck after printing.
+  const [printing, setPrinting] = useState(false);
   const handlePrint = () => {
+    if (printing) return; // ignore rapid re-taps entirely — repeated window.print()
+    // calls in a short window is exactly what triggers Safari's own "blocked
+    // from automatically printing" spam protection, so the fix is to never
+    // let a second call go out before the first has had a moment to resolve.
+    setPrinting(true);
     window.print();
+    setTimeout(() => setPrinting(false), 1200);
   };
 
   const [passcodeInput, setPasscodeInput] = useState("");
@@ -5819,9 +5929,9 @@ export default function App() {
 
   return (
     <div
+      className="app-shell"
       style={{
         width: "100%",
-        height: "100dvh",
         background: "#0B0D10",
         display: "flex",
         flexDirection: "column",
@@ -5833,6 +5943,11 @@ export default function App() {
         html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
         * { box-sizing: border-box; }
         button { font-family: inherit; }
+        /* 100vh first as a fallback for older browsers that don't recognize
+           dvh at all (they'll just ignore the second, unrecognized line and
+           keep using the first) — dvh overrides it where it's supported and
+           correctly accounts for mobile browser chrome. */
+        .app-shell { height: 100vh; height: 100dvh; }
         #print-root { display: none; }
         @media print {
           body * { visibility: hidden !important; }
@@ -5895,6 +6010,7 @@ export default function App() {
           title={titles[tab].title}
           sub={titles[tab].sub}
           onPrint={PRINTABLE_TABS[tab] ? handlePrint : null}
+          printing={printing}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
           onSettings={() => setShowSettings(true)}
@@ -5938,7 +6054,6 @@ export default function App() {
             lineups={lineups}
             setLineups={setLineups}
             activeLineupId={activeLineupId}
-            setActiveLineupId={setActiveLineupId}
             roster={roster}
             setRoster={setRoster}
             captainId={captainId}
