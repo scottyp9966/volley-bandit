@@ -20,7 +20,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.07b";
+const APP_VERSION = "2026.09.07d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -226,6 +226,32 @@ function shiftSlotsClockwise(slots, times) {
     s = { P1: s.P2, P2: s.P3, P3: s.P4, P4: s.P5, P5: s.P6, P6: s.P1 };
   }
   return s;
+}
+
+// Applies the coach's own Substitution Pairings on top of a (possibly
+// shifted) set of slots. Only one player in a pairing is ever actually
+// placed in the lineup diagram — the other is the bench substitute — and
+// which one that is determines which direction triggers the swap:
+//   - If the player placed on court is tagged "frontId" and their slot has
+//     rotated to the BACK row, sub in "backId" (e.g., an OH subbed off for
+//     a passing specialist once their spot cycles back).
+//   - If the player placed on court is tagged "backId" and their slot has
+//     rotated to the FRONT row, sub in "frontId" instead (e.g., a DS who
+//     started back row getting subbed out for a hitter once their spot
+//     cycles forward). Without this second direction, a pairing built the
+//     second way never triggers at all.
+function applySubPairings(slots, pairings) {
+  const result = { ...slots };
+  (pairings || []).forEach(({ frontId, backId }) => {
+    const frontPos = Object.keys(result).find((p) => result[p] === frontId);
+    const backPos = Object.keys(result).find((p) => result[p] === backId);
+    if (frontPos && BACK_ROW_SLOTS.includes(frontPos)) {
+      result[frontPos] = backId;
+    } else if (backPos && FRONT_ROW_SLOTS.includes(backPos)) {
+      result[backPos] = frontId;
+    }
+  });
+  return result;
 }
 
 // Serve-receive layout: who passes, who's the active setter, and which
@@ -1556,7 +1582,10 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
 
       {serveReceiveOpen && (() => {
         const system = roleSystem?.system || "5-1";
-        const shiftedSlots = shiftSlotsClockwise(activeLineup.slots, rotationsAhead);
+        const shiftedSlots = applySubPairings(
+          shiftSlotsClockwise(activeLineup.slots, rotationsAhead),
+          activeLineup.pairings
+        );
         const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate);
 
         // Rough real-court coordinates per position (0-100, y=0 at the net)
@@ -4849,8 +4878,8 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               <tbody>
                 {roster.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "5px 6px" }}>{p.num}</td>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "5px 6px" }}>{fullName(p)}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 11, padding: "3px 5px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 11, padding: "3px 5px" }}>{fullName(p)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4859,20 +4888,20 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
             {/* Pairings, broken down per set — optional, shown under the roster
                 list on this same left column when the coach wants the reference. */}
             {includePairingsLineup && lineups.slice(0, 5).some((l) => (l.pairings || []).length > 0) && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Pairings</div>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Pairings</div>
                 {lineups.slice(0, 5).map((l, i) => {
                   const prs = l.pairings || [];
                   if (prs.length === 0) return null;
                   return (
-                    <div key={l.id} style={{ marginBottom: 8 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700 }}>{l.name}</div>
+                    <div key={l.id} style={{ marginBottom: 4 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700 }}>{l.name}</div>
                       {prs.map((pr) => {
                         const front = playerFor(pr.frontId);
                         const back = playerFor(pr.backId);
                         return (
-                          <div key={pr.id} style={{ fontSize: 10, marginLeft: 6, lineHeight: 1.4 }}>
-                            F: #{front?.num} {fullName(front)} ↔ B: #{back?.num} {fullName(back)}
+                          <div key={pr.id} style={{ fontSize: 9, marginLeft: 5, lineHeight: 1.25 }}>
+                            #{front?.num} {fullName(front)} ↔ #{back?.num} {fullName(back)}
                             {pr.isLibero ? " (L)" : ""}
                           </div>
                         );
@@ -4891,11 +4920,11 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
             {(() => {
               const numDiagrams = Math.min(Math.max(lineups.length, 1), 5);
               const sizing = {
-                1: { circle: 92, gap: 20, pad: 20, setFont: 18, netFont: 12, border: 4, marginBottom: 30 },
-                2: { circle: 84, gap: 18, pad: 18, setFont: 17, netFont: 12, border: 4, marginBottom: 28 },
-                3: { circle: 76, gap: 16, pad: 16, setFont: 16, netFont: 11, border: 4, marginBottom: 24 },
-                4: { circle: 60, gap: 12, pad: 12, setFont: 14, netFont: 10, border: 3, marginBottom: 18 },
-                5: { circle: 50, gap: 9, pad: 10, setFont: 13, netFont: 9, border: 3, marginBottom: 14 },
+                1: { circle: 88, gap: 18, pad: 18, setFont: 17, netFont: 11, border: 4, marginBottom: 24 },
+                2: { circle: 76, gap: 15, pad: 15, setFont: 16, netFont: 11, border: 4, marginBottom: 20 },
+                3: { circle: 66, gap: 13, pad: 13, setFont: 15, netFont: 10, border: 3, marginBottom: 16 },
+                4: { circle: 54, gap: 10, pad: 10, setFont: 13, netFont: 9, border: 3, marginBottom: 13 },
+                5: { circle: 46, gap: 8, pad: 9, setFont: 12, netFont: 8, border: 3, marginBottom: 10 },
               }[numDiagrams];
               return [...Array(numDiagrams)].map((_, i) => {
                 const l = lineups[i];
@@ -5810,8 +5839,12 @@ export default function App() {
     // calls in a short window is exactly what triggers Safari's own "blocked
     // from automatically printing" spam protection, so the fix is to never
     // let a second call go out before the first has had a moment to resolve.
-    setPrinting(true);
+    // window.print() fires first, before anything else — even a React state
+    // update in between risks the call reading as slightly detached from the
+    // tap that triggered it, which is the kind of thing iOS's gesture-trust
+    // heuristic can be picky about.
     window.print();
+    setPrinting(true);
     setTimeout(() => setPrinting(false), 1200);
   };
 
