@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.07f";
+const APP_VERSION = "2026.09.07h";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4912,40 +4912,42 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                 )}
               </div>
             ))}
-            <div style={{ fontSize: 14, fontWeight: 700, margin: "16px 0 6px" }}>Roster:</div>
+            <div style={{ fontSize: 13, fontWeight: 700, margin: "12px 0 5px" }}>Roster:</div>
             <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #000" }}>
               <thead>
                 <tr>
-                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", width: 40, fontSize: 11, padding: "5px 6px" }}>No.</th>
-                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", fontSize: 11, padding: "5px 6px" }}>Name</th>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", width: 36, fontSize: 12, padding: "4px 5px" }}>No.</th>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", fontSize: 12, padding: "4px 5px" }}>Name</th>
                 </tr>
               </thead>
               <tbody>
                 {roster.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 11, padding: "3px 5px" }}>{p.num}</td>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 11, padding: "3px 5px" }}>{fullName(p)}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "3px 5px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "3px 5px" }}>{fullName(p)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
             {/* Pairings, broken down per set — optional, shown under the roster
-                list on this same left column when the coach wants the reference. */}
+                list on this same left column when the coach wants the reference.
+                Sized as large as the page allows, since these are the numbers
+                actually being read mid-match, not just a reference list. */}
             {includePairingsLineup && lineups.slice(0, 5).some((l) => (l.pairings || []).length > 0) && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Pairings</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 5 }}>Pairings</div>
                 {lineups.slice(0, 5).map((l, i) => {
                   const prs = l.pairings || [];
                   if (prs.length === 0) return null;
                   return (
-                    <div key={l.id} style={{ marginBottom: 4 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700 }}>{l.name}</div>
+                    <div key={l.id} style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700 }}>{l.name}</div>
                       {prs.map((pr) => {
                         const front = playerFor(pr.frontId);
                         const back = playerFor(pr.backId);
                         return (
-                          <div key={pr.id} style={{ fontSize: 9, marginLeft: 5, lineHeight: 1.25 }}>
+                          <div key={pr.id} style={{ fontSize: 12, fontWeight: 600, marginLeft: 5, lineHeight: 1.35 }}>
                             #{front?.num} {fullName(front)} ↔ #{back?.num} {fullName(back)}
                             {pr.isLibero ? " (L)" : ""}
                           </div>
