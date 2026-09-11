@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-freesub";
+const APP_VERSION = "2026.09.11-freesub2";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5620,6 +5620,21 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                         })}
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Plain-text summary of the pairings driving the grid above —
+                  a quick reference without having to trace all 6 rotations. */}
+              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: "4px 18px", justifyContent: "center" }}>
+                {pairings.map((pr) => {
+                  const front = playerFor(pr.frontId);
+                  const back = playerFor(pr.backId);
+                  return (
+                    <span key={pr.id} style={{ fontSize: 11, fontWeight: 600 }}>
+                      #{front?.num} ↔ #{back?.num}
+                      {pr.isLibero ? " L" : ""}
+                    </span>
                   );
                 })}
               </div>
