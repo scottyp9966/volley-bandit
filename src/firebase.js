@@ -5,12 +5,12 @@ import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 // → General → Your apps → SDK setup and configuration → Config object).
 // See README.md for the full walkthrough of creating the project.
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyCZhB-6S5ZZAtcXzQFRgorWvP26jSm3x4E",
+  authDomain: "volley-bandit.firebaseapp.com",
+  projectId: "volley-bandit",
+  storageBucket: "volley-bandit.firebasestorage.app",
+  messagingSenderId: "104775662651",
+  appId: "1:104775662651:web:41e2b70262fc4a14c4b01e",
 };
 
 const app = initializeApp(firebaseConfig);
