@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-fix1";
+const APP_VERSION = "2026.09.11-rotations";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -254,6 +254,58 @@ function applySubPairings(slots, pairings) {
     }
   });
   return result;
+}
+
+// Computes the true, absolute arrangement for a given rotation number (1-6),
+// with substitutions applied — regardless of which rotation the lineup is
+// currently actually sitting at. Reconstructs true Rotation 1 first (same
+// reverse-shift math Duplicate Lineup uses), then shifts forward from that
+// known baseline. Shifting directly from whatever's currently on court would
+// only be correct when the lineup happens to already be at Rotation 1 —
+// this is what makes it correct no matter where it currently sits.
+function computeRotationSlots(lineup, targetRotation) {
+  const currentRotation = lineup.currentRotation || 1;
+  const rotation1Slots = shiftSlotsClockwise(lineup.slots, 7 - currentRotation);
+  const targetSlots = shiftSlotsClockwise(rotation1Slots, targetRotation - 1);
+  return applySubPairings(targetSlots, lineup.pairings);
+}
+
+// For the player-facing sub sheet: computes all 6 rotations starting from
+// true Rotation 1, then figures out exactly which rotation/position combos
+// are a real transition (a swap actually happening right then) versus just
+// "the sub is still in from before." Only transitions get flagged — every
+// other rotation just shows whoever's currently in as a single number, so
+// the sheet doesn't repeat the same dual-circle for rotations where nothing
+// changed. leaving/entering are which player is going out vs coming in.
+function computeSubTransitions(lineup) {
+  const rotation1Slots = shiftSlotsClockwise(lineup.slots, 7 - (lineup.currentRotation || 1));
+  const pairings = lineup.pairings || [];
+  const rotations = [];
+  for (let r = 1; r <= 6; r++) {
+    const shifted = shiftSlotsClockwise(rotation1Slots, r - 1);
+    const withSubs = applySubPairings(shifted, pairings);
+    rotations.push({ shifted, withSubs });
+  }
+
+  const transitions = {}; // "r-pos" -> { leaving, entering }
+  pairings.forEach(({ frontId, backId }) => {
+    const inDiagram = Object.values(rotation1Slots).includes(frontId) ? frontId : backId;
+    let prevOccupant = null;
+    for (let r = 1; r <= 6; r++) {
+      const { shifted, withSubs } = rotations[r - 1];
+      const pos = Object.keys(shifted).find((p) => shifted[p] === inDiagram);
+      if (!pos) continue;
+      const occupant = withSubs[pos];
+      if (r === 1) {
+        if (shifted[pos] !== occupant) transitions[`${r}-${pos}`] = { leaving: shifted[pos], entering: occupant };
+      } else if (occupant !== prevOccupant) {
+        transitions[`${r}-${pos}`] = { leaving: prevOccupant, entering: occupant };
+      }
+      prevOccupant = occupant;
+    }
+  });
+
+  return { rotations, transitions };
 }
 
 // Serve-receive layout: who passes, who's the active setter, and which
@@ -535,7 +587,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
   const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
-  const [rotationsAhead, setRotationsAhead] = useState(0);
+  const [previewRotation, setPreviewRotation] = useState(1);
   const [isAlternate, setIsAlternate] = useState(false);
   // Which lineup this SCREEN is showing/editing — deliberately separate from
   // activeLineupId (the one actually live on the Live screen). Browsing or
@@ -549,45 +601,37 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
   }, [activeLineupId]);
 
   const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0];
-  const slots = activeLineup.slots;
   const liberos = activeLineup.liberos || [null, null];
 
-  // Keep the Serve-Receive rotation selector in sync with whatever's actually
-  // happening on the Live screen — re-syncs whenever the active lineup's
-  // tracked rotation changes (including a live rotation advance happening
-  // while this tab isn't even open) or when switching between lineups.
+  // Keep the rotation preview in sync with whatever's actually committed —
+  // re-syncs whenever the lineup's real rotation changes (a live rotation
+  // advance, Start This Rotation being tapped, switching lineups, etc) so
+  // the preview always starts out matching reality rather than some stale
+  // rotation from a previous screen visit.
   useEffect(() => {
-    setRotationsAhead((activeLineup.currentRotation || 1) - 1);
+    setPreviewRotation(activeLineup.currentRotation || 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLineup.id, activeLineup.currentRotation]);
-  const assignedIds = new Set(Object.values(slots).filter(Boolean));
+
+  // The court diagram (and Serve-Receive reference) always display this —
+  // the true, correctly-computed arrangement for whichever rotation is
+  // being previewed, substitutions included. It matches the real committed
+  // slots exactly when previewRotation equals the lineup's actual current
+  // rotation, and shows a hypothetical otherwise.
+  const isPreviewing = previewRotation !== (activeLineup.currentRotation || 1);
+  const slots = isPreviewing ? computeRotationSlots(activeLineup, previewRotation) : activeLineup.slots;
+  const assignedIds = new Set(Object.values(activeLineup.slots).filter(Boolean));
+
+  const startThisRotation = () => {
+    const newSlots = computeRotationSlots(activeLineup, previewRotation);
+    setLineups((prev) =>
+      prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: newSlots, currentRotation: previewRotation } : l))
+    );
+  };
 
   const updateActiveSlots = (updater) => {
     setLineups((prev) =>
       prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: updater(l.slots) } : l))
-    );
-  };
-
-  // Reverses one clockwise rotation step — for pre-match setup, not live play.
-  // Whoever's in P1 serves the moment this team next gets the ball, whether
-  // that's immediately (serving first) or after winning the first rally
-  // (receiving first, since a side-out requires rotating once before
-  // serving). If a lineup was built assuming you'd serve first and it turns
-  // out you're receiving, stepping back one position compensates for that
-  // automatic rotation so the intended server still ends up serving.
-  const stepRotationBack = () => {
-    updateActiveSlots((s) => ({
-      P1: s.P6,
-      P2: s.P1,
-      P3: s.P2,
-      P4: s.P3,
-      P5: s.P4,
-      P6: s.P5,
-    }));
-    setLineups((prev) =>
-      prev.map((l) =>
-        l.id === activeLineup.id ? { ...l, currentRotation: ((l.currentRotation || 1) + 4) % 6 + 1 } : l
-      )
     );
   };
 
@@ -886,26 +930,6 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
         {filled}/6 positions set {filled === 6 ? "· ready" : ""}
       </div>
 
-      {filled === 6 && (
-        <button
-          onClick={stepRotationBack}
-          title="Reverses one rotation step — use this if you built the lineup assuming you'd serve first, but you're actually receiving first"
-          style={{
-            width: "100%",
-            padding: "8px",
-            marginBottom: 16,
-            borderRadius: 8,
-            border: `1px dashed ${COLORS.line}`,
-            background: "none",
-            color: COLORS.chalkDim,
-            fontSize: 11,
-            fontWeight: 700,
-          }}
-        >
-          ↺ Step Rotation Back One (receiving first instead of serving)
-        </button>
-      )}
-
       {/* Serve-Receive reference — pure reference tool, fully derived from
           whoever's actually on court plus their roster position tag. Nothing
           here edits the court diagram above; editing who's on court always
@@ -923,25 +947,25 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
                 marginBottom: 8,
               }}
             >
-              Serve-Receive Reference ({roleSystem?.system || "5-1"})
+              Rotation — also previews on the court diagram above
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-              {[0, 1, 2, 3, 4, 5].map((r) => (
+              {[1, 2, 3, 4, 5, 6].map((r) => (
                 <button
                   key={r}
-                  onClick={() => setRotationsAhead(r)}
+                  onClick={() => setPreviewRotation(r)}
                   style={{
                     flex: 1,
                     padding: "8px 0",
                     borderRadius: 8,
-                    border: `1.5px solid ${rotationsAhead === r ? COLORS.orange : COLORS.line}`,
-                    background: rotationsAhead === r ? "rgba(255,107,53,0.15)" : "transparent",
+                    border: `1.5px solid ${previewRotation === r ? COLORS.orange : COLORS.line}`,
+                    background: previewRotation === r ? "rgba(255,107,53,0.15)" : "transparent",
                     color: COLORS.chalk,
                     fontSize: 12,
                     fontWeight: 700,
                   }}
                 >
-                  {r + 1}
+                  {r}
                 </button>
               ))}
             </div>
@@ -959,7 +983,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
                 marginBottom: 6,
               }}
             >
-              View Serve-Receive — Rotation {rotationsAhead + 1}
+              View Serve-Receive — Rotation {previewRotation}
             </button>
             <button
               onClick={() => setSystemSheetOpen(true)}
@@ -1020,6 +1044,45 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
         )}
       </div>
 
+      {/* Compact preview banner — only takes screen space when it's actually
+          relevant (previewing a rotation other than what's really committed).
+          One line, one action, nothing extra. */}
+      {isPreviewing && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 10px",
+            marginBottom: 8,
+            borderRadius: 8,
+            border: `1.5px solid ${COLORS.gold}`,
+            background: "rgba(255,200,87,0.12)",
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.chalk }}>
+            Previewing Rotation {previewRotation} — not yet set
+          </span>
+          <button
+            onClick={startThisRotation}
+            style={{
+              flexShrink: 0,
+              padding: "5px 10px",
+              borderRadius: 6,
+              border: `1.5px solid ${COLORS.gold}`,
+              background: COLORS.gold,
+              color: "#1C2128",
+              fontSize: 11,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Start This Rotation
+          </button>
+        </div>
+      )}
+
       {/* Net indicator */}
       <div
         style={{
@@ -1051,7 +1114,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
           return (
             <button
               key={slot}
-              onClick={() => setPicking({ type: "court", slot })}
+              onClick={() => !isPreviewing && setPicking({ type: "court", slot })}
               style={{
                 gridArea,
                 aspectRatio: "1",
@@ -1627,10 +1690,9 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
 
       {serveReceiveOpen && (() => {
         const system = roleSystem?.system || "5-1";
-        const shiftedSlots = applySubPairings(
-          shiftSlotsClockwise(activeLineup.slots, rotationsAhead),
-          activeLineup.pairings
-        );
+        // Reuses the same correctly-computed slots already driving the court
+        // diagram above — no separate shift math needed here anymore.
+        const shiftedSlots = slots;
         const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate);
 
         // Rough real-court coordinates per position (0-100, y=0 at the net)
@@ -1694,7 +1756,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
-                  Serve-Receive — Rotation {rotationsAhead + 1}
+                  Serve-Receive — Rotation {previewRotation}
                 </div>
                 <button onClick={() => setServeReceiveOpen(false)} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
                   <X size={20} />
@@ -5243,6 +5305,112 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
         <PrintFooter />
       </div>
 
+      {/* PLAYER SUB SHEET — hand this to players, not coaches. Six small
+          court diagrams per set, one per rotation, with a dual circle only
+          at the exact rotation a substitution actually happens — everything
+          else is a single number. Deliberately minimal: no names, no prose,
+          just numbers a player can find and follow. */}
+      <div className={`print-section${target === "subsheet" ? " active" : ""}`}>
+        <PrintHeader title="Substitution Guide" subtitle="Find your number, follow it by rotation" />
+        {lineups.slice(0, 5).map((l) => {
+          const filledCount = Object.values(l.slots).filter(Boolean).length;
+          const pairings = l.pairings || [];
+          if (filledCount < 6 || pairings.length === 0) return null;
+          const { rotations, transitions } = computeSubTransitions(l);
+          const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
+          const size = 46;
+          return (
+            <div key={l.id} style={{ marginBottom: 28, pageBreakInside: "avoid" }}>
+              <div style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{l.name}</div>
+              <div style={{ fontSize: 10, color: "#555", textAlign: "center", marginBottom: 10 }}>
+                Dual circle = a sub happens right here · struck-through = leaving · L = libero
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                {rotations.map((_, i) => {
+                  const r = i + 1;
+                  const { withSubs } = rotations[i];
+                  return (
+                    <div key={r} style={{ border: "1px solid #999", borderRadius: 8, padding: 7 }}>
+                      <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                        Rotation {r}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, justifyItems: "center" }}>
+                        {order.map((pos) => {
+                          const t = transitions[`${r}-${pos}`];
+                          if (t) {
+                            const isLib = (l.liberos || []).includes(t.entering);
+                            return (
+                              <div
+                                key={pos}
+                                style={{
+                                  width: size,
+                                  height: size,
+                                  borderRadius: "50%",
+                                  border: "2.5px solid #FF6B35",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    background: "#f2f2f2",
+                                    textDecoration: "line-through",
+                                    opacity: 0.65,
+                                  }}
+                                >
+                                  <span style={{ fontSize: 15, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
+                                </div>
+                                <div style={{ height: 1.5, background: "#FF6B35" }} />
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    background: "#fff3ec",
+                                  }}
+                                >
+                                  <span style={{ fontSize: 17, fontWeight: 800 }}>
+                                    {playerFor(t.entering)?.num}
+                                    {isLib ? "L" : ""}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div
+                              key={pos}
+                              style={{
+                                width: size,
+                                height: size,
+                                borderRadius: "50%",
+                                border: "1.5px solid #000",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span style={{ fontSize: 19, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        <PrintFooter />
+      </div>
+
       {/* SCHEDULE */}
       <div className={`print-section${target === "schedule" ? " active" : ""}`}>
         <PrintHeader title="Schedule" subtitle={`${matches.length} matches`} />
@@ -5882,6 +6050,8 @@ export default function App() {
   // uses. Falls back to a plain file download on browsers that don't support
   // sharing files (most desktop browsers).
   const [printing, setPrinting] = useState(false);
+  const [printChoiceOpen, setPrintChoiceOpen] = useState(false);
+  const [printTarget, setPrintTarget] = useState(null); // null = use the current tab's default target
   const handlePrint = async () => {
     if (printing) return;
     setPrinting(true);
@@ -5909,27 +6079,38 @@ export default function App() {
       const pdf = new jsPDF("p", "pt", "letter");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      const imgData = canvas.toDataURL("image/png");
+      const MARGIN = 36; // half-inch margin on all sides
+      const contentWidth = pageWidth - MARGIN * 2;
+      const contentHeight = pageHeight - MARGIN * 2;
 
-      // Standard html2canvas+jsPDF pagination: place the same full-height
-      // image on each page, shifted up by a growing offset each time, so
-      // each page shows a different vertical slice of the same tall image.
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      // Slice the source canvas into separate per-page images sized to
+      // exactly fit inside the margin box, rather than positioning one huge
+      // image and hoping the page edge clips it — that's what was causing
+      // content to run edge-to-edge with no margin. This also keeps each
+      // individual image small (helps avoid hitting canvas/memory limits on
+      // iOS specifically, and JPEG compression here cuts file size a lot
+      // versus the uncompressed PNG this used before).
+      const scaleFactor = contentWidth / canvas.width;
+      const sliceHeightPx = contentHeight / scaleFactor;
+      let renderedPx = 0;
+      let pageIndex = 0;
+      while (renderedPx < canvas.height) {
+        const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = thisSliceHeightPx;
+        const ctx = sliceCanvas.getContext("2d");
+        ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+        const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
+        renderedPx += thisSliceHeightPx;
+        pageIndex++;
       }
 
       const blob = pdf.output("blob");
       const dateStr = new Date().toISOString().slice(0, 10);
-      const filename = `volley-bandit-${tab}-${dateStr}.pdf`;
+      const filename = `volley-bandit-${printTarget || tab}-${dateStr}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -5951,11 +6132,15 @@ export default function App() {
         URL.revokeObjectURL(url);
       }
     } catch (err) {
+      // Include the actual error message directly in the alert — mobile
+      // Safari's console isn't reachable without a Mac plugged in via cable,
+      // so this is the only practical way to see what actually went wrong.
       console.warn("PDF export failed:", err);
-      alert("Couldn't generate the PDF. Please try again.");
+      alert(`Couldn't generate the PDF: ${err?.message || err}`);
     } finally {
       root.classList.remove("print-root-capturing"); // always hide it again, success or failure
       setPrinting(false);
+      setPrintTarget(null); // don't let a sub-sheet choice leak into the next unrelated print
     }
   };
 
@@ -6127,7 +6312,7 @@ export default function App() {
         }
       `}</style>
       <PrintArea
-        target={PRINTABLE_TABS[tab] || null}
+        target={printTarget || PRINTABLE_TABS[tab] || null}
         roster={roster}
         lineups={lineups}
         activeLineupId={activeLineupId}
@@ -6168,12 +6353,86 @@ export default function App() {
         <TopBar
           title={titles[tab].title}
           sub={titles[tab].sub}
-          onPrint={PRINTABLE_TABS[tab] ? handlePrint : null}
+          onPrint={PRINTABLE_TABS[tab] ? (tab === "lineup" ? () => setPrintChoiceOpen(true) : handlePrint) : null}
           printing={printing}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
           onSettings={() => setShowSettings(true)}
         />
+        {printChoiceOpen && (
+          <div
+            onClick={() => setPrintChoiceOpen(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "flex-end",
+              zIndex: 10,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: COLORS.bgRaised,
+                width: "100%",
+                borderRadius: "20px 20px 0 0",
+                padding: 18,
+              }}
+            >
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase", marginBottom: 14 }}>
+                What to Print
+              </div>
+              <button
+                onClick={() => {
+                  setPrintChoiceOpen(false);
+                  setPrintTarget(null);
+                  handlePrint();
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.orange}`,
+                  background: "rgba(255,107,53,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Lineup Sheet
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  Coach reference — roster, court diagrams, pairings list
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setPrintChoiceOpen(false);
+                  setPrintTarget("subsheet");
+                  handlePrint();
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.green}`,
+                  background: "rgba(76,154,99,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Player Sub Sheet
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  Hand to players — numbers only, by rotation
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
         {showStatInfo && <StatInfoSheet onClose={() => setShowStatInfo(false)} />}
         {showSettings && (
           <SettingsSheet
