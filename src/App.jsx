@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-freesub2";
+const APP_VERSION = "2026.09.11-freesub4";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5625,16 +5625,20 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               </div>
 
               {/* Plain-text summary of the pairings driving the grid above —
-                  a quick reference without having to trace all 6 rotations. */}
-              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: "4px 18px", justifyContent: "center" }}>
-                {pairings.map((pr) => {
+                  a quick reference without having to trace all 6 rotations.
+                  Simple stacked lines, same proven pattern as the Lineup
+                  Sheet's own pairings list — avoiding flexbox-gap here,
+                  since html2canvas has known spotty support for it and that
+                  was silently dropping this whole block before. */}
+              <div style={{ marginTop: 12, textAlign: "center" }}>
+                {pairings.map((pr, i) => {
                   const front = playerFor(pr.frontId);
                   const back = playerFor(pr.backId);
                   return (
-                    <span key={pr.id} style={{ fontSize: 11, fontWeight: 600 }}>
+                    <div key={pr.id || i} style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>
                       #{front?.num} ↔ #{back?.num}
                       {pr.isLibero ? " L" : ""}
-                    </span>
+                    </div>
                   );
                 })}
               </div>
@@ -6350,15 +6354,7 @@ export default function App() {
       const filename = `volley-bandit-${printTarget || tab}-${dateStr}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
 
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({ files: [file], title: filename });
-        } catch (shareErr) {
-          // The user closing the share sheet counts as "AbortError" — that's
-          // normal, not a failure, so only real errors get the alert below.
-          if (shareErr.name !== "AbortError") throw shareErr;
-        }
-      } else {
+      const downloadDirectly = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -6367,6 +6363,23 @@ export default function App() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+      };
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+        } catch (shareErr) {
+          // The user closing the share sheet counts as "AbortError" — that's
+          // normal, not a failure, nothing more to do. Any OTHER failure
+          // here means this browser claimed it could share a file but
+          // actually can't (seen on Chrome for iOS specifically — every iOS
+          // browser sits on the same rendering engine, but that doesn't mean
+          // they all support this capability equally) — fall back to a
+          // plain download rather than just erroring out.
+          if (shareErr.name !== "AbortError") downloadDirectly();
+        }
+      } else {
+        downloadDirectly();
       }
     } catch (err) {
       // Include the actual error message directly in the alert — mobile
