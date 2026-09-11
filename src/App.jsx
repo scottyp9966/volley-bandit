@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-rotations";
+const APP_VERSION = "2026.09.11-rotations2";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -587,7 +587,6 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
   const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
-  const [previewRotation, setPreviewRotation] = useState(1);
   const [isAlternate, setIsAlternate] = useState(false);
   // Which lineup this SCREEN is showing/editing — deliberately separate from
   // activeLineupId (the one actually live on the Live screen). Browsing or
@@ -603,11 +602,15 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
   const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0];
   const liberos = activeLineup.liberos || [null, null];
 
-  // Keep the rotation preview in sync with whatever's actually committed —
-  // re-syncs whenever the lineup's real rotation changes (a live rotation
-  // advance, Start This Rotation being tapped, switching lineups, etc) so
-  // the preview always starts out matching reality rather than some stale
-  // rotation from a previous screen visit.
+  // Starts already matching the lineup's real rotation (a lazy initializer,
+  // computed once at mount from data already available) rather than
+  // hardcoding 1 and correcting a moment later via an effect — this tab
+  // unmounts and remounts every time you switch away and back, so that lag
+  // window was real and was blocking editing whenever a lineup's actual
+  // rotation wasn't 1 at the moment this screen mounted.
+  const [previewRotation, setPreviewRotation] = useState(() => activeLineup.currentRotation || 1);
+  // Still re-syncs later if the real rotation changes while this screen
+  // stays mounted (a live rotation advance, Start This Rotation, etc).
   useEffect(() => {
     setPreviewRotation(activeLineup.currentRotation || 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
