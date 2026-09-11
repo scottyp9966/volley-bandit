@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-freesub4";
+const APP_VERSION = "2026.09.11-rotfix";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -263,11 +263,23 @@ function applySubPairings(slots, pairings) {
 // known baseline. Shifting directly from whatever's currently on court would
 // only be correct when the lineup happens to already be at Rotation 1 —
 // this is what makes it correct no matter where it currently sits.
-function computeRotationSlots(lineup, targetRotation) {
+// The raw, pre-substitution arrangement for a given rotation — who's
+// actually assigned to each rotational slot, before any pairing-driven sub
+// is layered on top. This is what should ever get committed as a lineup's
+// real starting data, since "Rotation 1" has always meant the pre-sub
+// assignment, with pairings computing subs dynamically from that baseline
+// as rotations progress — never something with a sub already baked in.
+function computeRawRotationSlots(lineup, targetRotation) {
   const currentRotation = lineup.currentRotation || 1;
   const rotation1Slots = shiftSlotsClockwise(lineup.slots, 7 - currentRotation);
-  const targetSlots = shiftSlotsClockwise(rotation1Slots, targetRotation - 1);
-  return applySubPairings(targetSlots, lineup.pairings);
+  return shiftSlotsClockwise(rotation1Slots, targetRotation - 1);
+}
+
+// For display/preview only (the court diagram, Serve-Receive) — the raw
+// arrangement above with substitutions layered on top, showing who's
+// actually on court right now including any active sub.
+function computeRotationSlots(lineup, targetRotation) {
+  return applySubPairings(computeRawRotationSlots(lineup, targetRotation), lineup.pairings);
 }
 
 // For the player-facing sub sheet: computes all 6 rotations starting from
@@ -626,9 +638,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
   const assignedIds = new Set(Object.values(activeLineup.slots).filter(Boolean));
 
   const startThisRotation = () => {
-    const newSlots = computeRotationSlots(activeLineup, previewRotation);
+    // Commits the RAW (pre-substitution) arrangement as the new starting
+    // lineup, and resets to Rotation 1 — this rotation you're previewing
+    // genuinely becomes your new starting point, exactly like building a
+    // fresh lineup from scratch, with pairings still computing subs
+    // dynamically from here rather than one being permanently baked in.
+    const newSlots = computeRawRotationSlots(activeLineup, previewRotation);
     setLineups((prev) =>
-      prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: newSlots, currentRotation: previewRotation } : l))
+      prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: newSlots, currentRotation: 1 } : l))
     );
   };
 
@@ -5636,8 +5653,8 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                   const back = playerFor(pr.backId);
                   return (
                     <div key={pr.id || i} style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>
-                      #{front?.num} ↔ #{back?.num}
-                      {pr.isLibero ? " L" : ""}
+                      #{front?.num} {fullName(front)} ↔ #{back?.num} {fullName(back)}
+                      {pr.isLibero ? " (L)" : ""}
                     </div>
                   );
                 })}
