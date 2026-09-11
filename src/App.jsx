@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon } from "lucide-react";
+import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon, Repeat } from "lucide-react";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 import { jsPDF } from "jspdf";
@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-rotations2";
+const APP_VERSION = "2026.09.11-freesub";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2414,6 +2414,8 @@ function LiveScreen({
   setSubCount,
   liberoSubCount,
   setLiberoSubCount,
+  injuredPlayerIds,
+  setInjuredPlayerIds,
   activeMatchId,
   pointLog,
   setPointLog,
@@ -2421,8 +2423,11 @@ function LiveScreen({
   setTab,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
+  const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
+  const [subReplacementId, setSubReplacementId] = useState("");
+  const [markInjured, setMarkInjured] = useState(false);
   const [subSuggestions, setSubSuggestions] = useState([]);
-  const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, label} — undo for rotation/subs
+  const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, pairings, injuredPlayerIds, label} — undo for rotation/subs
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineup.setNumber || 1;
   const slots = activeLineup.slots;
@@ -2490,11 +2495,24 @@ function LiveScreen({
     setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, currentRotation: n } : l)));
   };
 
-  // Snapshot current match state before a rotation/sub action, so it can be
-  // stepped back afterward — not just a single "undo last," but a real stack.
+  // Snapshot current match state before a rotation/sub/substitution action,
+  // so it can be stepped back afterward — not just a single "undo last," but
+  // a real stack. Includes pairings and injured status too, since a free
+  // substitution (unlike a normal rotation or sub) can change both of those.
   const pushHistory = (label) => {
     setMatchHistory((prev) =>
-      [...prev, { slots, subCount, liberoSubCount, currentRotation: activeLineup.currentRotation || 1, label }].slice(-10)
+      [
+        ...prev,
+        {
+          slots,
+          subCount,
+          liberoSubCount,
+          currentRotation: activeLineup.currentRotation || 1,
+          pairings: activeLineup.pairings || [],
+          injuredPlayerIds,
+          label,
+        },
+      ].slice(-10)
     );
   };
 
@@ -2506,9 +2524,52 @@ function LiveScreen({
       setSubCount(last.subCount);
       setLiberoSubCount(last.liberoSubCount);
       setActiveRotation(last.currentRotation || 1);
+      if (last.pairings) {
+        setLineups((prev2) => prev2.map((l) => (l.id === activeLineup.id ? { ...l, pairings: last.pairings } : l)));
+      }
+      if (last.injuredPlayerIds) setInjuredPlayerIds(last.injuredPlayerIds);
       setSubSuggestions([]); // pending suggestions were computed against state that no longer applies
       return prev.slice(0, -1);
     });
+  };
+
+  // Free substitution — any bench player in for any on-court player, for any
+  // reason (injury, a short serve-specialist swap, anything else), unlike
+  // the pairing-suggested subs which only fire when a specific rotation is
+  // reached. Doesn't count against the normal sub limit. The replacement
+  // fully takes over the outgoing player's role in any pairing they were
+  // part of (either side — starter or sub), so future rotations keep working
+  // correctly without needing the pairing rebuilt by hand. Subbing a player
+  // back in this same way automatically clears their injured tag, since
+  // that's literally the "they've recovered" action.
+  const confirmFreeSubstitution = () => {
+    if (!subSheet || !subReplacementId) return;
+    const outgoingId = subSheet.playerId;
+    const incomingId = subReplacementId;
+    pushHistory(`Sub: #${playerFor(outgoingId)?.num} out, #${playerFor(incomingId)?.num} in`);
+    setActiveSlots({ ...slots, [subSheet.slot]: incomingId });
+    setLineups((prev) =>
+      prev.map((l) =>
+        l.id === activeLineup.id
+          ? {
+              ...l,
+              pairings: (l.pairings || []).map((pr) => ({
+                ...pr,
+                frontId: pr.frontId === outgoingId ? incomingId : pr.frontId,
+                backId: pr.backId === outgoingId ? incomingId : pr.backId,
+              })),
+            }
+          : l
+      )
+    );
+    setInjuredPlayerIds((prev) => {
+      let next = prev.filter((id) => id !== incomingId); // coming back in clears their injured tag
+      if (markInjured && !next.includes(outgoingId)) next = [...next, outgoingId];
+      return next;
+    });
+    setSubSheet(null);
+    setSubReplacementId("");
+    setMarkInjured(false);
   };
 
   // Rotate all 6 court positions one clockwise step: P1<-P2, P2<-P3, P3<-P4, P4<-P5, P5<-P6, P6<-P1
@@ -2817,11 +2878,12 @@ function LiveScreen({
           const p = pid ? playerFor(pid) : null;
           const active = selectedSlot === slot;
           return (
-            <button
+            <div
               key={slot}
               onClick={() => setSelectedSlot(slot)}
               style={{
                 gridArea,
+                position: "relative",
                 padding: "5px 8px",
                 borderRadius: 8,
                 border: `1.5px solid ${active ? COLORS.orange : COLORS.line}`,
@@ -2849,7 +2911,35 @@ function LiveScreen({
                   </span>
                 )}
               </div>
-            </button>
+              {p && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSubSheet({ slot, playerId: pid });
+                    setSubReplacementId("");
+                    setMarkInjured(false);
+                  }}
+                  title="Substitute this player"
+                  style={{
+                    position: "absolute",
+                    top: -6,
+                    right: -6,
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    border: `1px solid ${COLORS.line}`,
+                    background: COLORS.bgRaised,
+                    color: COLORS.chalkDim,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 0,
+                  }}
+                >
+                  <Repeat size={10} />
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
@@ -2963,6 +3053,131 @@ function LiveScreen({
           })}
         </div>
       </div>
+
+      {/* Free substitution — any bench player in for any on-court player,
+          any reason. Reached via the small swap icon on each court position. */}
+      {subSheet && (() => {
+        const outgoing = playerFor(subSheet.playerId);
+        const onCourtIds = new Set(Object.values(slots).filter(Boolean));
+        const liberoIds = (activeLineup.liberos || []).filter(Boolean);
+        const bench = roster.filter((p) => !onCourtIds.has(p.id) && !liberoIds.includes(p.id));
+        return (
+          <div
+            onClick={() => setSubSheet(null)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "flex-end",
+              zIndex: 10,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: COLORS.bgRaised,
+                width: "100%",
+                borderRadius: "20px 20px 0 0",
+                padding: 18,
+                maxHeight: "80%",
+                overflowY: "auto",
+              }}
+            >
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase", marginBottom: 4 }}>
+                Substitute
+              </div>
+              <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 14 }}>
+                Out: #{outgoing?.num} {displayName(outgoing)} · doesn't count against your sub limit
+              </div>
+              <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Bringing In
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                {bench.length === 0 && (
+                  <div style={{ fontSize: 12, color: COLORS.chalkDim }}>No bench players available.</div>
+                )}
+                {bench.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSubReplacementId(p.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "9px 10px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${subReplacementId === p.id ? COLORS.orange : COLORS.line}`,
+                      background: subReplacementId === p.id ? "rgba(255,107,53,0.15)" : "transparent",
+                      color: COLORS.chalk,
+                      fontSize: 13,
+                    }}
+                  >
+                    <span>
+                      #{p.num} {displayName(p)} {p.position ? `(${p.position})` : ""}
+                    </span>
+                    {injuredPlayerIds.includes(p.id) && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: COLORS.red, border: `1px solid ${COLORS.red}`, borderRadius: 4, padding: "1px 5px" }}>
+                        OUT
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setMarkInjured((v) => !v)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  background: "none",
+                  border: "none",
+                  padding: "6px 0",
+                  marginBottom: 14,
+                  color: COLORS.chalkDim,
+                  fontSize: 12,
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 4,
+                    border: `1.5px solid ${markInjured ? COLORS.red : COLORS.line}`,
+                    background: markInjured ? COLORS.red : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  {markInjured && <Check size={11} color={COLORS.chalk} />}
+                </span>
+                Mark #{outgoing?.num} {displayName(outgoing)} as injured (just a visual reminder — doesn't block them from returning)
+              </button>
+              <button
+                onClick={confirmFreeSubstitution}
+                disabled={!subReplacementId}
+                style={{
+                  width: "100%",
+                  padding: "11px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.green}`,
+                  background: subReplacementId ? "rgba(76,154,99,0.15)" : "transparent",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  opacity: subReplacementId ? 1 : 0.5,
+                }}
+              >
+                Confirm Substitution
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -5918,6 +6133,7 @@ export default function App() {
     score: { us: 0, opp: 0 },
     subCount: 0,
     liberoSubCount: 0,
+    injuredPlayerIds: [],
     matches: [],
     activeMatchId: null,
     statsView: { section: "boxscore", insightsMatchId: null },
@@ -5956,6 +6172,8 @@ export default function App() {
   const setSubCount = fieldSetter(setMainDoc, "subCount");
   const liberoSubCount = mainDoc.liberoSubCount;
   const setLiberoSubCount = fieldSetter(setMainDoc, "liberoSubCount");
+  const injuredPlayerIds = mainDoc.injuredPlayerIds || [];
+  const setInjuredPlayerIds = fieldSetter(setMainDoc, "injuredPlayerIds");
   const matches = mainDoc.matches;
   const setMatches = fieldSetter(setMainDoc, "matches");
   const activeMatchId = mainDoc.activeMatchId;
@@ -6028,6 +6246,7 @@ export default function App() {
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
+    setInjuredPlayerIds([]);
     setLineups((prev) => prev.map((l) => ({ ...l, currentRotation: 1 })));
     setActiveLineupId(setOneLineup.id);
     setActiveMatchId(null);
@@ -6498,6 +6717,8 @@ export default function App() {
             setSubCount={setSubCount}
             liberoSubCount={liberoSubCount}
             setLiberoSubCount={setLiberoSubCount}
+            injuredPlayerIds={injuredPlayerIds}
+            setInjuredPlayerIds={setInjuredPlayerIds}
             activeMatchId={activeMatchId}
             pointLog={pointLog}
             setPointLog={setPointLog}
