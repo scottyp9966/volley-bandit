@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.07h";
+const APP_VERSION = "2026.09.11-fix1";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5885,8 +5885,18 @@ export default function App() {
   const handlePrint = async () => {
     if (printing) return;
     setPrinting(true);
+    const root = document.getElementById("print-root");
     try {
-      const root = document.getElementById("print-root");
+      // Make the print sheet capturable only for this moment — it's
+      // display:none the rest of the time, so no ongoing background
+      // rendering work happens while the app is just sitting there in
+      // normal use.
+      root.classList.add("print-root-capturing");
+      // Give the browser a real layout+paint cycle before capturing —
+      // double rAF is the standard reliable way to wait for an actual paint,
+      // not just the next event loop tick.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
       const activeSection = root?.querySelector(".print-section.active");
       if (!activeSection) return;
 
@@ -5944,6 +5954,7 @@ export default function App() {
       console.warn("PDF export failed:", err);
       alert("Couldn't generate the PDF. Please try again.");
     } finally {
+      root.classList.remove("print-root-capturing"); // always hide it again, success or failure
       setPrinting(false);
     }
   };
@@ -6081,7 +6092,17 @@ export default function App() {
            keep using the first) — dvh overrides it where it's supported and
            correctly accounts for mobile browser chrome. */
         .app-shell { height: 100vh; height: 100dvh; }
-        #print-root {
+        /* print-root stays fully display:none by default — same as before
+           the PDF feature — so the browser does zero ongoing work on it.
+           It only gets toggled visible for the brief moment a PDF is being
+           captured (see handlePrint), never left rendered in the background.
+           Leaving it permanently off-screen-but-rendered (an earlier version
+           of this fix) forced constant layout/paint work that was busy
+           enough to make Firestore's persistent connection look "offline"
+           even on a fine network — this is the actual fix for that. */
+        #print-root { display: none; }
+        #print-root.print-root-capturing {
+          display: block;
           position: fixed;
           top: 0;
           left: -9999px;
@@ -6097,6 +6118,7 @@ export default function App() {
           body * { visibility: hidden !important; }
           #print-root, #print-root * { visibility: visible !important; }
           #print-root {
+            display: block;
             position: absolute;
             top: 0;
             left: 0;
