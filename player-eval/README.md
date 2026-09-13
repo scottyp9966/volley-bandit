@@ -2,10 +2,11 @@
 
 Post-match player evaluations for a volleyball coach: rate players 1-5 on
 core skills and intangibles (with an N/A option), track season trends, and
-compare players within a position group. Companion to the Volley Bandit
-lineup app in this same repo — kept as its own app rather than bolted onto
-that one, but able to work as an add-on to it: point it at the same team
-code and it reads that team's roster live, no re-entry needed.
+get lineup-aware swap suggestions. Companion to the Volley Bandit lineup app
+in this same repo — kept as its own app rather than bolted onto that one,
+but able to work as an add-on to it: point it at the same team code and it
+reads that team's roster (and, for the Recommend tab, its active lineup)
+live, no re-entry needed.
 
 ## Running it locally
 
@@ -27,10 +28,11 @@ npm run preview
 Both apps point at the same Firebase project and the same
 `teams/{code}/data/*` Firestore layout:
 
-- `teams/{code}/data/main` — owned by Volley Bandit. Player Eval only ever
-  reads/writes the `roster` field there, and always with a `merge: true`
-  write, so it can never clobber lineups, matches, or anything else Volley
-  Bandit keeps in that document.
+- `teams/{code}/data/main` — owned by Volley Bandit. Player Eval reads its
+  `roster` and `lineups`/`activeLineupId` fields, but only ever *writes*
+  the `roster` field, and always with a `merge: true` write, so it can
+  never clobber lineups, matches, or anything else Volley Bandit keeps in
+  that document.
 - `teams/{code}/data/playerEval` — owned entirely by this app (the
   evaluations log). Volley Bandit never touches it.
 
@@ -43,14 +45,30 @@ the roster this app already built.
 See the root README for the one-time Firebase project setup — both apps use
 the same config.
 
+## Rotation-aware Recommend
+
+The Recommend tab's "Current lineup" view reads Volley Bandit's active
+lineup (read-only), works out who's actually on court right now by
+applying that lineup's `currentRotation` to its base slot assignment (the
+same rotation math Volley Bandit itself uses), and compares each starter —
+plus both libero slots — against bench players who share that starter's
+position tag. Ratings here use a recency-weighted average (half-life ~3
+weeks, in `RECENCY_HALF_LIFE_DAYS`) rather than a flat season average, so a
+player's last few games count for more than one from two months ago. A
+bench player rated at least `SWAP_SUGGESTION_THRESHOLD` (0.4) higher than
+the starter gets flagged as "Consider" — both constants live at the top of
+`buildLineupSuggestions`'s section in `src/App.jsx` and are meant to be
+tuned once you've seen it suggest a few real swaps.
+
+If no active lineup exists yet for the team code (or the team only uses
+Player Eval), Recommend falls back to the flat by-position ranking.
+
 ## What's not built yet
 
 Carried over from the original project brief:
 
-- **Rotation-aware Recommend** — comparing the *current lineup's* starter in
-  a position against bench options, rather than a flat position-group
-  ranking. Needs Volley Bandit's lineup data, not just its roster.
-- **Recency weighting** — trends and recommendations currently weight every
-  evaluation equally regardless of age.
 - **Per-set evaluation granularity** — one evaluation per player per
   session for now.
+- **Trend recency** — the Trends tab still shows a flat season average by
+  design (it's meant to show the whole season); only Recommend uses the
+  recency-weighted score.

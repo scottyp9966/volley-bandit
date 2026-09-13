@@ -73,19 +73,21 @@ function usePersisted(key, initialValue) {
   return [value, setValue];
 }
 
-// Reads/writes only the `roster` field of Volley Bandit's shared "main" doc.
-// `merge: true` on every write is what keeps this safe to share with a doc
-// the lineup app also owns — it only ever touches the one field.
-function useSharedRoster(teamCode) {
-  const [roster, setRosterState] = useState([]);
+// Reads Volley Bandit's shared "main" doc — roster, lineups, and which
+// lineup is active. `lineups`/`activeLineupId` are read-only here (only
+// Volley Bandit ever writes them); `updateRoster` writes back only the
+// `roster` field, and always with `merge: true`, so Player Eval can never
+// clobber lineups/matches/score/etc. that Volley Bandit owns in that doc.
+function useVolleyBanditData(teamCode) {
+  const [data, setDataState] = useState({ roster: [], lineups: [], activeLineupId: null });
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
-  const rosterRef = useRef(roster);
-  rosterRef.current = roster;
+  const rosterRef = useRef(data.roster);
+  rosterRef.current = data.roster;
 
   useEffect(() => {
     if (!teamCode) {
-      setRosterState([]);
+      setDataState({ roster: [], lineups: [], activeLineupId: null });
       setLoaded(false);
       return;
     }
@@ -94,7 +96,8 @@ function useSharedRoster(teamCode) {
     const unsub = onSnapshot(
       ref,
       (snap) => {
-        setRosterState(snap.exists() ? snap.data().roster || [] : []);
+        const d = snap.exists() ? snap.data() : {};
+        setDataState({ roster: d.roster || [], lineups: d.lineups || [], activeLineupId: d.activeLineupId ?? null });
         setLoaded(true);
         setError(null);
       },
@@ -107,10 +110,10 @@ function useSharedRoster(teamCode) {
     return () => unsub();
   }, [teamCode]);
 
-  const update = (updater) => {
+  const updateRoster = (updater) => {
     const next = typeof updater === "function" ? updater(rosterRef.current) : updater;
     rosterRef.current = next;
-    setRosterState(next);
+    setDataState((prev) => ({ ...prev, roster: next }));
     if (teamCode) {
       const ref = doc(db, "teams", teamCode, "data", "main");
       setDoc(ref, { roster: next }, { merge: true }).catch((err) => {
@@ -120,7 +123,25 @@ function useSharedRoster(teamCode) {
     }
   };
 
-  return [roster, update, loaded, error];
+  return [data, updateRoster, loaded, error];
+}
+
+// The lineup app stores each lineup's slots at "rotation 1" and tracks how
+// many rotations it's advanced since — this reapplies that many clockwise
+// shifts to get who's actually on court right now. Mirrors Volley Bandit's
+// own shiftSlotsClockwise/currentRotation handling exactly, since Player
+// Eval reads that same lineup shape read-only.
+function shiftSlotsClockwise(slots, times) {
+  let s = { ...slots };
+  for (let i = 0; i < times; i++) {
+    s = { P1: s.P2, P2: s.P3, P3: s.P4, P4: s.P5, P5: s.P6, P6: s.P1 };
+  }
+  return s;
+}
+
+function currentOnCourtSlots(lineup) {
+  if (!lineup?.slots) return {};
+  return shiftSlotsClockwise(lineup.slots, (lineup.currentRotation || 1) - 1);
 }
 
 // This app's own doc — exclusively owned by Player Eval, so a plain
@@ -201,6 +222,84 @@ function playerAverages(playerId, evaluations) {
     avgs[c.key] = counts[c.key] ? sums[c.key] / counts[c.key] : null;
   });
   return { avgs, overall: avgOf(avgs), count: evals.length };
+}
+
+// Same shape as playerAverages, but each evaluation's weight decays with
+// age (halved every RECENCY_HALF_LIFE_DAYS) instead of counting equally —
+// used only for lineup-swap suggestions, so "how's she playing lately"
+// outweighs a strong evaluation from two months ago. Trends still uses the
+// flat season average above, since that's meant to show the whole season.
+const RECENCY_HALF_LIFE_DAYS = 21;
+
+function weightedPlayerScore(playerId, evaluations, now = Date.now()) {
+  const evals = evaluations.filter((e) => e.playerId === playerId);
+  if (!evals.length) return null;
+  const sums = {};
+  const weights = {};
+  ALL_CATEGORIES.forEach((c) => {
+    sums[c.key] = 0;
+    weights[c.key] = 0;
+  });
+  evals.forEach((e) => {
+    const daysAgo = Math.max(0, (now - new Date(e.date).getTime()) / 86400000);
+    const weight = Math.pow(0.5, daysAgo / RECENCY_HALF_LIFE_DAYS);
+    ALL_CATEGORIES.forEach((c) => {
+      const v = e.ratings[c.key];
+      if (typeof v === "number") {
+        sums[c.key] += v * weight;
+        weights[c.key] += weight;
+      }
+    });
+  });
+  const avgs = {};
+  ALL_CATEGORIES.forEach((c) => {
+    avgs[c.key] = weights[c.key] ? sums[c.key] / weights[c.key] : null;
+  });
+  return { avgs, overall: avgOf(avgs), count: evals.length };
+}
+
+// How much a bench player's weighted rating has to beat the current
+// starter's before it's worth flagging — small gaps are noise, not swaps.
+const SWAP_SUGGESTION_THRESHOLD = 0.4;
+
+// Builds one "who's on court vs. who's on the bench" comparison per slot
+// (6 rotation slots + 2 libero slots), each flagged with a suggested swap
+// when a bench player at the same position is clearly rated better lately.
+function buildLineupSuggestions(lineup, roster, evaluations) {
+  if (!lineup) return [];
+  const onCourt = currentOnCourtSlots(lineup);
+  const liberos = lineup.liberos || [null, null];
+  const rosterById = new Map(roster.map((p) => [p.id, p]));
+  const onCourtIds = new Set([...Object.values(onCourt), ...liberos].filter(Boolean));
+
+  const slotEntries = [
+    ...["P1", "P2", "P3", "P4", "P5", "P6"].map((slot) => ({ slot, playerId: onCourt[slot] })),
+    ...liberos.map((playerId, i) => ({ slot: `Libero ${i + 1}`, playerId })),
+  ];
+
+  return slotEntries
+    .filter((e) => e.playerId)
+    .map(({ slot, playerId }) => {
+      const starter = rosterById.get(playerId);
+      if (!starter) return null;
+      const starterScore = weightedPlayerScore(playerId, evaluations);
+
+      const bench = roster.filter(
+        (p) => !onCourtIds.has(p.id) && (p.position === starter.position || p.position2 === starter.position)
+      );
+      const benchScored = bench
+        .map((p) => ({ player: p, score: weightedPlayerScore(p.id, evaluations) }))
+        .filter((x) => x.score)
+        .sort((a, b) => b.score.overall - a.score.overall);
+      const bestBench = benchScored[0] || null;
+
+      const starterOverall = starterScore?.overall ?? 0;
+      const suggestSwap =
+        bestBench && bestBench.score.overall - starterOverall >= SWAP_SUGGESTION_THRESHOLD;
+
+      return { slot, starter, starterScore, bestBench, suggestSwap };
+    })
+    .filter(Boolean);
 }
 
 function displayName(p) {
@@ -537,8 +636,119 @@ function PlayerForm({ initial, onSave, onCancel }) {
   );
 }
 
+function PositionRecommendList({ recFilter, setRecFilter, recGroup }) {
+  return (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+        {POSITIONS.map((pos) => (
+          <button
+            key={pos.value}
+            onClick={() => setRecFilter(pos.value)}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              border: recFilter === pos.value ? "1px solid #e8622c" : "1px solid #2c3542",
+              background: recFilter === pos.value ? "#3a2013" : "#1a2029",
+              color: recFilter === pos.value ? "#e8622c" : "#9aa3b2",
+              cursor: "pointer",
+            }}
+          >
+            {pos.value}
+          </button>
+        ))}
+      </div>
+
+      {recGroup.length === 0 && (
+        <div style={{ fontSize: 13, color: "#6b7383" }}>No players tagged for this position.</div>
+      )}
+
+      {recGroup.map(({ player, stats }, i) => (
+        <div
+          key={player.id}
+          style={{
+            background: i === 0 && stats ? "#1f2a1f" : "#1a2029",
+            border: i === 0 && stats ? "1px solid #4fae6f" : "1px solid #2c3542",
+            borderRadius: 10,
+            padding: "12px 14px",
+            marginBottom: 8,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 500 }}>
+                #{player.num} {displayName(player)}
+                {i === 0 && stats && (
+                  <span style={{ fontSize: 11, color: "#4fae6f", marginLeft: 8, fontWeight: 600 }}>TOP RATED</span>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7383", marginTop: 2 }}>
+                {player.position === recFilter ? "Primary" : "Secondary"} · {player.position2 || "no backup listed"}
+              </div>
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: stats ? "#e8622c" : "#6b7383" }}>
+              {stats ? stats.overall.toFixed(1) : "–"}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: "#6b7383", marginTop: 8 }}>
+        Ranking is based on average rating across all logged evaluations for this position group. Add match evaluations to sharpen these picks.
+      </div>
+    </>
+  );
+}
+
+function LineupRecommendList({ activeLineup, lineupSuggestions }) {
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 14 }}>
+        Who's on court right now (rotation {activeLineup.currentRotation || 1}) vs. the bench,
+        weighted toward recent evaluations.
+      </div>
+      {lineupSuggestions.length === 0 && (
+        <div style={{ fontSize: 13, color: "#6b7383" }}>
+          This lineup doesn't have players assigned to its court slots yet.
+        </div>
+      )}
+      {lineupSuggestions.map(({ slot, starter, starterScore, bestBench, suggestSwap }) => (
+        <div
+          key={slot}
+          style={{
+            background: suggestSwap ? "#2a2013" : "#1a2029",
+            border: suggestSwap ? "1px solid #e8622c" : "1px solid #2c3542",
+            borderRadius: 10,
+            padding: "12px 14px",
+            marginBottom: 8,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7383", fontWeight: 600, marginBottom: 2 }}>{slot}</div>
+              <div style={{ fontSize: 15, fontWeight: 500 }}>
+                #{starter.num} {displayName(starter)}
+                <PosTag pos={starter.position} />
+              </div>
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: starterScore ? "#e8622c" : "#6b7383" }}>
+              {starterScore ? starterScore.overall.toFixed(1) : "–"}
+            </div>
+          </div>
+          {suggestSwap && (
+            <div style={{ fontSize: 12, color: "#e8622c", marginTop: 8, paddingTop: 8, borderTop: "1px dashed #3a2c1f" }}>
+              Consider: #{bestBench.player.num} {displayName(bestBench.player)} has been rated{" "}
+              {bestBench.score.overall.toFixed(1)} at {starter.position} recently.
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AppShell({ teamCode, onSwitchTeam }) {
-  const [roster, updateRoster, rosterLoaded, rosterError] = useSharedRoster(teamCode);
+  const [{ roster, lineups, activeLineupId }, updateRoster, rosterLoaded, rosterError] = useVolleyBanditData(teamCode);
   const [evaluations, updateEvaluations, evalLoaded, evalError] = useEvaluations(teamCode);
 
   const [tab, setTab] = useState("roster");
@@ -548,6 +758,13 @@ function AppShell({ teamCode, onSwitchTeam }) {
   const [draftRatings, setDraftRatings] = useState({});
   const [note, setNote] = useState("");
   const [recFilter, setRecFilter] = useState("OH");
+  const [recView, setRecView] = useState("lineup"); // "lineup" | "position"
+
+  const activeLineup = lineups.find((l) => l.id === activeLineupId) || null;
+  const lineupSuggestions = useMemo(
+    () => buildLineupSuggestions(activeLineup, roster, evaluations),
+    [activeLineup, roster, evaluations]
+  );
 
   const sortedPlayers = useMemo(
     () => [...roster].sort((a, b) => Number(a.num) - Number(b.num)),
@@ -895,66 +1112,47 @@ function AppShell({ teamCode, onSwitchTeam }) {
 
         {!loading && tab === "recommend" && (
           <div>
-            <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 10 }}>
-              Compare players by position
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-              {POSITIONS.map((pos) => (
-                <button
-                  key={pos.value}
-                  onClick={() => setRecFilter(pos.value)}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: recFilter === pos.value ? "1px solid #e8622c" : "1px solid #2c3542",
-                    background: recFilter === pos.value ? "#3a2013" : "#1a2029",
-                    color: recFilter === pos.value ? "#e8622c" : "#9aa3b2",
-                    cursor: "pointer",
-                  }}
-                >
-                  {pos.value}
-                </button>
-              ))}
-            </div>
-
-            {recGroup.length === 0 && (
-              <div style={{ fontSize: 13, color: "#6b7383" }}>No players tagged for this position.</div>
+            {activeLineup && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+                {[
+                  { id: "lineup", label: "Current lineup" },
+                  { id: "position", label: "By position" },
+                ].map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => setRecView(v.id)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: recView === v.id ? "1px solid #e8622c" : "1px solid #2c3542",
+                      background: recView === v.id ? "#3a2013" : "#1a2029",
+                      color: recView === v.id ? "#e8622c" : "#9aa3b2",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
             )}
 
-            {recGroup.map(({ player, stats }, i) => (
-              <div
-                key={player.id}
-                style={{
-                  background: i === 0 && stats ? "#1f2a1f" : "#1a2029",
-                  border: i === 0 && stats ? "1px solid #4fae6f" : "1px solid #2c3542",
-                  borderRadius: 10,
-                  padding: "12px 14px",
-                  marginBottom: 8,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 500 }}>
-                      #{player.num} {displayName(player)}
-                      {i === 0 && stats && (
-                        <span style={{ fontSize: 11, color: "#4fae6f", marginLeft: 8, fontWeight: 600 }}>TOP RATED</span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 12, color: "#6b7383", marginTop: 2 }}>
-                      {player.position === recFilter ? "Primary" : "Secondary"} · {player.position2 || "no backup listed"}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: stats ? "#e8622c" : "#6b7383" }}>
-                    {stats ? stats.overall.toFixed(1) : "–"}
-                  </div>
-                </div>
+            {!activeLineup && (
+              <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 14 }}>
+                No live lineup found for this team code yet. Set an active lineup in Volley
+                Bandit to see rotation-aware swap suggestions here — for now, here's the
+                flat by-position view.
               </div>
-            ))}
-            <div style={{ fontSize: 11, color: "#6b7383", marginTop: 8 }}>
-              Ranking is based on average rating across all logged evaluations for this position group. Add match evaluations to sharpen these picks.
-            </div>
+            )}
+
+            {activeLineup && recView === "lineup" && (
+              <LineupRecommendList activeLineup={activeLineup} lineupSuggestions={lineupSuggestions} />
+            )}
+
+            {(!activeLineup || recView === "position") && (
+              <PositionRecommendList recFilter={recFilter} setRecFilter={setRecFilter} recGroup={recGroup} />
+            )}
           </div>
         )}
       </div>
