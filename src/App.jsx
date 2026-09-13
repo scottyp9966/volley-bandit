@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-rotfix";
+const APP_VERSION = "2026.09.11-playerguide2";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5665,6 +5665,87 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
         <PrintFooter />
       </div>
 
+      {/* PLAYER GUIDE — the actual player-facing sheet. One clean starting
+          diagram, then plain-language swap rules instead of a grid to
+          decode — built after the rotation-grid version turned out to be
+          too much to process live, mid-play. Front/back-row based, since
+          that's something a player can directly observe, unlike a rotation
+          number they'd have to track in their head. */}
+      <div className={`print-section${target === "playerguide" ? " active" : ""}`}>
+        <PrintHeader title="Substitution Guide" subtitle="Your starting lineup and swaps" />
+        {lineups.slice(0, 5).map((l) => {
+          const filledCount = Object.values(l.slots).filter(Boolean).length;
+          const pairings = l.pairings || [];
+          if (filledCount < 6 || pairings.length === 0) return null;
+          const rotation1 = shiftSlotsClockwise(l.slots, 7 - (l.currentRotation || 1));
+          const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
+          const serverSlot = (l.servesFirst || "us") === "us" ? "P1" : "P2";
+          return (
+            <div key={l.id} style={{ marginBottom: 30, pageBreakInside: "avoid" }}>
+              <div style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 8 }}>{l.name}</div>
+              <div style={{ textAlign: "center", fontSize: 10, letterSpacing: 3, color: "#888", marginBottom: 8 }}>
+                — NET —
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
+                {order.map((slot) => {
+                  const p = playerFor(rotation1[slot]);
+                  const isServer = slot === serverSlot;
+                  return (
+                    <div key={slot} style={{ border: "1.5px solid #000", borderRadius: 8, padding: "8px 5px", textAlign: "center", position: "relative" }}>
+                      {isServer && (
+                        <div style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: "#000", color: "#fff", fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 4, letterSpacing: 0.5, whiteSpace: "nowrap" }}>
+                          1ST SERVER
+                        </div>
+                      )}
+                      <div style={{ fontSize: 9, color: "#888", textAlign: "left" }}>{slot}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{p?.num}</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2 }}>{fullName(p)}</div>
+                      {p?.position && (
+                        <div style={{ fontSize: 8, fontWeight: 700, border: "1px solid #999", borderRadius: 3, padding: "0 3px", display: "inline-block", marginTop: 2 }}>
+                          {p.position}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderTop: "1px solid #ccc", paddingTop: 14, marginBottom: 10 }}>
+                Substitution Guide
+              </div>
+              {pairings.map((pr, i) => {
+                const onCourtIds = new Set(Object.values(rotation1).filter(Boolean));
+                const starterId = onCourtIds.has(pr.frontId) ? pr.frontId : pr.backId;
+                const subId = starterId === pr.frontId ? pr.backId : pr.frontId;
+                const starter = playerFor(starterId);
+                const sub = playerFor(subId);
+                const starterPos = Object.keys(rotation1).find((p) => rotation1[p] === starterId);
+                const startsBack = BACK_ROW_SLOTS.includes(starterPos);
+                const triggerRow = startsBack ? "front" : "back";
+                const starterFirst = starter?.firstName || fullName(starter);
+                return (
+                  <div key={pr.id || i} style={{ border: "1.5px solid #000", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 3 }}>
+                      {fullName(starter)} <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{starter?.num}</span>
+                      {" ↔ "}
+                      {fullName(sub)} <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{sub?.num}</span>
+                      {pr.isLibero && (
+                        <span style={{ fontSize: 10, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
+                          LIBERO
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#333" }}>
+                      {starterFirst} starts - {sub?.firstName || fullName(sub)} comes in when {starterFirst} rotates to the {triggerRow} row.
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+        <PrintFooter />
+      </div>
+
       {/* SCHEDULE */}
       <div className={`print-section${target === "schedule" ? " active" : ""}`}>
         <PrintHeader title="Schedule" subtitle={`${matches.length} matches`} />
@@ -6692,9 +6773,33 @@ export default function App() {
                   textAlign: "left",
                 }}
               >
-                Player Sub Sheet
+                Rotation Reference
                 <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
-                  Hand to players — numbers only, by rotation
+                  Coach reference — every rotation, all subs mapped out
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setPrintChoiceOpen(false);
+                  setPrintTarget("playerguide");
+                  handlePrint();
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  marginTop: 8,
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.blue}`,
+                  background: "rgba(62,124,166,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Player Guide
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  Hand to players — starting diagram + plain-language swaps
                 </div>
               </button>
             </div>
