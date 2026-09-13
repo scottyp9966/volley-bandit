@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-playerguide2";
+const APP_VERSION = "2026.09.11-bigtext";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5200,28 +5200,36 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               { label: "Opponent", value: activeMatch?.opponent },
               { label: "Match Winner", value: "" },
             ].map(({ label, value }) => (
-              <div key={label} style={{ marginBottom: 12, fontSize: 14, fontWeight: 700 }}>
+              <div key={label} style={{ marginBottom: 12, fontSize: 15, fontWeight: 700 }}>
                 {label}:
                 {value ? (
-                  <div style={{ fontWeight: 400, fontSize: 14 }}>{value}</div>
+                  <div style={{ fontWeight: 400, fontSize: 15 }}>{value}</div>
                 ) : (
                   <div style={{ borderBottom: "1px solid #000", height: 18 }}>&nbsp;</div>
                 )}
               </div>
             ))}
-            <div style={{ fontSize: 13, fontWeight: 700, margin: "12px 0 5px" }}>Roster:</div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set Scores:</div>
+            <div style={{ marginBottom: 14, fontSize: 16 }}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <div key={n} style={{ marginBottom: 14 }}>
+                  <b>Set {n}</b>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, margin: "12px 0 5px" }}>Roster:</div>
             <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #000" }}>
               <thead>
                 <tr>
-                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", width: 36, fontSize: 12, padding: "4px 5px" }}>No.</th>
-                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", fontSize: 12, padding: "4px 5px" }}>Name</th>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", width: 38, fontSize: 14, padding: "6px 6px" }}>No.</th>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", fontSize: 17, padding: "6px 6px" }}>Name</th>
                 </tr>
               </thead>
               <tbody>
                 {roster.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "3px 5px" }}>{p.num}</td>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 12, padding: "3px 5px" }}>{fullName(p)}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 17, fontWeight: 600, padding: "6px 6px" }}>{fullName(p)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -5264,11 +5272,11 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
             {(() => {
               const numDiagrams = Math.min(Math.max(lineups.length, 1), 5);
               const sizing = {
-                1: { circle: 88, gap: 18, pad: 18, setFont: 17, netFont: 11, border: 4, marginBottom: 24 },
-                2: { circle: 76, gap: 15, pad: 15, setFont: 16, netFont: 11, border: 4, marginBottom: 20 },
-                3: { circle: 66, gap: 13, pad: 13, setFont: 15, netFont: 10, border: 3, marginBottom: 16 },
-                4: { circle: 54, gap: 10, pad: 10, setFont: 13, netFont: 9, border: 3, marginBottom: 13 },
-                5: { circle: 46, gap: 8, pad: 9, setFont: 12, netFont: 8, border: 3, marginBottom: 10 },
+                1: { circle: 96, gap: 20, pad: 20, setFont: 19, netFont: 12, border: 4, marginBottom: 30 },
+                2: { circle: 84, gap: 17, pad: 17, setFont: 18, netFont: 12, border: 4, marginBottom: 26 },
+                3: { circle: 72, gap: 14, pad: 14, setFont: 16, netFont: 11, border: 3, marginBottom: 22 },
+                4: { circle: 60, gap: 11, pad: 11, setFont: 15, netFont: 10, border: 3, marginBottom: 18 },
+                5: { circle: 52, gap: 9, pad: 10, setFont: 15, netFont: 10, border: 3, marginBottom: 15 },
               }[numDiagrams];
               return [...Array(numDiagrams)].map((_, i) => {
                 const l = lineups[i];
@@ -5331,6 +5339,25 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                         );
                       })}
                     </div>
+                    {/* Libero designations — pulled from the lineup's actual
+                        assigned liberos when set, blank otherwise. Aligned in
+                        the same 3-column grid as the circles above so Lib 2
+                        lines up directly under the center position. */}
+                    <div
+                      style={{
+                        fontSize: Math.max(sizing.setFont, 15),
+                        marginTop: 6,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                      }}
+                    >
+                      <span style={{ textAlign: "center" }}>
+                        <b>Lib 1</b>&nbsp;{playerFor(l?.liberos?.[0])?.num || ""}
+                      </span>
+                      <span style={{ textAlign: "center" }}>
+                        <b>Lib 2</b>&nbsp;{playerFor(l?.liberos?.[1])?.num || ""}
+                      </span>
+                    </div>
                   </div>
                 );
               });
@@ -5338,7 +5365,104 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           </div>
         </div>
 
-        <div style={{ fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+          <b>Please note:</b> Write only the player's number in the positions in which they will START.
+          Indicate captain with a 'C' next to the number and the player serving first with a circle
+          around the number.
+        </div>
+        <PrintFooter />
+      </div>
+
+      {/* BLANK LINEUP SHEET — for coaches who prefer to pencil in the actual
+          lineup themselves. Only the roster is real data; everything else
+          (team info, all 5 diagrams, liberos, set scores) is blank. Uses the
+          same "5 sets" sizing as the real sheet always, since it's always
+          exactly 5 blank sets here, never fewer. */}
+      <div className={`print-section${target === "blanksheet" ? " active" : ""}`}>
+        <div style={{ textAlign: "center", fontSize: 24, fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>
+          VOLLEYBALL LINEUP SHEET
+        </div>
+        <div style={{ textAlign: "center", fontSize: 13, color: "#666", marginBottom: 24 }}>Blank — fill in by hand</div>
+        <div style={{ display: "flex", gap: 24 }}>
+          <div style={{ flex: 1 }}>
+            {["Team", "Coach", "Date", "Opponent", "Match Winner"].map((label) => (
+              <div key={label} style={{ marginBottom: 12, fontSize: 15, fontWeight: 700 }}>
+                {label}:
+                <div style={{ borderBottom: "1px solid #000", height: 18 }}>&nbsp;</div>
+              </div>
+            ))}
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set Scores:</div>
+            <div style={{ marginBottom: 14, fontSize: 16 }}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <div key={n} style={{ marginBottom: 14 }}>
+                  <b>Set {n}</b>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, margin: "12px 0 5px" }}>Roster:</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #000" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", width: 38, fontSize: 14, padding: "6px 6px" }}>No.</th>
+                  <th style={{ ...th, border: "1px solid #000", background: "#ddd", fontSize: 17, padding: "6px 6px" }}>Name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roster.map((p) => (
+                  <tr key={p.id}>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 17, fontWeight: 600, padding: "6px 6px" }}>{fullName(p)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ flex: 1 }}>
+            {[...Array(5)].map((_, i) => {
+              const sizing = { circle: 52, gap: 9, pad: 10, setFont: 15, netFont: 10, border: 3, marginBottom: 15 };
+              return (
+                <div key={i} style={{ marginBottom: sizing.marginBottom }}>
+                  <div style={{ textAlign: "center", fontSize: sizing.setFont, fontWeight: 700 }}>Set {i + 1}</div>
+                  <div style={{ textAlign: "center", fontSize: sizing.netFont, fontWeight: 700, marginBottom: sizing.gap / 2 }}>
+                    NET
+                  </div>
+                  <div
+                    style={{
+                      border: "1px solid #000",
+                      padding: sizing.pad,
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gap: sizing.gap,
+                      justifyItems: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    {["P4", "P3", "P2", "P5", "P6", "P1"].map((slot) => (
+                      <div
+                        key={slot}
+                        style={{
+                          width: sizing.circle,
+                          height: sizing.circle,
+                          borderRadius: "50%",
+                          border: "1.5px solid #000",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 15, marginTop: 6, display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
+                    <span style={{ textAlign: "center" }}>
+                      <b>Lib 1</b>
+                    </span>
+                    <span style={{ textAlign: "center" }}>
+                      <b>Lib 2</b>
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
           <b>Please note:</b> Write only the player's number in the positions in which they will START.
           Indicate captain with a 'C' next to the number and the player serving first with a circle
           around the number.
@@ -5544,20 +5668,30 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           court diagrams per set, one per rotation, with a dual circle only
           at the exact rotation a substitution actually happens — everything
           else is a single number. Deliberately minimal: no names, no prose,
-          just numbers a player can find and follow. */}
+          just numbers a player can find and follow. Grouped 2 sets per page
+          — each ".subsheet-page-group" is captured as its own PDF page in
+          handlePrint, rather than just letting natural height decide where
+          pages break. */}
       <div className={`print-section${target === "subsheet" ? " active" : ""}`}>
         <PrintHeader title="Substitution Guide" subtitle="Find your number, follow it by rotation" />
-        {lineups.slice(0, 5).map((l) => {
-          const filledCount = Object.values(l.slots).filter(Boolean).length;
-          const pairings = l.pairings || [];
-          if (filledCount < 6 || pairings.length === 0) return null;
-          const { rotations, transitions } = computeSubTransitions(l);
-          const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
-          const size = 46;
-          return (
-            <div key={l.id} style={{ marginBottom: 28, pageBreakInside: "avoid" }}>
-              <div style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{l.name}</div>
-              <div style={{ fontSize: 10, color: "#555", textAlign: "center", marginBottom: 10 }}>
+        {(() => {
+          const qualifying = lineups.slice(0, 5).filter((l) => {
+            const filledCount = Object.values(l.slots).filter(Boolean).length;
+            return filledCount === 6 && (l.pairings || []).length > 0;
+          });
+          const pageGroups = [];
+          for (let i = 0; i < qualifying.length; i += 2) pageGroups.push(qualifying.slice(i, i + 2));
+          return pageGroups.map((group, gi) => (
+            <div className="subsheet-page-group" key={gi}>
+              {group.map((l) => {
+                const pairings = l.pairings || [];
+                const { rotations, transitions } = computeSubTransitions(l);
+                const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
+                const size = 58;
+                return (
+                  <div key={l.id} style={{ marginBottom: 28, pageBreakInside: "avoid" }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, textAlign: "center", marginBottom: 4 }}>{l.name}</div>
+                    <div style={{ fontSize: 12, color: "#555", textAlign: "center", marginBottom: 12 }}>
                 Dual circle = a sub happens right here · struck-through = leaving · L = libero
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
@@ -5566,7 +5700,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                   const { withSubs } = rotations[i];
                   return (
                     <div key={r} style={{ border: "1px solid #999", borderRadius: 8, padding: 7 }}>
-                      <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                      <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
                         Rotation {r}
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, justifyItems: "center" }}>
@@ -5598,7 +5732,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                     opacity: 0.65,
                                   }}
                                 >
-                                  <span style={{ fontSize: 15, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
+                                  <span style={{ fontSize: 18, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
                                 </div>
                                 <div style={{ height: 1.5, background: "#FF6B35" }} />
                                 <div
@@ -5610,7 +5744,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                     background: "#fff3ec",
                                   }}
                                 >
-                                  <span style={{ fontSize: 17, fontWeight: 800 }}>
+                                  <span style={{ fontSize: 21, fontWeight: 800 }}>
                                     {playerFor(t.entering)?.num}
                                     {isLib ? "L" : ""}
                                   </span>
@@ -5631,7 +5765,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                 justifyContent: "center",
                               }}
                             >
-                              <span style={{ fontSize: 19, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
+                              <span style={{ fontSize: 23, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
                             </div>
                           );
                         })}
@@ -5652,16 +5786,21 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                   const front = playerFor(pr.frontId);
                   const back = playerFor(pr.backId);
                   return (
-                    <div key={pr.id || i} style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>
-                      #{front?.num} {fullName(front)} ↔ #{back?.num} {fullName(back)}
+                    <div key={pr.id || i} style={{ fontSize: 14, marginBottom: 3 }}>
+                      <b>{displayName(front)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{front?.num}</span>
+                      {" ↔ "}
+                      <b>{displayName(back)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{back?.num}</span>
                       {pr.isLibero ? " (L)" : ""}
                     </div>
                   );
                 })}
               </div>
             </div>
-          );
-        })}
+                );
+              })}
+            </div>
+          ));
+        })()}
         <PrintFooter />
       </div>
 
@@ -5698,10 +5837,10 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                         </div>
                       )}
                       <div style={{ fontSize: 9, color: "#888", textAlign: "left" }}>{slot}</div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{p?.num}</div>
-                      <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2 }}>{fullName(p)}</div>
+                      <div style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{p?.num}</div>
+                      <div style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.2 }}>{displayName(p)}</div>
                       {p?.position && (
-                        <div style={{ fontSize: 8, fontWeight: 700, border: "1px solid #999", borderRadius: 3, padding: "0 3px", display: "inline-block", marginTop: 2 }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, border: "1px solid #999", borderRadius: 3, padding: "0 3px", display: "inline-block", marginTop: 2 }}>
                           {p.position}
                         </div>
                       )}
@@ -5721,21 +5860,22 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                 const starterPos = Object.keys(rotation1).find((p) => rotation1[p] === starterId);
                 const startsBack = BACK_ROW_SLOTS.includes(starterPos);
                 const triggerRow = startsBack ? "front" : "back";
-                const starterFirst = starter?.firstName || fullName(starter);
+                const starterName = displayName(starter);
+                const subName = displayName(sub);
                 return (
                   <div key={pr.id || i} style={{ border: "1.5px solid #000", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
                     <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 3 }}>
-                      {fullName(starter)} <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{starter?.num}</span>
+                      {starterName} <span style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{starter?.num}</span>
                       {" ↔ "}
-                      {fullName(sub)} <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>#{sub?.num}</span>
+                      {subName} <span style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{sub?.num}</span>
                       {pr.isLibero && (
-                        <span style={{ fontSize: 10, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
                           LIBERO
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: "#333" }}>
-                      {starterFirst} starts - {sub?.firstName || fullName(sub)} comes in when {starterFirst} rotates to the {triggerRow} row.
+                    <div style={{ fontSize: 15, color: "#000" }}>
+                      <b>{starterName}</b> starts - <b>{subName}</b> comes in when {starterName} rotates to the <b>{triggerRow} row</b>.
                     </div>
                   </div>
                 );
@@ -6409,42 +6549,53 @@ export default function App() {
       const activeSection = root?.querySelector(".print-section.active");
       if (!activeSection) return;
 
-      const canvas = await html2canvas(activeSection, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-      });
-
       const pdf = new jsPDF("p", "pt", "letter");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       const MARGIN = 36; // half-inch margin on all sides
       const contentWidth = pageWidth - MARGIN * 2;
       const contentHeight = pageHeight - MARGIN * 2;
-
-      // Slice the source canvas into separate per-page images sized to
-      // exactly fit inside the margin box, rather than positioning one huge
-      // image and hoping the page edge clips it — that's what was causing
-      // content to run edge-to-edge with no margin. This also keeps each
-      // individual image small (helps avoid hitting canvas/memory limits on
-      // iOS specifically, and JPEG compression here cuts file size a lot
-      // versus the uncompressed PNG this used before).
-      const scaleFactor = contentWidth / canvas.width;
-      const sliceHeightPx = contentHeight / scaleFactor;
-      let renderedPx = 0;
       let pageIndex = 0;
-      while (renderedPx < canvas.height) {
-        const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
-        const sliceCanvas = document.createElement("canvas");
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = thisSliceHeightPx;
-        const ctx = sliceCanvas.getContext("2d");
-        ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
-        const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
-        if (pageIndex > 0) pdf.addPage();
-        pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
-        renderedPx += thisSliceHeightPx;
-        pageIndex++;
+
+      // Captures one element and adds it to the PDF, slicing into separate
+      // per-page images sized to exactly fit inside the margin box, rather
+      // than positioning one huge image and hoping the page edge clips it —
+      // that's what was causing content to run edge-to-edge with no margin.
+      // This also keeps each individual image small (helps avoid hitting
+      // canvas/memory limits on iOS specifically, and JPEG compression here
+      // cuts file size a lot versus the uncompressed PNG this used before).
+      const captureElementToPdf = async (el) => {
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+        const scaleFactor = contentWidth / canvas.width;
+        const sliceHeightPx = contentHeight / scaleFactor;
+        let renderedPx = 0;
+        while (renderedPx < canvas.height) {
+          const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
+          const sliceCanvas = document.createElement("canvas");
+          sliceCanvas.width = canvas.width;
+          sliceCanvas.height = thisSliceHeightPx;
+          const ctx = sliceCanvas.getContext("2d");
+          ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+          const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
+          if (pageIndex > 0) pdf.addPage();
+          pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
+          renderedPx += thisSliceHeightPx;
+          pageIndex++;
+        }
+      };
+
+      // The Rotation Reference forces exactly 2 sets per page — each
+      // ".subsheet-page-group" gets captured and paginated on its own,
+      // always starting a fresh page, instead of one continuous capture
+      // where page breaks land wherever the height happens to run out.
+      const pageGroups =
+        printTarget === "subsheet" ? Array.from(activeSection.querySelectorAll(".subsheet-page-group")) : [];
+      if (pageGroups.length > 0) {
+        for (const group of pageGroups) {
+          await captureElementToPdf(group);
+        }
+      } else {
+        await captureElementToPdf(activeSection);
       }
 
       const blob = pdf.output("blob");
@@ -6800,6 +6951,30 @@ export default function App() {
                 Player Guide
                 <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
                   Hand to players — starting diagram + plain-language swaps
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setPrintChoiceOpen(false);
+                  setPrintTarget("blanksheet");
+                  handlePrint();
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  marginTop: 8,
+                  borderRadius: 8,
+                  border: `1px dashed ${COLORS.line}`,
+                  background: "none",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Blank Lineup Sheet
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  Roster filled in, everything else blank — pencil it in yourself
                 </div>
               </button>
             </div>
