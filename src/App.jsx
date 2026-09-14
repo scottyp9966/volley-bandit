@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-pagefix";
+const APP_VERSION = "2026.09.11-pagefix2";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5419,7 +5419,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           </div>
           <div style={{ flex: 1 }}>
             {[...Array(5)].map((_, i) => {
-              const sizing = { circle: 52, gap: 9, pad: 10, setFont: 15, netFont: 10, border: 3, marginBottom: 15 };
+              const sizing = { circle: 42, gap: 7, pad: 8, setFont: 12, netFont: 8, border: 3, marginBottom: 9 };
               return (
                 <div key={i} style={{ marginBottom: sizing.marginBottom }}>
                   <div style={{ textAlign: "center", fontSize: sizing.setFont, fontWeight: 700 }}>Set {i + 1}</div>
@@ -5668,10 +5668,12 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           court diagrams per set, one per rotation, with a dual circle only
           at the exact rotation a substitution actually happens — everything
           else is a single number. Deliberately minimal: no names, no prose,
-          just numbers a player can find and follow. Grouped 2 sets per page
-          — each ".subsheet-page-group" is captured as its own PDF page in
+          just numbers a player can find and follow. One set per page — each
+          ".subsheet-page-group" is captured as its own PDF page in
           handlePrint, rather than just letting natural height decide where
-          pages break. */}
+          pages break. (Was 2 sets per page, but combining two sets into one
+          captured image meant a plain height-based slice could still land
+          mid-set, stranding a set's own title from its own diagrams.) */}
       <div className={`print-section${target === "subsheet" ? " active" : ""}`}>
         <PrintHeader title="Substitution Guide" subtitle="Find your number, follow it by rotation" />
         {(() => {
@@ -5680,7 +5682,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
             return filledCount === 6 && (l.pairings || []).length > 0;
           });
           const pageGroups = [];
-          for (let i = 0; i < qualifying.length; i += 2) pageGroups.push(qualifying.slice(i, i + 2));
+          for (let i = 0; i < qualifying.length; i += 1) pageGroups.push(qualifying.slice(i, i + 1));
           return pageGroups.map((group, gi) => (
             <div className="subsheet-page-group" key={gi}>
               {group.map((l) => {
@@ -5851,35 +5853,46 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderTop: "1px solid #ccc", paddingTop: 14, marginBottom: 10 }}>
                 Substitution Guide
               </div>
-              {pairings.map((pr, i) => {
-                const onCourtIds = new Set(Object.values(rotation1).filter(Boolean));
-                const starterId = onCourtIds.has(pr.frontId) ? pr.frontId : pr.backId;
-                const subId = starterId === pr.frontId ? pr.backId : pr.frontId;
-                const starter = playerFor(starterId);
-                const sub = playerFor(subId);
-                const starterPos = Object.keys(rotation1).find((p) => rotation1[p] === starterId);
-                const startsBack = BACK_ROW_SLOTS.includes(starterPos);
-                const triggerRow = startsBack ? "front" : "back";
-                const starterName = displayName(starter);
-                const subName = displayName(sub);
-                return (
-                  <div key={pr.id || i} style={{ border: "1.5px solid #000", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-                    <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 3 }}>
-                      {starterName} <span style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{starter?.num}</span>
-                      {" ↔ "}
-                      {subName} <span style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{sub?.num}</span>
-                      {pr.isLibero && (
-                        <span style={{ fontSize: 12, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
-                          LIBERO
-                        </span>
-                      )}
+              {(() => {
+                // Ordered by when things actually happen during the match,
+                // not by pairing — a player reads this the same way they'd
+                // experience the set: "at rotation 2, this happens," then
+                // "at rotation 4, this happens," and so on.
+                const { transitions } = computeSubTransitions(l);
+                const byRotation = {};
+                Object.keys(transitions).forEach((key) => {
+                  const [r] = key.split("-");
+                  if (!byRotation[r]) byRotation[r] = [];
+                  byRotation[r].push(transitions[key]);
+                });
+                const rotationNumbers = Object.keys(byRotation)
+                  .map(Number)
+                  .sort((a, b) => a - b);
+                return rotationNumbers.map((r) => (
+                  <div key={r} style={{ border: "1.5px solid #000", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
+                      Rotation {r}
                     </div>
-                    <div style={{ fontSize: 15, color: "#000" }}>
-                      <b>{starterName}</b> starts - <b>{subName}</b> comes in when {starterName} rotates to the <b>{triggerRow} row</b>.
-                    </div>
+                    {byRotation[r].map((t, idx) => {
+                      const entering = playerFor(t.entering);
+                      const leaving = playerFor(t.leaving);
+                      const isLib = (l.liberos || []).includes(t.entering);
+                      return (
+                        <div key={idx} style={{ fontSize: 16, marginBottom: 3 }}>
+                          <b>{displayName(entering)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{entering?.num}</span>
+                          {" in for "}
+                          <b>{displayName(leaving)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{leaving?.num}</span>
+                          {isLib && (
+                            <span style={{ fontSize: 11, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
+                              LIBERO
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ));
+              })()}
             </div>
           );
         })}
@@ -6552,7 +6565,7 @@ export default function App() {
       const pdf = new jsPDF("p", "pt", "letter");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const MARGIN = 36; // half-inch margin on all sides
+      const MARGIN = 26; // reduced from 36 (half-inch) to reclaim a bit more usable page height
       const contentWidth = pageWidth - MARGIN * 2;
       const contentHeight = pageHeight - MARGIN * 2;
       let pageIndex = 0;
@@ -6584,12 +6597,12 @@ export default function App() {
         }
       };
 
-      // The Rotation Reference forces exactly 2 sets per page, and the
-      // Player Guide forces exactly 1 set per page — each page-group class
-      // gets captured and paginated on its own, always starting a fresh
-      // page, instead of one continuous capture where page breaks land
-      // wherever the height happens to run out (which was orphaning a set's
-      // pairing list onto the next page, separated from its own diagram).
+      // The Rotation Reference and Player Guide both force exactly 1 set per
+      // page — each page-group class gets captured and paginated on its own,
+      // always starting a fresh page, instead of one continuous capture
+      // where page breaks land wherever the height happens to run out
+      // (which was orphaning a set's title or pairing list onto the next
+      // page, separated from its own content).
       const pageGroupSelector =
         printTarget === "subsheet" ? ".subsheet-page-group" : printTarget === "playerguide" ? ".playerguide-page-group" : null;
       const pageGroups = pageGroupSelector ? Array.from(activeSection.querySelectorAll(pageGroupSelector)) : [];
