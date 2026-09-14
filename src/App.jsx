@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-pagefix2";
+const APP_VERSION = "2026.09.11-printfix";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5114,7 +5114,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
 
   // Small, deliberately unobtrusive mark at the bottom of every printed page.
   const PrintFooter = () => (
-    <div style={{ marginTop: 28, fontSize: 9, color: "#999", textAlign: "center" }}>
+    <div style={{ marginTop: 8, fontSize: 9, color: "#999", textAlign: "center" }}>
       Made with Volley Bandit
     </div>
   );
@@ -5664,25 +5664,27 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
         <PrintFooter />
       </div>
 
-      {/* PLAYER SUB SHEET — hand this to players, not coaches. Six small
+      {/* ROTATION REFERENCE — hand this to players, not coaches. Six small
           court diagrams per set, one per rotation, with a dual circle only
           at the exact rotation a substitution actually happens — everything
           else is a single number. Deliberately minimal: no names, no prose,
-          just numbers a player can find and follow. One set per page — each
+          just numbers a player can find and follow. 2 sets per page — each
           ".subsheet-page-group" is captured as its own PDF page in
           handlePrint, rather than just letting natural height decide where
-          pages break. (Was 2 sets per page, but combining two sets into one
-          captured image meant a plain height-based slice could still land
-          mid-set, stranding a set's own title from its own diagrams.) */}
+          pages break. (The title-orphaning issue this was meant to fix
+          turned out to be a different bug entirely — handlePrint was
+          reading a stale target value, so this grouping mechanism was
+          never actually running at all. Now that it's fixed, 2-per-page
+          works correctly.) */}
       <div className={`print-section${target === "subsheet" ? " active" : ""}`}>
-        <PrintHeader title="Substitution Guide" subtitle="Find your number, follow it by rotation" />
+        <PrintHeader title="Rotation Reference" subtitle="Find your number, follow it by rotation" />
         {(() => {
           const qualifying = lineups.slice(0, 5).filter((l) => {
             const filledCount = Object.values(l.slots).filter(Boolean).length;
             return filledCount === 6 && (l.pairings || []).length > 0;
           });
           const pageGroups = [];
-          for (let i = 0; i < qualifying.length; i += 1) pageGroups.push(qualifying.slice(i, i + 1));
+          for (let i = 0; i < qualifying.length; i += 2) pageGroups.push(qualifying.slice(i, i + 2));
           return pageGroups.map((group, gi) => (
             <div className="subsheet-page-group" key={gi}>
               {group.map((l) => {
@@ -5813,7 +5815,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           that's something a player can directly observe, unlike a rotation
           number they'd have to track in their head. */}
       <div className={`print-section${target === "playerguide" ? " active" : ""}`}>
-        <PrintHeader title="Substitution Guide" subtitle="Your starting lineup and swaps" />
+        <PrintHeader title="Player Guide" subtitle="Your starting lineup and swaps" />
         {lineups.slice(0, 5).map((l) => {
           const filledCount = Object.values(l.slots).filter(Boolean).length;
           const pairings = l.pairings || [];
@@ -6544,9 +6546,19 @@ export default function App() {
   const [printing, setPrinting] = useState(false);
   const [printChoiceOpen, setPrintChoiceOpen] = useState(false);
   const [printTarget, setPrintTarget] = useState(null); // null = use the current tab's default target
-  const handlePrint = async () => {
+  const handlePrint = async (explicitTarget) => {
     if (printing) return;
     setPrinting(true);
+    // Fixes a real bug: reading printTarget from React state here was
+    // grabbing a stale, leftover value from before this call, since
+    // setPrintTarget(...) called right before handlePrint() doesn't take
+    // effect until the next render — handlePrint was always working off
+    // whatever target was current before this tap, not the one just
+    // selected. Taking it as a direct parameter instead sidesteps that
+    // timing problem entirely. This is also why every download was
+    // showing up named "volley-bandit-lineup" regardless of which sheet
+    // was actually printed.
+    setPrintTarget(explicitTarget);
     const root = document.getElementById("print-root");
     try {
       // Make the print sheet capturable only for this moment — it's
@@ -6604,7 +6616,7 @@ export default function App() {
       // (which was orphaning a set's title or pairing list onto the next
       // page, separated from its own content).
       const pageGroupSelector =
-        printTarget === "subsheet" ? ".subsheet-page-group" : printTarget === "playerguide" ? ".playerguide-page-group" : null;
+        explicitTarget === "subsheet" ? ".subsheet-page-group" : explicitTarget === "playerguide" ? ".playerguide-page-group" : null;
       const pageGroups = pageGroupSelector ? Array.from(activeSection.querySelectorAll(pageGroupSelector)) : [];
       if (pageGroups.length > 0) {
         for (const group of pageGroups) {
@@ -6616,7 +6628,7 @@ export default function App() {
 
       const blob = pdf.output("blob");
       const dateStr = new Date().toISOString().slice(0, 10);
-      const filename = `volley-bandit-${printTarget || tab}-${dateStr}.pdf`;
+      const filename = `volley-bandit-${explicitTarget || tab}-${dateStr}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
 
       const downloadDirectly = () => {
@@ -6868,7 +6880,7 @@ export default function App() {
         <TopBar
           title={titles[tab].title}
           sub={titles[tab].sub}
-          onPrint={PRINTABLE_TABS[tab] ? (tab === "lineup" ? () => setPrintChoiceOpen(true) : handlePrint) : null}
+          onPrint={PRINTABLE_TABS[tab] ? (tab === "lineup" ? () => setPrintChoiceOpen(true) : () => handlePrint(PRINTABLE_TABS[tab])) : null}
           printing={printing}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
@@ -6901,8 +6913,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setPrintChoiceOpen(false);
-                  setPrintTarget(null);
-                  handlePrint();
+                  handlePrint("lineup");
                 }}
                 style={{
                   width: "100%",
@@ -6925,8 +6936,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setPrintChoiceOpen(false);
-                  setPrintTarget("subsheet");
-                  handlePrint();
+                  handlePrint("subsheet");
                 }}
                 style={{
                   width: "100%",
@@ -6948,8 +6958,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setPrintChoiceOpen(false);
-                  setPrintTarget("playerguide");
-                  handlePrint();
+                  handlePrint("playerguide");
                 }}
                 style={{
                   width: "100%",
@@ -6972,8 +6981,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setPrintChoiceOpen(false);
-                  setPrintTarget("blanksheet");
-                  handlePrint();
+                  handlePrint("blanksheet");
                 }}
                 style={{
                   width: "100%",
