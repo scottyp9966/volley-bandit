@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.11-bigtext";
+const APP_VERSION = "2026.09.11-pagefix";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5210,9 +5210,9 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               </div>
             ))}
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set Scores:</div>
-            <div style={{ marginBottom: 14, fontSize: 16 }}>
+            <div style={{ marginBottom: 12, fontSize: 14 }}>
               {[1, 2, 3, 4, 5].map((n) => (
-                <div key={n} style={{ marginBottom: 14 }}>
+                <div key={n} style={{ marginBottom: 6 }}>
                   <b>Set {n}</b>
                 </div>
               ))}
@@ -5272,11 +5272,11 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
             {(() => {
               const numDiagrams = Math.min(Math.max(lineups.length, 1), 5);
               const sizing = {
-                1: { circle: 96, gap: 20, pad: 20, setFont: 19, netFont: 12, border: 4, marginBottom: 30 },
-                2: { circle: 84, gap: 17, pad: 17, setFont: 18, netFont: 12, border: 4, marginBottom: 26 },
-                3: { circle: 72, gap: 14, pad: 14, setFont: 16, netFont: 11, border: 3, marginBottom: 22 },
-                4: { circle: 60, gap: 11, pad: 11, setFont: 15, netFont: 10, border: 3, marginBottom: 18 },
-                5: { circle: 52, gap: 9, pad: 10, setFont: 15, netFont: 10, border: 3, marginBottom: 15 },
+                1: { circle: 84, gap: 16, pad: 16, setFont: 17, netFont: 11, border: 4, marginBottom: 22 },
+                2: { circle: 72, gap: 14, pad: 14, setFont: 16, netFont: 11, border: 4, marginBottom: 19 },
+                3: { circle: 62, gap: 12, pad: 12, setFont: 15, netFont: 10, border: 3, marginBottom: 16 },
+                4: { circle: 50, gap: 9, pad: 9, setFont: 13, netFont: 9, border: 3, marginBottom: 12 },
+                5: { circle: 42, gap: 7, pad: 8, setFont: 12, netFont: 8, border: 3, marginBottom: 9 },
               }[numDiagrams];
               return [...Array(numDiagrams)].map((_, i) => {
                 const l = lineups[i];
@@ -5392,9 +5392,9 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
               </div>
             ))}
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set Scores:</div>
-            <div style={{ marginBottom: 14, fontSize: 16 }}>
+            <div style={{ marginBottom: 12, fontSize: 14 }}>
               {[1, 2, 3, 4, 5].map((n) => (
-                <div key={n} style={{ marginBottom: 14 }}>
+                <div key={n} style={{ marginBottom: 6 }}>
                   <b>Set {n}</b>
                 </div>
               ))}
@@ -5687,11 +5687,11 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                 const pairings = l.pairings || [];
                 const { rotations, transitions } = computeSubTransitions(l);
                 const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
-                const size = 58;
+                const size = 48;
                 return (
                   <div key={l.id} style={{ marginBottom: 28, pageBreakInside: "avoid" }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, textAlign: "center", marginBottom: 4 }}>{l.name}</div>
-                    <div style={{ fontSize: 12, color: "#555", textAlign: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{l.name}</div>
+                    <div style={{ fontSize: 10, color: "#555", textAlign: "center", marginBottom: 8 }}>
                 Dual circle = a sub happens right here · struck-through = leaving · L = libero
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
@@ -5700,7 +5700,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                   const { withSubs } = rotations[i];
                   return (
                     <div key={r} style={{ border: "1px solid #999", borderRadius: 8, padding: 7 }}>
-                      <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+                      <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, marginBottom: 5 }}>
                         Rotation {r}
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, justifyItems: "center" }}>
@@ -5732,7 +5732,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                     opacity: 0.65,
                                   }}
                                 >
-                                  <span style={{ fontSize: 18, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
+                                  <span style={{ fontSize: 14, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
                                 </div>
                                 <div style={{ height: 1.5, background: "#FF6B35" }} />
                                 <div
@@ -5744,7 +5744,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                     background: "#fff3ec",
                                   }}
                                 >
-                                  <span style={{ fontSize: 21, fontWeight: 800 }}>
+                                  <span style={{ fontSize: 16, fontWeight: 800 }}>
                                     {playerFor(t.entering)?.num}
                                     {isLib ? "L" : ""}
                                   </span>
@@ -5765,7 +5765,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
                                 justifyContent: "center",
                               }}
                             >
-                              <span style={{ fontSize: 23, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
+                              <span style={{ fontSize: 17, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
                             </div>
                           );
                         })}
@@ -5820,7 +5820,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
           const order = ["P4", "P3", "P2", "P5", "P6", "P1"];
           const serverSlot = (l.servesFirst || "us") === "us" ? "P1" : "P2";
           return (
-            <div key={l.id} style={{ marginBottom: 30, pageBreakInside: "avoid" }}>
+            <div key={l.id} className="playerguide-page-group">
               <div style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 8 }}>{l.name}</div>
               <div style={{ textAlign: "center", fontSize: 10, letterSpacing: 3, color: "#888", marginBottom: 8 }}>
                 — NET —
@@ -6584,12 +6584,15 @@ export default function App() {
         }
       };
 
-      // The Rotation Reference forces exactly 2 sets per page — each
-      // ".subsheet-page-group" gets captured and paginated on its own,
-      // always starting a fresh page, instead of one continuous capture
-      // where page breaks land wherever the height happens to run out.
-      const pageGroups =
-        printTarget === "subsheet" ? Array.from(activeSection.querySelectorAll(".subsheet-page-group")) : [];
+      // The Rotation Reference forces exactly 2 sets per page, and the
+      // Player Guide forces exactly 1 set per page — each page-group class
+      // gets captured and paginated on its own, always starting a fresh
+      // page, instead of one continuous capture where page breaks land
+      // wherever the height happens to run out (which was orphaning a set's
+      // pairing list onto the next page, separated from its own diagram).
+      const pageGroupSelector =
+        printTarget === "subsheet" ? ".subsheet-page-group" : printTarget === "playerguide" ? ".playerguide-page-group" : null;
+      const pageGroups = pageGroupSelector ? Array.from(activeSection.querySelectorAll(pageGroupSelector)) : [];
       if (pageGroups.length > 0) {
         for (const group of pageGroups) {
           await captureElementToPdf(group);
