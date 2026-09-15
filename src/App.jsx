@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.14";
+const APP_VERSION = "2026.09.14b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4978,7 +4978,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
 
 // ---- Print area: standard black-on-white formats, one per document type.
 // Hidden on screen; shown via @media print CSS with everything else hidden.
-function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainId, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup }) {
+function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainId, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
@@ -5470,42 +5470,99 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
         <PrintFooter />
       </div>
 
-      {/* BOX SCORE — current match only, kept simple */}
+      {/* BOX SCORE — full match totals, current match only */}
       <div className={`print-section${target === "box" && boxSection === "boxscore" ? " active" : ""}`}>
         <PrintHeader
-          title="Box Score"
+          title="Box Score — Full Match"
           subtitle={
             activeMatch
               ? `vs. ${activeMatch.opponent}${activeMatch.date ? ` · ${activeMatch.date}` : ""}`
               : `Set ${setNumber} · Us ${score.us} – ${score.opp} Opponent`
           }
         />
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={th}>#</th>
-              <th style={th}>Name</th>
-              {STAT_BUTTONS.map((s) => (
-                <th key={s.key} style={{ ...th, textAlign: "center" }}>
-                  {s.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {boxRows.map(({ player, stats }, idx) => (
-              <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
-                <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
-                <td style={td}>{fullName(player)}</td>
-                {STAT_BUTTONS.map((s) => (
-                  <td key={s.key} style={{ ...td, textAlign: "center" }}>
-                    {stats[s.key] || ""}
-                  </td>
+        {(() => {
+          const visibleStats = STAT_BUTTONS.filter((s) => (printStatKeys || []).includes(s.key));
+          return (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={th}>#</th>
+                  <th style={th}>Name</th>
+                  {visibleStats.map((s) => (
+                    <th key={s.key} style={{ ...th, textAlign: "center" }}>
+                      {s.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {boxRows.map(({ player, stats }, idx) => (
+                  <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
+                    <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
+                    <td style={td}>{fullName(player)}</td>
+                    {visibleStats.map((s) => (
+                      <td key={s.key} style={{ ...td, textAlign: "center" }}>
+                        {stats[s.key] || ""}
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </tbody>
+            </table>
+          );
+        })()}
+        <PrintFooter />
+      </div>
+
+      {/* BOX SCORE — broken down set by set, current match only. Same stat
+          filter as the full-match version, reusing groupByPlayer per set
+          instead of across the whole match. */}
+      <div className={`print-section${target === "boxperset" ? " active" : ""}`}>
+        <PrintHeader
+          title="Box Score — By Set"
+          subtitle={activeMatch ? `vs. ${activeMatch.opponent}${activeMatch.date ? ` · ${activeMatch.date}` : ""}` : "Current match"}
+        />
+        {(() => {
+          const visibleStats = STAT_BUTTONS.filter((s) => (printStatKeys || []).includes(s.key));
+          const setNumbers = [...new Set(boxLog.map((e) => e.setNumber || 1))].sort((a, b) => a - b);
+          if (setNumbers.length === 0) {
+            return <div style={{ fontSize: 12, color: "#444" }}>No stats recorded for this match.</div>;
+          }
+          return setNumbers.map((sn) => {
+            const setRows = groupByPlayer(boxLog.filter((e) => (e.setNumber || 1) === sn));
+            return (
+              <div key={sn} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set {sn}</div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>#</th>
+                      <th style={th}>Name</th>
+                      {visibleStats.map((s) => (
+                        <th key={s.key} style={{ ...th, textAlign: "center" }}>
+                          {s.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {setRows.map(({ player, stats }, idx) => (
+                      <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
+                        <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
+                        <td style={td}>{fullName(player)}</td>
+                        {visibleStats.map((s) => (
+                          <td key={s.key} style={{ ...td, textAlign: "center" }}>
+                            {stats[s.key] || ""}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          });
+        })()}
         <PrintFooter />
       </div>
 
@@ -6218,6 +6275,8 @@ function SettingsSheet({
   setIncludePairingsRoster,
   includePairingsLineup,
   setIncludePairingsLineup,
+  printStatKeys,
+  setPrintStatKeys,
   teamCode,
   setTeamCode,
   setUnlockedWith,
@@ -6343,6 +6402,24 @@ function SettingsSheet({
           {checkboxRow(includePairingsLineup, () => setIncludePairingsLineup((v) => !v), "Include pairings when printing lineup sheet")}
         </div>
 
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+          Stats to Print
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          {STAT_BUTTONS.map((s) => {
+            const checked = (printStatKeys || []).includes(s.key);
+            return checkboxRow(
+              checked,
+              () =>
+                setPrintStatKeys((prev) => {
+                  const current = prev || STAT_BUTTONS.map((b) => b.key);
+                  return checked ? current.filter((k) => k !== s.key) : [...current, s.key];
+                }),
+              s.label
+            );
+          })}
+        </div>
+
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
           Team
         </div>
@@ -6406,6 +6483,7 @@ export default function App() {
     subCount: 0,
     liberoSubCount: 0,
     injuredPlayerIds: [],
+    printStatKeys: STAT_BUTTONS.map((s) => s.key), // which stats show on printed box scores — defaults to all
     matches: [],
     activeMatchId: null,
     statsView: { section: "boxscore", insightsMatchId: null },
@@ -6446,6 +6524,8 @@ export default function App() {
   const setLiberoSubCount = fieldSetter(setMainDoc, "liberoSubCount");
   const injuredPlayerIds = mainDoc.injuredPlayerIds || [];
   const setInjuredPlayerIds = fieldSetter(setMainDoc, "injuredPlayerIds");
+  const printStatKeys = mainDoc.printStatKeys || STAT_BUTTONS.map((s) => s.key);
+  const setPrintStatKeys = fieldSetter(setMainDoc, "printStatKeys");
   const matches = mainDoc.matches;
   const setMatches = fieldSetter(setMainDoc, "matches");
   const activeMatchId = mainDoc.activeMatchId;
@@ -6545,6 +6625,7 @@ export default function App() {
   // sharing files (most desktop browsers).
   const [printing, setPrinting] = useState(false);
   const [printChoiceOpen, setPrintChoiceOpen] = useState(false);
+  const [boxPrintChoiceOpen, setBoxPrintChoiceOpen] = useState(false);
   const [printTarget, setPrintTarget] = useState(null); // null = use the current tab's default target
   const handlePrint = async (explicitTarget) => {
     if (printing) return;
@@ -6856,6 +6937,7 @@ export default function App() {
         pointLog={pointLog}
         includePairingsRoster={includePairingsRoster}
         includePairingsLineup={includePairingsLineup}
+        printStatKeys={printStatKeys}
       />
       <PhoneFrame>
         {syncError && (
@@ -6880,7 +6962,15 @@ export default function App() {
         <TopBar
           title={titles[tab].title}
           sub={titles[tab].sub}
-          onPrint={PRINTABLE_TABS[tab] ? (tab === "lineup" ? () => setPrintChoiceOpen(true) : () => handlePrint(PRINTABLE_TABS[tab])) : null}
+          onPrint={
+            PRINTABLE_TABS[tab]
+              ? tab === "lineup"
+                ? () => setPrintChoiceOpen(true)
+                : tab === "box"
+                ? () => setBoxPrintChoiceOpen(true)
+                : () => handlePrint(PRINTABLE_TABS[tab])
+              : null
+          }
           printing={printing}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
@@ -7004,6 +7094,78 @@ export default function App() {
             </div>
           </div>
         )}
+        {boxPrintChoiceOpen && (
+          <div
+            onClick={() => setBoxPrintChoiceOpen(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "flex-end",
+              zIndex: 10,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: COLORS.bgRaised,
+                width: "100%",
+                borderRadius: "20px 20px 0 0",
+                padding: 18,
+              }}
+            >
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase", marginBottom: 14 }}>
+                What to Print
+              </div>
+              <button
+                onClick={() => {
+                  setBoxPrintChoiceOpen(false);
+                  handlePrint("box");
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.orange}`,
+                  background: "rgba(255,107,53,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Per Match
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  One table — totals for the whole match
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setBoxPrintChoiceOpen(false);
+                  handlePrint("boxperset");
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.green}`,
+                  background: "rgba(76,154,99,0.12)",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Per Set
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  A separate table for each set played
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
         {showStatInfo && <StatInfoSheet onClose={() => setShowStatInfo(false)} />}
         {showSettings && (
           <SettingsSheet
@@ -7014,6 +7176,8 @@ export default function App() {
             setIncludePairingsRoster={setIncludePairingsRoster}
             includePairingsLineup={includePairingsLineup}
             setIncludePairingsLineup={setIncludePairingsLineup}
+            printStatKeys={printStatKeys}
+            setPrintStatKeys={setPrintStatKeys}
             teamCode={teamCode}
             setTeamCode={setTeamCode}
             setUnlockedWith={setUnlockedWith}
