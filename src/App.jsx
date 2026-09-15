@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.14b";
+const APP_VERSION = "2026.09.14d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4978,7 +4978,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
 
 // ---- Print area: standard black-on-white formats, one per document type.
 // Hidden on screen; shown via @media print CSS with everything else hidden.
-function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainId, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
+const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainId, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
@@ -5987,7 +5987,7 @@ function PrintArea({ target, roster, lineups, activeLineupId, log, score, matche
       </div>
     </div>
   );
-}
+});
 
 // ---- Team Gate: shown once, before any team data loads, on any device
 // that hasn't been linked to a team yet ----
@@ -6056,17 +6056,22 @@ function TeamGate({ onLinked }) {
     setChecking(true);
     setCreateError("");
     setCodeTaken(false);
+    // Same defensive pattern as the print feature's safety net — a single
+    // network check is much less likely to get stuck than a multi-page PDF
+    // capture, but there's no real cost to guarding against it the same way.
+    const forceCleanupTimer = setTimeout(() => setChecking(false), 15000);
     try {
       const ref = doc(db, "teams", code, "data", "main");
       const snap = await getDoc(ref);
       if (snap.exists()) {
         setCodeTaken(true);
-        setChecking(false);
         return;
       }
       onLinked(code);
     } catch (err) {
       setCreateError("Couldn't check that code — check your connection and try again.");
+    } finally {
+      clearTimeout(forceCleanupTimer);
       setChecking(false);
     }
   };
@@ -6079,17 +6084,19 @@ function TeamGate({ onLinked }) {
     if (!code) return;
     setChecking(true);
     setJoinError("");
+    const forceCleanupTimer = setTimeout(() => setChecking(false), 15000);
     try {
       const ref = doc(db, "teams", code, "data", "main");
       const snap = await getDoc(ref);
       if (!snap.exists()) {
         setJoinError("No team found with that code — double-check it and try again.");
-        setChecking(false);
         return;
       }
       onLinked(code);
     } catch (err) {
       setJoinError("Couldn't check that code — check your connection and try again.");
+    } finally {
+      clearTimeout(forceCleanupTimer);
       setChecking(false);
     }
   };
@@ -6641,6 +6648,19 @@ export default function App() {
     // was actually printed.
     setPrintTarget(explicitTarget);
     const root = document.getElementById("print-root");
+    // Safety net: if this whole operation somehow never reaches its own
+    // finally block — iOS can genuinely suspend an in-flight async function
+    // mid-await if the tab gets backgrounded, the screen locks, or you
+    // switch apps during a multi-page print — this forces the capturing
+    // state to clear on its own after 20s no matter what, rather than
+    // leaving the print sheet permanently rendered in the background for
+    // the rest of the session (which would mean real, ongoing CPU/memory
+    // use even while just using the app normally afterward).
+    const forceCleanupTimer = setTimeout(() => {
+      root.classList.remove("print-root-capturing");
+      setPrinting(false);
+      console.warn("Print operation force-cleaned after timing out — this shouldn't normally happen.");
+    }, 20000);
     try {
       // Make the print sheet capturable only for this moment — it's
       // display:none the rest of the time, so no ongoing background
@@ -6746,6 +6766,7 @@ export default function App() {
       console.warn("PDF export failed:", err);
       alert(`Couldn't generate the PDF: ${err?.message || err}`);
     } finally {
+      clearTimeout(forceCleanupTimer); // normal completion — the safety net above isn't needed
       root.classList.remove("print-root-capturing"); // always hide it again, success or failure
       setPrinting(false);
       setPrintTarget(null); // don't let a sub-sheet choice leak into the next unrelated print
