@@ -293,11 +293,17 @@ function buildLineupSuggestions(lineup, roster, evaluations) {
         .sort((a, b) => b.score.overall - a.score.overall);
       const bestBench = benchScored[0] || null;
 
-      const starterOverall = starterScore?.overall ?? 0;
+      // A starter with no evaluations yet defaults to a score of 0, which
+      // would trivially "lose" to any rated bench player — that's a data
+      // gap, not evidence the bench player is actually better, so it gets
+      // its own flag and message instead of being lumped in with a real
+      // rating-based swap suggestion.
+      const starterUnrated = !starterScore;
       const suggestSwap =
-        bestBench && bestBench.score.overall - starterOverall >= SWAP_SUGGESTION_THRESHOLD;
+        !starterUnrated && bestBench && bestBench.score.overall - starterScore.overall >= SWAP_SUGGESTION_THRESHOLD;
+      const flagUnrated = starterUnrated && !!bestBench;
 
-      return { slot, starter, starterScore, bestBench, suggestSwap };
+      return { slot, starter, starterScore, bestBench, suggestSwap, flagUnrated };
     })
     .filter(Boolean);
 }
@@ -630,7 +636,7 @@ function PlayerForm({ initial, onSave, onCancel }) {
         >
           Save player
         </button>
-        <button onClick={onCancel} style={ghostBtn}><X size={14} /></button>
+        <button onClick={onCancel} aria-label="Cancel" style={ghostBtn}><X size={14} /></button>
       </div>
     </div>
   );
@@ -712,12 +718,12 @@ function LineupRecommendList({ activeLineup, lineupSuggestions }) {
           This lineup doesn't have players assigned to its court slots yet.
         </div>
       )}
-      {lineupSuggestions.map(({ slot, starter, starterScore, bestBench, suggestSwap }) => (
+      {lineupSuggestions.map(({ slot, starter, starterScore, bestBench, suggestSwap, flagUnrated }) => (
         <div
           key={slot}
           style={{
             background: suggestSwap ? "#2a2013" : "#1a2029",
-            border: suggestSwap ? "1px solid #e8622c" : "1px solid #2c3542",
+            border: suggestSwap ? "1px solid #e8622c" : flagUnrated ? "1px dashed #6b7383" : "1px solid #2c3542",
             borderRadius: 10,
             padding: "12px 14px",
             marginBottom: 8,
@@ -738,7 +744,14 @@ function LineupRecommendList({ activeLineup, lineupSuggestions }) {
           {suggestSwap && (
             <div style={{ fontSize: 12, color: "#e8622c", marginTop: 8, paddingTop: 8, borderTop: "1px dashed #3a2c1f" }}>
               Consider: #{bestBench.player.num} {displayName(bestBench.player)} has been rated{" "}
-              {bestBench.score.overall.toFixed(1)} at {starter.position} recently.
+              {bestBench.score.overall.toFixed(1)} at {starter.position} recently ({bestBench.score.count} eval
+              {bestBench.score.count > 1 ? "s" : ""}).
+            </div>
+          )}
+          {flagUnrated && (
+            <div style={{ fontSize: 12, color: "#9aa3b2", marginTop: 8, paddingTop: 8, borderTop: "1px dashed #2c3542" }}>
+              Not evaluated yet — #{bestBench.player.num} {displayName(bestBench.player)} is a rated {starter.position}{" "}
+              option on the bench ({bestBench.score.overall.toFixed(1)}).
             </div>
           )}
         </div>
@@ -766,10 +779,16 @@ function AppShell({ teamCode, onSwitchTeam }) {
     [activeLineup, roster, evaluations]
   );
 
-  const sortedPlayers = useMemo(
-    () => [...roster].sort((a, b) => Number(a.num) - Number(b.num)),
-    [roster]
-  );
+  const sortedPlayers = useMemo(() => {
+    // Volley Bandit allows a placeholder jersey number like "-" for a
+    // player who hasn't been assigned one yet — Number("-") is NaN, which
+    // would otherwise scatter those players unpredictably through the list.
+    const numOf = (p) => {
+      const n = Number(p.num);
+      return Number.isFinite(n) ? n : Infinity;
+    };
+    return [...roster].sort((a, b) => numOf(a) - numOf(b));
+  }, [roster]);
 
   function removePlayer(id) {
     updateRoster((prev) => prev.filter((p) => p.id !== id));
@@ -969,12 +988,14 @@ function AppShell({ teamCode, onSwitchTeam }) {
                         setEditingId(p.id);
                         setShowAdd(false);
                       }}
+                      aria-label={`Edit ${displayName(p)}`}
                       style={{ background: "none", border: "none", color: "#6b7383", cursor: "pointer", padding: 6 }}
                     >
                       <Pencil size={16} />
                     </button>
                     <button
                       onClick={() => removePlayer(p.id)}
+                      aria-label={`Remove ${displayName(p)}`}
                       style={{ background: "none", border: "none", color: "#6b7383", cursor: "pointer", padding: 6 }}
                     >
                       <Trash2 size={16} />
@@ -1041,7 +1062,7 @@ function AppShell({ teamCode, onSwitchTeam }) {
                 <div style={{ fontSize: 17, fontWeight: 600 }}>#{evalPlayer.num} {displayName(evalPlayer)}</div>
                 <div style={{ fontSize: 12, color: "#6b7383" }}>{new Date().toLocaleDateString()}</div>
               </div>
-              <button onClick={() => setEvalPlayerId(null)} style={ghostBtn}><X size={14} /></button>
+              <button onClick={() => setEvalPlayerId(null)} aria-label="Cancel evaluation" style={ghostBtn}><X size={14} /></button>
             </div>
 
             <div style={{ fontSize: 12, fontWeight: 600, color: "#e8622c", marginBottom: 10 }}>CORE SKILLS</div>
