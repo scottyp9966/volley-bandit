@@ -6523,19 +6523,33 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
               title="Results"
               style={{
                 position: "absolute",
-                bottom: 10,
-                right: 14,
-                width: 22,
-                height: 22,
-                borderRadius: "50%",
+                bottom: 2,
+                right: 6,
+                width: 44,
+                height: 44,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
                 background: "none",
-                border: `1px solid ${COLORS.line}`,
+                border: "none",
                 color: COLORS.chalkDim,
                 fontSize: 10,
-                opacity: 0.5,
               }}
             >
-              •••
+              <span
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  border: `1px solid ${COLORS.line}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: 0.5,
+                }}
+              >
+                •••
+              </span>
             </button>
           </>
         )}
