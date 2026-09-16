@@ -24,7 +24,7 @@ import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight,
 // to retype it. Left blank, the link just doesn't render — nothing else
 // depends on it. Volley Bandit's own team gate accepts the same `?code=`
 // param, so a link back the other direction works the same way.
-const VOLLEY_BANDIT_URL = "";
+const VOLLEY_BANDIT_URL = "https://volley-bandit.vercel.app";
 
 const POSITIONS = [
   { value: "S", label: "Setter" },

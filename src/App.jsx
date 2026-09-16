@@ -78,6 +78,11 @@ function usePersisted(key, initialValue) {
   return [value, setValue];
 }
 
+// The companion Player Eval app's deployed URL — used for the "Open Player
+// Eval" link in Settings, carrying the current team code as a `?code=` deep
+// link so the coach doesn't have to retype it over there.
+const PLAYER_EVAL_URL = "https://player-eval-three.vercel.app";
+
 // Random Team Code — the "address" a team's whole dataset lives under in
 // Firestore. Avoids visually similar characters (0/O, 1/I/L) since it has
 // to be read off one screen and typed into another.
@@ -6907,6 +6912,12 @@ function SettingsSheet({
             setTeamCode("");
           }
         }, "Switch Team")}
+        {PLAYER_EVAL_URL &&
+          actionBtn(
+            () => window.open(`${PLAYER_EVAL_URL}?code=${encodeURIComponent(teamCode)}`, "_blank", "noopener,noreferrer"),
+            "Open Player Eval ↗",
+            { border: `1px solid ${COLORS.orange}`, background: "rgba(255,107,53,0.1)" }
+          )}
         {actionBtn(exportAllData, "Export All Data (Backup)", {
           border: `1px solid ${COLORS.blue}`,
           background: "rgba(62,124,166,0.1)",
