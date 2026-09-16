@@ -313,6 +313,26 @@ function applySubPairings(slots, pairings) {
   return result;
 }
 
+// Real volleyball rule this app didn't previously encode: a libero can
+// come in for more than one back-row player over the course of a set (the
+// common case being two middles who alternate which one is back row), but
+// is only ever allowed to serve in ONE of those rotational turns — not
+// both. So among any pairings sharing the same libero, exactly one can be
+// flagged `liberoServes: true` (enforced in toggleLiberoServes below);
+// this finds whichever pairing is the one actually substituted in right
+// now — matched on "this libero is in the true server slot (P1 — the
+// rotation math above keeps that always correct, live, regardless of
+// which rotation is showing) AND the player they're subbed for isn't on
+// court anywhere else" — so callers can show whether serving is currently
+// allowed or the real player needs to swap in just to serve.
+function findActiveLiberoPairing(slots, pairings) {
+  return (
+    (pairings || []).find(
+      (pr) => pr.isLibero && slots.P1 === pr.backId && !Object.values(slots).includes(pr.frontId)
+    ) || null
+  );
+}
+
 // Computes the true, absolute arrangement for a given rotation number (1-6),
 // with substitutions applied — regardless of which rotation the lineup is
 // currently actually sitting at. Reconstructs true Rotation 1 first (same
@@ -840,6 +860,30 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
     );
   };
 
+  // Marks which ONE pairing is the libero's designated serving turn, when
+  // that libero also has another pairing (e.g. subbing for a second
+  // middle). Turning this on for one pairing turns it off for any other
+  // pairing sharing the same libero — only one can be true at a time,
+  // matching the real rule that a libero only ever serves one position.
+  const toggleLiberoServes = (id) => {
+    setLineups((prev) =>
+      prev.map((l) => {
+        if (l.id !== activeLineup.id) return l;
+        const target = (l.pairings || []).find((p) => p.id === id);
+        if (!target) return l;
+        const nextVal = !target.liberoServes;
+        return {
+          ...l,
+          pairings: (l.pairings || []).map((p) => {
+            if (p.id === id) return { ...p, liberoServes: nextVal };
+            if (nextVal && p.backId === target.backId) return { ...p, liberoServes: false };
+            return p;
+          }),
+        };
+      })
+    );
+  };
+
   const setServesFirst = (val) => {
     setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, servesFirst: val } : l)));
   };
@@ -1311,6 +1355,34 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         })}
       </div>
 
+      {/* Libero serving cue — see the matching one on the Live screen for
+          the full rationale. Reflects whichever rotation is currently
+          being previewed here, since `slots` already accounts for that. */}
+      {(() => {
+        const activePairing = findActiveLiberoPairing(slots, pairings);
+        if (!activePairing) return null;
+        const liberoPlayer = playerFor(activePairing.backId);
+        const frontPlayer = playerFor(activePairing.frontId);
+        return (
+          <div
+            style={{
+              marginBottom: 16,
+              padding: "8px 10px",
+              borderRadius: 8,
+              fontSize: 11,
+              fontWeight: 600,
+              background: activePairing.liberoServes ? "rgba(76,154,99,0.12)" : "rgba(255,200,87,0.12)",
+              border: `1px solid ${activePairing.liberoServes ? COLORS.green : COLORS.gold}`,
+              color: activePairing.liberoServes ? COLORS.green : COLORS.gold,
+            }}
+          >
+            {activePairing.liberoServes
+              ? `Libero (#${liberoPlayer?.num} ${displayName(liberoPlayer)}) serves this rotation.`
+              : `Libero is on court here but not cleared to serve — sub #${frontPlayer?.num} ${displayName(frontPlayer)} in to serve.`}
+          </div>
+        );
+      })()}
+
       <div
         style={{
           fontSize: 11,
@@ -1442,6 +1514,13 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             const back = playerFor(pr.backId);
             const involvesLibero = liberos.includes(pr.frontId) || liberos.includes(pr.backId);
             const mismatch = involvesLibero && !pr.isLibero;
+            // Only worth asking "which one serves" once this libero has more
+            // than one pairing (e.g. subs for two different middles) — with
+            // just one, it's trivially the only serving turn they have.
+            const siblingLiberoPairings = pr.isLibero
+              ? pairings.filter((p) => p.isLibero && p.backId === pr.backId)
+              : [];
+            const showsServesToggle = siblingLiberoPairings.length > 1;
             return (
               <div key={pr.id} style={{ marginBottom: 6 }}>
                 <div
@@ -1470,6 +1549,24 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     >
                       LIBERO
                     </span>
+                  )}
+                  {showsServesToggle && (
+                    <button
+                      onClick={() => toggleLiberoServes(pr.id)}
+                      title="A libero can sub in for more than one player, but real volleyball rules only let them serve in one of those rotational turns — mark which pairing that is."
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: pr.liberoServes ? COLORS.gold : COLORS.chalkDim,
+                        border: `1px solid ${pr.liberoServes ? COLORS.gold : COLORS.line}`,
+                        borderRadius: 4,
+                        padding: "1px 4px",
+                        flexShrink: 0,
+                        background: "none",
+                      }}
+                    >
+                      {pr.liberoServes ? "SERVES HERE" : "DOESN'T SERVE"}
+                    </button>
                   )}
                   <span style={{ color: COLORS.chalk }}>
                     Front: <b>#{front?.num} {displayName(front)}</b>
@@ -3024,6 +3121,39 @@ function LiveScreen({
           );
         })}
       </div>
+
+      {/* Libero serving cue — real volleyball rule this app didn't
+          previously encode: a libero subbed in for more than one back-row
+          player (e.g. two middles) is only allowed to actually serve
+          during ONE of those rotational turns. Only shows up at all when
+          a libero is currently occupying the true server slot (P1, always
+          correct live via the rotation math, independent of the "1st
+          Server" reference badge elsewhere which only marks the set's
+          very first server). */}
+      {(() => {
+        const activePairing = findActiveLiberoPairing(slots, pairings);
+        if (!activePairing) return null;
+        const liberoPlayer = playerFor(activePairing.backId);
+        const frontPlayer = playerFor(activePairing.frontId);
+        return (
+          <div
+            style={{
+              margin: "8px 20px 0",
+              padding: "8px 10px",
+              borderRadius: 8,
+              fontSize: 11,
+              fontWeight: 600,
+              background: activePairing.liberoServes ? "rgba(76,154,99,0.12)" : "rgba(255,200,87,0.12)",
+              border: `1px solid ${activePairing.liberoServes ? COLORS.green : COLORS.gold}`,
+              color: activePairing.liberoServes ? COLORS.green : COLORS.gold,
+            }}
+          >
+            {activePairing.liberoServes
+              ? `Libero (#${liberoPlayer?.num} ${displayName(liberoPlayer)}) is serving this rotation.`
+              : `Libero is on court but not cleared to serve here — sub #${frontPlayer?.num} ${displayName(frontPlayer)} in to serve.`}
+          </div>
+        );
+      })()}
 
       {/* Selected player banner */}
       <div
