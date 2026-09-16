@@ -804,7 +804,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
   // A pairing only makes sense as a substitute relationship: exactly one of the
   // two players may be on the court right now, the other must be on the bench.
-  const pairingValidationError = (frontId, backId) => {
+  const pairingValidationError = (frontId, backId, isLibero) => {
     if (!frontId || !backId) return null;
     if (frontId === backId) return "Pick two different players.";
     const frontOnCourt = assignedIds.has(frontId);
@@ -815,7 +815,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
     if (!frontOnCourt && !backOnCourt) {
       return "Neither player is on the court right now — one of them needs to be in the lineup for this pairing.";
     }
-    // A player can only be tied to one substitute relationship at a time for this lineup.
+    // A player can only be tied to one substitute relationship at a time for
+    // this lineup — except a libero, who real volleyball rules allow to sub
+    // in for more than one back-row player over a set (commonly two middles
+    // who alternate which one is back row). Only relaxed when BOTH the new
+    // and the existing pairing are libero swaps for that same libero, always
+    // in the back-row (libero) slot of the pairing — a regular player still
+    // can't be double-booked, and a libero still can't double-book a single
+    // front-row spot either.
     const existingFor = (playerId) =>
       pairings.find((p) => p.frontId === playerId || p.backId === playerId);
     const frontExisting = existingFor(frontId);
@@ -824,7 +831,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       return `${displayName(playerFor(frontId))} is already paired with ${displayName(other)} for this lineup — remove that pairing first.`;
     }
     const backExisting = existingFor(backId);
-    if (backExisting) {
+    if (backExisting && !(isLibero && backExisting.isLibero && backExisting.backId === backId)) {
       const other = playerFor(backExisting.frontId === backId ? backExisting.backId : backExisting.frontId);
       return `${displayName(playerFor(backId))} is already paired with ${displayName(other)} for this lineup — remove that pairing first.`;
     }
@@ -832,7 +839,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   };
 
   const addPairing = (frontId, backId, isLibero) => {
-    if (pairingValidationError(frontId, backId)) return;
+    if (pairingValidationError(frontId, backId, isLibero)) return;
     setLineups((prev) =>
       prev.map((l) =>
         l.id === activeLineup.id
@@ -2208,7 +2215,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             </button>
 
             {(() => {
-              const err = pairingValidationError(pairingForm.frontId, pairingForm.backId);
+              const err = pairingValidationError(pairingForm.frontId, pairingForm.backId, pairingForm.isLibero);
               return err ? (
                 <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 10, marginTop: -4 }}>
                   {err}
@@ -2218,19 +2225,19 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
             <button
               onClick={() => {
-                if (pairingValidationError(pairingForm.frontId, pairingForm.backId)) return;
+                if (pairingValidationError(pairingForm.frontId, pairingForm.backId, pairingForm.isLibero)) return;
                 addPairing(pairingForm.frontId, pairingForm.backId, pairingForm.isLibero);
                 setPairingForm({ frontId: "", backId: "", isLibero: false });
                 setAddingPairing(false);
               }}
-              disabled={!!pairingValidationError(pairingForm.frontId, pairingForm.backId) || !pairingForm.frontId || !pairingForm.backId}
+              disabled={!!pairingValidationError(pairingForm.frontId, pairingForm.backId, pairingForm.isLibero) || !pairingForm.frontId || !pairingForm.backId}
               style={{
                 width: "100%",
                 padding: "11px",
                 borderRadius: 8,
                 border: "none",
                 background:
-                  pairingForm.frontId && pairingForm.backId && !pairingValidationError(pairingForm.frontId, pairingForm.backId)
+                  pairingForm.frontId && pairingForm.backId && !pairingValidationError(pairingForm.frontId, pairingForm.backId, pairingForm.isLibero)
                     ? COLORS.orange
                     : COLORS.line,
                 color: "#1C2128",
