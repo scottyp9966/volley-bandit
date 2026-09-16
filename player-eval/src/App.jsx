@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { doc, getDoc, onSnapshot, setDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
-import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight, Pencil } from "lucide-react";
+import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight, Pencil, ExternalLink } from "lucide-react";
 
 // ---- Shared team-code data model -------------------------------------
 //
@@ -17,6 +17,14 @@ import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight,
 // and their roster shows up immediately — no re-entry, no screenshot
 // import needed. A coach using Player Eval on its own can create a fresh
 // team code and manage a roster right here.
+
+// Set this to Volley Bandit's deployed URL once it has one (e.g.
+// "https://volley-bandit.vercel.app") to show a header link over there,
+// carrying the team code as a `?code=` deep link so the coach doesn't have
+// to retype it. Left blank, the link just doesn't render — nothing else
+// depends on it. Volley Bandit's own team gate accepts the same `?code=`
+// param, so a link back the other direction works the same way.
+const VOLLEY_BANDIT_URL = "";
 
 const POSITIONS = [
   { value: "S", label: "Setter" },
@@ -421,24 +429,32 @@ const ghostBtn = {
   cursor: "pointer",
 };
 
+const normalizeCode = (raw) => raw.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
+
+// Shared with the deep-link auto-join in PlayerEvalApp below — a code
+// "exists" if either app has ever written data under it.
+async function teamCodeExists(code) {
+  const mainSnap = await getDoc(doc(db, "teams", code, "data", "main"));
+  if (mainSnap.exists()) return true;
+  const evalSnap = await getDoc(doc(db, "teams", code, "data", "playerEval"));
+  return evalSnap.exists();
+}
+
 // ---- Team gate: create a fresh team code, or join one already in use
-// (typically the same code the coach set up in Volley Bandit) --------------
-function TeamGate({ onLinked }) {
-  const [mode, setMode] = useState("choice"); // "choice" | "create" | "join"
+// (typically the same code the coach set up in Volley Bandit). `initialJoinCode`
+// / `initialJoinError` let a failed deep-link auto-join (see PlayerEvalApp)
+// land the coach straight on the join screen with the code already typed in
+// and the reason it didn't work, instead of silently dropping them at the
+// choice screen with no explanation.
+function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
+  const [mode, setMode] = useState(initialJoinCode ? "join" : "choice");
   const [codeInput, setCodeInput] = useState(() => generateTeamCode());
-  const [joinInput, setJoinInput] = useState("");
+  const [joinInput, setJoinInput] = useState(initialJoinCode || "");
   const [checking, setChecking] = useState(false);
   const [createError, setCreateError] = useState("");
-  const [joinError, setJoinError] = useState("");
+  const [joinError, setJoinError] = useState(initialJoinError || "");
 
-  const normalizeCode = (raw) => raw.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
-
-  const teamExists = async (code) => {
-    const mainSnap = await getDoc(doc(db, "teams", code, "data", "main"));
-    if (mainSnap.exists()) return true;
-    const evalSnap = await getDoc(doc(db, "teams", code, "data", "playerEval"));
-    return evalSnap.exists();
-  };
+  const teamExists = teamCodeExists;
 
   const checkAndCreate = async () => {
     const code = codeInput.trim();
@@ -904,9 +920,21 @@ function AppShell({ teamCode, onSwitchTeam }) {
               <div style={{ fontSize: 12, color: "#6b7383" }}>Team code: {teamCode}</div>
             </div>
           </div>
-          <button onClick={onSwitchTeam} style={{ ...ghostBtn, fontSize: 11, padding: "6px 8px" }}>
-            Switch
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            {VOLLEY_BANDIT_URL && (
+              <a
+                href={`${VOLLEY_BANDIT_URL}?code=${encodeURIComponent(teamCode)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...ghostBtn, fontSize: 11, padding: "6px 8px", display: "flex", alignItems: "center", gap: 4, textDecoration: "none" }}
+              >
+                Volley Bandit <ExternalLink size={12} />
+              </a>
+            )}
+            <button onClick={onSwitchTeam} style={{ ...ghostBtn, fontSize: 11, padding: "6px 8px" }}>
+              Switch
+            </button>
+          </div>
         </div>
         {(rosterError || evalError) && (
           <div style={{ fontSize: 11, color: "#e2504f", marginTop: 10 }}>{rosterError || evalError}</div>
@@ -1215,11 +1243,65 @@ function AppShell({ teamCode, onSwitchTeam }) {
   );
 }
 
+// Reads a `?code=GRF-4X29` query param — the deep-link a "Open Player Eval"
+// button in Volley Bandit (or a link shared between coaches) would carry —
+// and joins that team automatically instead of making the coach retype a
+// code they just came from. Only kicks in when no team is already linked
+// on this device; an already-linked device ignores the param rather than
+// silently switching teams underneath the coach.
+function useDeepLinkJoin(teamCode, setTeamCode) {
+  const [state, setState] = useState(() => {
+    const code = normalizeCode(new URLSearchParams(window.location.search).get("code") || "");
+    return code && !teamCode ? { status: "checking", code } : { status: "none" };
+  });
+
+  useEffect(() => {
+    if (state.status !== "checking") return;
+    let cancelled = false;
+    teamCodeExists(state.code)
+      .then((exists) => {
+        if (cancelled) return;
+        window.history.replaceState(null, "", window.location.pathname);
+        if (exists) {
+          setTeamCode(state.code);
+          setState({ status: "none" });
+        } else {
+          setState({ status: "failed", code: state.code });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        window.history.replaceState(null, "", window.location.pathname);
+        setState({ status: "failed", code: state.code, error: "Couldn't check that code — check your connection and try again." });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status]);
+
+  return state;
+}
+
 export default function PlayerEvalApp() {
   const [teamCode, setTeamCode] = usePersisted("pe-team-code", "");
+  const deepLink = useDeepLinkJoin(teamCode, setTeamCode);
 
   if (!teamCode) {
-    return <TeamGate onLinked={setTeamCode} />;
+    if (deepLink.status === "checking") {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0B0D10", color: "#6b7383", fontSize: 13 }}>
+          Joining team {deepLink.code}…
+        </div>
+      );
+    }
+    return (
+      <TeamGate
+        onLinked={setTeamCode}
+        initialJoinCode={deepLink.status === "failed" ? deepLink.code : undefined}
+        initialJoinError={deepLink.status === "failed" ? deepLink.error || "Couldn't find a team with that code." : undefined}
+      />
+    );
   }
 
   return <AppShell teamCode={teamCode} onSwitchTeam={() => setTeamCode("")} />;
