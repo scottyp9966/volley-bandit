@@ -722,13 +722,19 @@ function PositionRecommendList({ recFilter, setRecFilter, recGroup }) {
   );
 }
 
-function LineupRecommendList({ activeLineup, lineupSuggestions }) {
+function LineupRecommendList({ activeLineup, usingFallbackLineup, lineupSuggestions }) {
   return (
     <div>
       <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 14 }}>
         Who's on court right now (rotation {activeLineup.currentRotation || 1}) vs. the bench,
         weighted toward recent evaluations.
       </div>
+      {usingFallbackLineup && (
+        <div style={{ fontSize: 12, color: "#9aa3b2", marginBottom: 14, padding: "8px 10px", background: "#1a2029", borderRadius: 8, border: "1px solid #2c3542" }}>
+          Volley Bandit doesn't have a lineup marked active for this team right now, so
+          this is showing "{activeLineup.name}" — its first saved lineup — instead.
+        </div>
+      )}
       {lineupSuggestions.length === 0 && (
         <div style={{ fontSize: 13, color: "#6b7383" }}>
           This lineup doesn't have players assigned to its court slots yet.
@@ -789,7 +795,13 @@ function AppShell({ teamCode, onSwitchTeam }) {
   const [recFilter, setRecFilter] = useState("OH");
   const [recView, setRecView] = useState("lineup"); // "lineup" | "position"
 
-  const activeLineup = lineups.find((l) => l.id === activeLineupId) || null;
+  // Falls back to the first saved lineup if `activeLineupId` doesn't match
+  // any lineup in the list — this can happen in practice (a lineup gets
+  // duplicated/rebuilt with a new id without the active pointer following
+  // it) and showing nothing when lineups clearly exist is more confusing
+  // than showing a possibly-stale-but-real one.
+  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0] || null;
+  const usingFallbackLineup = !!activeLineup && activeLineup.id !== activeLineupId;
   const lineupSuggestions = useMemo(
     () => buildLineupSuggestions(activeLineup, roster, evaluations),
     [activeLineup, roster, evaluations]
@@ -1196,7 +1208,7 @@ function AppShell({ teamCode, onSwitchTeam }) {
             )}
 
             {activeLineup && recView === "lineup" && (
-              <LineupRecommendList activeLineup={activeLineup} lineupSuggestions={lineupSuggestions} />
+              <LineupRecommendList activeLineup={activeLineup} usingFallbackLineup={usingFallbackLineup} lineupSuggestions={lineupSuggestions} />
             )}
 
             {(!activeLineup || recView === "position") && (
