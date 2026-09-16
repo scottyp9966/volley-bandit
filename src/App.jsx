@@ -91,6 +91,58 @@ function generateTeamCode() {
   return code;
 }
 
+const normalizeTeamCode = (raw) => raw.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
+
+// Used only by the `?code=` deep-link auto-join below (see App()) — a
+// team code created only in the companion Player Eval app has no "main"
+// doc yet, so a plain Volley Bandit join (checkAndJoin, which only checks
+// "main") would wrongly report it as not found. This checks both apps'
+// docs so a link from Player Eval still lands successfully.
+async function teamCodeExistsAnywhere(code) {
+  const mainSnap = await getDoc(doc(db, "teams", code, "data", "main"));
+  if (mainSnap.exists()) return true;
+  const evalSnap = await getDoc(doc(db, "teams", code, "data", "playerEval"));
+  return evalSnap.exists();
+}
+
+// Shared shape with Player Eval's identical hook — see that app's App.jsx
+// for the fuller explanation. Reads `?code=` once on mount, verifies it,
+// and either joins automatically or reports why not so TeamGate can show
+// the coach a join screen pre-filled with the code and the real reason.
+function useDeepLinkJoin(teamCode, setTeamCode) {
+  const [state, setState] = useState(() => {
+    const code = normalizeTeamCode(new URLSearchParams(window.location.search).get("code") || "");
+    return code && !teamCode ? { status: "checking", code } : { status: "none" };
+  });
+
+  useEffect(() => {
+    if (state.status !== "checking") return;
+    let cancelled = false;
+    teamCodeExistsAnywhere(state.code)
+      .then((exists) => {
+        if (cancelled) return;
+        window.history.replaceState(null, "", window.location.pathname);
+        if (exists) {
+          setTeamCode(state.code);
+          setState({ status: "none" });
+        } else {
+          setState({ status: "failed", code: state.code });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        window.history.replaceState(null, "", window.location.pathname);
+        setState({ status: "failed", code: state.code, error: "Couldn't check that code — check your connection and try again." });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status]);
+
+  return state;
+}
+
 // Syncs one Firestore document (as a whole JS object) across every device
 // linked to the same team code — this is what replaces per-device
 // localStorage for anything that needs to be shared. Firestore's own
@@ -6010,15 +6062,15 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
 
 // ---- Team Gate: shown once, before any team data loads, on any device
 // that hasn't been linked to a team yet ----
-function TeamGate({ onLinked }) {
-  const [mode, setMode] = useState("choice"); // "choice" | "create" | "join"
+function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
+  const [mode, setMode] = useState(initialJoinCode ? "join" : "choice"); // "choice" | "create" | "join"
   const [codeInput, setCodeInput] = useState(() => generateTeamCode());
-  const [joinInput, setJoinInput] = useState("");
+  const [joinInput, setJoinInput] = useState(initialJoinCode || "");
   const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
   const [codeTaken, setCodeTaken] = useState(false);
   const [createError, setCreateError] = useState("");
-  const [joinError, setJoinError] = useState("");
+  const [joinError, setJoinError] = useState(initialJoinError || "");
 
   const wrap = {
     minHeight: "100vh",
@@ -6063,11 +6115,7 @@ function TeamGate({ onLinked }) {
 
   // A code someone can actually remember beats a random one — but two teams
   // can't share a code, so this checks Firestore before letting them continue.
-  const normalizeCode = (raw) =>
-    raw
-      .toUpperCase()
-      .replace(/[^A-Z0-9-]/g, "")
-      .slice(0, 24);
+  const normalizeCode = normalizeTeamCode;
 
   const checkAndCreate = async () => {
     const code = codeInput.trim();
@@ -6891,6 +6939,15 @@ export default function App() {
   // Everything the team code unlocks below is what actually syncs.
   const [teamCode, setTeamCode] = usePersisted("vb-team-code", "");
 
+  // A `?code=GRF-4X29` deep link — e.g. the "Volley Bandit" link in the
+  // companion Player Eval app's header — auto-joins that team instead of
+  // making the coach retype a code they just came from. Only kicks in when
+  // this device isn't already linked to a team. Declared before the
+  // passcode-lock check below since hooks can't be called conditionally;
+  // it still only takes effect once the coach is past that screen, since
+  // this component doesn't render past the lock check until then anyway.
+  const deepLink = useDeepLinkJoin(teamCode, setTeamCode);
+
   const MAIN_DEFAULT = {
     roster: [],
     captainId: null,
@@ -7287,7 +7344,20 @@ export default function App() {
   }
 
   if (!teamCode) {
-    return <TeamGate onLinked={setTeamCode} />;
+    if (deepLink.status === "checking") {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0B0D10", color: COLORS.chalkDim, fontSize: 13 }}>
+          Joining team {deepLink.code}…
+        </div>
+      );
+    }
+    return (
+      <TeamGate
+        onLinked={setTeamCode}
+        initialJoinCode={deepLink.status === "failed" ? deepLink.code : undefined}
+        initialJoinError={deepLink.status === "failed" ? deepLink.error || "No team found with that code — double-check it and try again." : undefined}
+      />
+    );
   }
 
   if (!dataLoaded) {

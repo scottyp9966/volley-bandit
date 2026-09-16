@@ -168,3 +168,12 @@ genuinely nice-to-have, not correctness-critical:
   multiplayer app would be.
 
 None of these block using the app for a real match today.
+
+## Player Eval (companion app)
+
+`player-eval/` is a separate Vite + React app in this same repo: post-match
+player evaluations (skill ratings, trends, and lineup-aware position
+recommendations). It's its own standalone app, but shares this app's
+Firebase project and team code, so entering the same code there picks up
+this app's roster (and, for its Recommend tab, this app's active lineup)
+live — see `player-eval/README.md` for details.
