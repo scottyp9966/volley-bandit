@@ -22,7 +22,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.14d";
+const APP_VERSION = "2026.09.16a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -3912,7 +3912,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 }
 
 // ---- Roster screen: full team, independent of any single lineup ----
-function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog }) {
+function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "", position2: "" });
   const [sortBy, setSortBy] = useState("number"); // "number" | "position" — display order only, never touches roster's actual stored order
@@ -4104,6 +4104,25 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           )}
         </div>
       </div>
+
+      <button
+        onClick={onOpenCaptainVote}
+        disabled={roster.length < 2}
+        style={{
+          width: "100%",
+          marginBottom: 14,
+          padding: "10px",
+          borderRadius: 8,
+          border: `1px solid ${COLORS.gold}`,
+          background: "rgba(212,175,55,0.1)",
+          color: roster.length < 2 ? COLORS.chalkDim : COLORS.chalk,
+          fontSize: 12,
+          fontWeight: 700,
+          opacity: roster.length < 2 ? 0.5 : 1,
+        }}
+      >
+        Vote for Captain
+      </button>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <button
@@ -6272,6 +6291,393 @@ function StatInfoSheet({ onClose }) {
   );
 }
 
+// ---- Captain vote sheet — pass-the-device ballot for picking a captain.
+// Coach sets the candidates once, then hands the phone around: each player
+// taps a name and submits, which immediately blanks the ballot for the next
+// player (no visible running tally, no way to see who anyone else picked).
+// The results view sits behind the same app passcode, hidden behind a small
+// unlabeled dot in the corner rather than a real "Tabulate" button, so it
+// isn't something a player passing the device along could stumble into.
+function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
+  const [step, setStep] = useState(captainVote.candidateIds.length ? "vote" : "setup");
+  const [pickIds, setPickIds] = useState(captainVote.candidateIds);
+  const [selected, setSelected] = useState(null);
+  const [justVoted, setJustVoted] = useState(false);
+  const [showUnlock, setShowUnlock] = useState(false);
+  const [unlockInput, setUnlockInput] = useState("");
+  const [unlockError, setUnlockError] = useState(false);
+  const [tallyOpen, setTallyOpen] = useState(false);
+
+  const candidates = roster.filter((p) => captainVote.candidateIds.includes(p.id));
+
+  const startElection = () => {
+    if (pickIds.length < 2) return;
+    setCaptainVote({ candidateIds: pickIds, ballots: [] });
+    setStep("vote");
+  };
+
+  const submitVote = () => {
+    if (!selected) return;
+    setCaptainVote((prev) => ({ ...prev, ballots: [...prev.ballots, selected] }));
+    setSelected(null);
+    setJustVoted(true);
+    setTimeout(() => setJustVoted(false), 1200);
+  };
+
+  const openResults = () => {
+    if (APP_PASSCODE.trim() === "") {
+      setTallyOpen(true);
+    } else {
+      setShowUnlock(true);
+    }
+  };
+
+  const tryUnlockTally = () => {
+    if (unlockInput === APP_PASSCODE) {
+      setUnlockInput("");
+      setUnlockError(false);
+      setShowUnlock(false);
+      setTallyOpen(true);
+    } else {
+      setUnlockError(true);
+    }
+  };
+
+  const resetVotes = () => {
+    if (!window.confirm("Clear all votes cast so far? Candidates stay the same.")) return;
+    setCaptainVote((prev) => ({ ...prev, ballots: [] }));
+    setTallyOpen(false);
+  };
+
+  const newElection = () => {
+    if (!window.confirm("Start a brand new election? This clears the candidates and every vote.")) return;
+    setCaptainVote({ candidateIds: [], ballots: [] });
+    setPickIds([]);
+    setTallyOpen(false);
+    setStep("setup");
+  };
+
+  const tally = useMemo(() => {
+    const counts = {};
+    captainVote.ballots.forEach((id) => {
+      counts[id] = (counts[id] || 0) + 1;
+    });
+    return candidates.map((p) => ({ player: p, votes: counts[p.id] || 0 })).sort((a, b) => b.votes - a.votes);
+  }, [candidates, captainVote.ballots]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex",
+        alignItems: "flex-end",
+        zIndex: 10,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.bgRaised,
+          width: "100%",
+          borderRadius: "20px 20px 0 0",
+          padding: 18,
+          maxHeight: "85%",
+          overflowY: "auto",
+          position: "relative",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, textTransform: "uppercase" }}>
+            Captain Vote
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.chalkDim }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {step === "setup" && (
+          <>
+            <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 10 }}>
+              Pick who's on the ballot (at least 2), then hand the device to the first player.
+            </div>
+            {roster.map((p) => {
+              const checked = pickIds.includes(p.id);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setPickIds((cur) => (checked ? cur.filter((id) => id !== p.id) : [...cur, p.id]))}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    width: "100%",
+                    padding: "10px 4px",
+                    background: "none",
+                    border: "none",
+                    borderBottom: `1px solid ${COLORS.line}`,
+                    color: COLORS.chalk,
+                    textAlign: "left",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      border: `1.5px solid ${checked ? COLORS.orange : COLORS.line}`,
+                      background: checked ? COLORS.orange : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {checked && <Check size={12} color={COLORS.bg} />}
+                  </span>
+                  <span style={{ fontSize: 13 }}>
+                    #{p.num} {displayName(p)}
+                  </span>
+                </button>
+              );
+            })}
+            <button
+              onClick={startElection}
+              disabled={pickIds.length < 2}
+              style={{
+                width: "100%",
+                marginTop: 14,
+                padding: "12px",
+                borderRadius: 8,
+                border: "none",
+                background: pickIds.length < 2 ? COLORS.line : COLORS.orange,
+                color: "#1C2128",
+                fontWeight: 700,
+                fontSize: 14,
+              }}
+            >
+              Start Voting ({pickIds.length} candidate{pickIds.length === 1 ? "" : "s"})
+            </button>
+          </>
+        )}
+
+        {step === "vote" && !tallyOpen && (
+          <>
+            {justVoted ? (
+              <div style={{ textAlign: "center", padding: "40px 0" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.green, marginBottom: 6 }}>
+                  Vote submitted
+                </div>
+                <div style={{ fontSize: 12, color: COLORS.chalkDim }}>Pass the device to the next player.</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 10 }}>
+                  Tap your pick for captain, then Submit. {captainVote.ballots.length} vote
+                  {captainVote.ballots.length === 1 ? "" : "s"} cast so far.
+                </div>
+                {candidates.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelected(p.id)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "14px 12px",
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      border: `1.5px solid ${selected === p.id ? COLORS.orange : COLORS.line}`,
+                      background: selected === p.id ? "rgba(255,107,53,0.12)" : "transparent",
+                      color: COLORS.chalk,
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    #{p.num} {displayName(p)}
+                  </button>
+                ))}
+                <button
+                  onClick={submitVote}
+                  disabled={!selected}
+                  style={{
+                    width: "100%",
+                    marginTop: 8,
+                    padding: "12px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: selected ? COLORS.orange : COLORS.line,
+                    color: "#1C2128",
+                    fontWeight: 700,
+                    fontSize: 14,
+                  }}
+                >
+                  Submit Vote
+                </button>
+              </>
+            )}
+            <button
+              onClick={openResults}
+              title="Results"
+              style={{
+                position: "absolute",
+                bottom: 10,
+                right: 14,
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                background: "none",
+                border: `1px solid ${COLORS.line}`,
+                color: COLORS.chalkDim,
+                fontSize: 10,
+                opacity: 0.5,
+              }}
+            >
+              •••
+            </button>
+          </>
+        )}
+
+        {tallyOpen && (
+          <>
+            <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 12 }}>
+              {captainVote.ballots.length} vote{captainVote.ballots.length === 1 ? "" : "s"} total.
+            </div>
+            {tally.map(({ player, votes }) => (
+              <div
+                key={player.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "10px 4px",
+                  borderBottom: `1px solid ${COLORS.line}`,
+                }}
+              >
+                <span style={{ fontSize: 14, color: COLORS.chalk }}>
+                  #{player.num} {displayName(player)}
+                </span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: COLORS.orange }}>{votes}</span>
+              </div>
+            ))}
+            <button
+              onClick={() => setTallyOpen(false)}
+              style={{
+                width: "100%",
+                marginTop: 14,
+                padding: "11px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.line}`,
+                background: "none",
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            >
+              Back to Voting
+            </button>
+            <button
+              onClick={resetVotes}
+              style={{
+                width: "100%",
+                marginTop: 8,
+                padding: "11px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.red}`,
+                background: "none",
+                color: COLORS.red,
+                fontSize: 13,
+              }}
+            >
+              Reset Votes (keep candidates)
+            </button>
+            <button
+              onClick={newElection}
+              style={{
+                width: "100%",
+                marginTop: 8,
+                padding: "11px",
+                borderRadius: 8,
+                border: "none",
+                background: "none",
+                color: COLORS.chalkDim,
+                fontSize: 12,
+              }}
+            >
+              Start a New Election
+            </button>
+          </>
+        )}
+
+        {showUnlock && (
+          <div
+            onClick={() => {
+              setShowUnlock(false);
+              setUnlockInput("");
+              setUnlockError(false);
+            }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.7)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "20px 20px 0 0",
+            }}
+          >
+            <div onClick={(e) => e.stopPropagation()} style={{ width: 220, textAlign: "center" }}>
+              <div style={{ fontSize: 13, color: COLORS.chalk, marginBottom: 10 }}>
+                Enter passcode to view results
+              </div>
+              <input
+                type="password"
+                autoFocus
+                value={unlockInput}
+                onChange={(e) => {
+                  setUnlockInput(e.target.value);
+                  setUnlockError(false);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && tryUnlockTally()}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  marginBottom: 8,
+                  background: COLORS.bg,
+                  border: `1.5px solid ${unlockError ? COLORS.red : COLORS.line}`,
+                  borderRadius: 8,
+                  color: COLORS.chalk,
+                  fontSize: 14,
+                  textAlign: "center",
+                }}
+              />
+              {unlockError && (
+                <div style={{ color: COLORS.red, fontSize: 11, marginBottom: 8 }}>Wrong passcode.</div>
+              )}
+              <button
+                onClick={tryUnlockTally}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: COLORS.orange,
+                  color: "#1C2128",
+                  fontWeight: 700,
+                  fontSize: 13,
+                }}
+              >
+                View Results
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- Settings sheet — theme, print preferences, and account/team actions
 // consolidated in one place instead of scattered across Roster and Lineup ----
 function SettingsSheet({
@@ -6500,6 +6906,7 @@ export default function App() {
     includePairingsRoster: false,
     includePairingsLineup: false,
     roleSystem: { system: "5-1" },
+    captainVote: { candidateIds: [], ballots: [] },
   };
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
@@ -6519,6 +6926,9 @@ export default function App() {
   const setRoster = fieldSetter(setMainDoc, "roster");
   const captainId = mainDoc.captainId;
   const setCaptainId = fieldSetter(setMainDoc, "captainId");
+  const captainVote = mainDoc.captainVote || { candidateIds: [], ballots: [] };
+  const setCaptainVote = fieldSetter(setMainDoc, "captainVote");
+  const [showCaptainVote, setShowCaptainVote] = useState(false);
   const lineups = mainDoc.lineups;
   const setLineups = fieldSetter(setMainDoc, "lineups");
   const activeLineupId = mainDoc.activeLineupId;
@@ -7188,6 +7598,14 @@ export default function App() {
           </div>
         )}
         {showStatInfo && <StatInfoSheet onClose={() => setShowStatInfo(false)} />}
+        {showCaptainVote && (
+          <CaptainVoteSheet
+            onClose={() => setShowCaptainVote(false)}
+            roster={roster}
+            captainVote={captainVote}
+            setCaptainVote={setCaptainVote}
+          />
+        )}
         {showSettings && (
           <SettingsSheet
             onClose={() => setShowSettings(false)}
@@ -7221,6 +7639,7 @@ export default function App() {
             updateTeamLogo={updateTeamLogo}
             log={log}
             setLog={setLog}
+            onOpenCaptainVote={() => setShowCaptainVote(true)}
           />
         )}
         {tab === "lineup" && (
