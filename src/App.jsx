@@ -647,7 +647,7 @@ function TabBar({ tab, setTab }) {
 }
 
 // ---- Lineup screen: rotation dial court diagram, multi-lineup support ----
-function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
@@ -767,6 +767,13 @@ function LineupScreen({ lineups, setLineups, activeLineupId, roster, setRoster, 
     const remaining = lineups.filter((l) => l.id !== id);
     setLineups(remaining);
     if (viewingLineupId === id) setViewingLineupId(remaining[0].id);
+    // Deleting the lineup that's currently marked active would otherwise
+    // leave activeLineupId pointing at an id that no longer exists in
+    // `lineups` — every reader of it already falls back to lineups[0]
+    // when that happens, so nothing visibly breaks here, but the pointer
+    // itself stays wrong until the coach happens to hit Start Next Set or
+    // End Match. Repointing it immediately keeps the data itself honest.
+    if (activeLineupId === id) setActiveLineupId(remaining[0].id);
   };
 
   const renameLineup = (name) => {
@@ -7742,6 +7749,7 @@ export default function App() {
             lineups={lineups}
             setLineups={setLineups}
             activeLineupId={activeLineupId}
+            setActiveLineupId={setActiveLineupId}
             roster={roster}
             setRoster={setRoster}
             captainId={captainId}
