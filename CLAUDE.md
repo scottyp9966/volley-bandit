@@ -142,9 +142,30 @@ Worth knowing about even though they're not code issues:
   something else.
 - `main.jsx` used to force an immediate, unannounced page reload the
   moment it detected a new deployment (checked every 30 min). This was
-  fixed to ask via `window.confirm` first. If you're debugging something
-  that looks like "the app randomly reset mid-use," check this hasn't
-  regressed.
+  first fixed to ask via `window.confirm` — **but that turned out to be
+  its own real bug**: `window.confirm`/`alert` are documented as
+  unreliable inside an installed, standalone-mode PWA on iOS — the
+  dialog can fail to actually render at all while still blocking the
+  page's JS thread waiting for a response that never comes, which looks
+  exactly like "the app is frozen" or "blank white screen." This is a
+  very plausible explanation for a real report of the installed PWA
+  going dark/unresponsive on the home-screen icon specifically (a browser
+  tab and a home-screen PWA are separate contexts, each running this
+  check independently). Fixed again: the update-check now lives in
+  `useSWUpdate` inside `App.jsx` itself (not `main.jsx`) and surfaces as
+  a plain in-app banner (state + a fixed bar with Reload/Later) instead
+  of any native dialog or auto-reload. If you're debugging something
+  that looks like "the app randomly reset mid-use" or "went blank/froze,"
+  check this hasn't regressed back to `window.confirm`/`alert`/an
+  unconditional reload.
+- Volley Bandit's main bundle used to statically import `jspdf` and
+  `html2canvas` (Print-only libraries) at the top of `App.jsx`, meaning
+  roughly a third of the whole bundle got parsed and held in memory on
+  every page load whether or not Print was ever used — real weight
+  multiplied by however many tabs/PWA instances of this app a coach has
+  open. Now loaded via `await import(...)` inside `handlePrint` itself.
+  Keep new heavy, rarely-used dependencies dynamically imported at their
+  point of use rather than statically at the top of the file.
 - The user has hit real iOS-vs-other-browser inconsistencies (Chrome for
   iOS doesn't support the same file-sharing API Safari does, for example).
   The print flow has fallbacks for this; be careful not to remove them
