@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.17b";
+const APP_VERSION = "2026.09.17c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -465,6 +465,26 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
   }
 
   return { playerAt, activeSetterPos, backMBPos, liberoPlayer, passerPositions, backRowAttackPositions };
+}
+
+// Rolls a flat list of stat entries up into one row per player, with that
+// player's stat counts. Lives at module scope specifically because BOTH the
+// Stats screen and PrintArea need it: it used to be a local const inside
+// BoxScoreScreen while PrintArea's "Box Score — By Set" sheet also called
+// it by name, which is a ReferenceError that crashed the entire app to a
+// blank screen the moment any stat existed for the active match (PrintArea
+// is always mounted, and its own early return only skipped the call while
+// the log was empty). Keep it module-scope; don't move it back inside a
+// component.
+function groupStatsByPlayer(entries, roster) {
+  const byPlayer = {};
+  for (const e of entries) {
+    if (!byPlayer[e.playerId]) byPlayer[e.playerId] = {};
+    byPlayer[e.playerId][e.stat] = (byPlayer[e.playerId][e.stat] || 0) + 1;
+  }
+  return Object.entries(byPlayer)
+    .map(([pid, stats]) => ({ player: roster.find((p) => p.id === Number(pid)), stats }))
+    .filter((r) => r.player);
 }
 
 const STAT_BUTTONS = [
@@ -3575,16 +3595,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
   const selectInsightsMatch = (matchId) => setStatsView((prev) => ({ ...(prev || {}), section: "insights", insightsMatchId: matchId }));
   const backToInsightsList = () => setStatsView((prev) => ({ ...(prev || {}), insightsMatchId: null }));
 
-  const groupByPlayer = (entries) => {
-    const byPlayer = {};
-    for (const e of entries) {
-      if (!byPlayer[e.playerId]) byPlayer[e.playerId] = {};
-      byPlayer[e.playerId][e.stat] = (byPlayer[e.playerId][e.stat] || 0) + 1;
-    }
-    return Object.entries(byPlayer)
-      .map(([pid, stats]) => ({ player: roster.find((p) => p.id === Number(pid)), stats }))
-      .filter((r) => r.player);
-  };
+  const groupByPlayer = (entries) => groupStatsByPlayer(entries, roster);
 
   // --- Box Score: current match only, kept simple — the plain per-player table ---
   const activeMatch = activeMatchId != null ? matches.find((m) => m.id === activeMatchId) : null;
@@ -5763,7 +5774,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
             return <div style={{ fontSize: 12, color: "#444" }}>No stats recorded for this match.</div>;
           }
           return setNumbers.map((sn) => {
-            const setRows = groupByPlayer(boxLog.filter((e) => (e.setNumber || 1) === sn));
+            const setRows = groupStatsByPlayer(boxLog.filter((e) => (e.setNumber || 1) === sn), roster);
             return (
               <div key={sn} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set {sn}</div>

@@ -169,6 +169,21 @@ Worth knowing about even though they're not code issues:
   way, which matters more here than initial-load size — this thing runs
   courtside on gym wifi. If bundle size ever genuinely needs solving,
   it needs a stale-client recovery story first.
+- **`PrintArea` is always mounted, so a crash in it takes down the whole
+  app.** A real instance: the "Box Score — By Set" sheet called
+  `groupByPlayer`, which was a local `const` inside `BoxScoreScreen` — a
+  ReferenceError from a different component's scope. It stayed invisible
+  for a while because that sheet's own early return skips the call while
+  the stat log is empty; the moment any stat existed for the active match
+  it crashed the entire app to a blank screen, at sign-in, before the
+  coach could reach any tab. The fix was hoisting it to module scope as
+  `groupStatsByPlayer(entries, roster)`. Two lessons: anything `PrintArea`
+  calls must be module-scope or passed in as a prop, and a bug behind a
+  "only when there's data" guard can lie dormant through plenty of
+  testing. A quick `eslint --rule no-undef` pass over `src/App.jsx` and
+  `player-eval/src/App.jsx` catches this entire class in seconds and was
+  clean as of build 2026.09.17c — worth re-running after any large
+  paste-in of code from another session.
 - **There is an `ErrorBoundary`** wrapping the whole app (bottom of
   `App.jsx`, same in `player-eval/`). It catches render crashes *and*
   window-level `error`/`unhandledrejection` events, and replaces the
