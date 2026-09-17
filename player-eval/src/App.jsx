@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { doc, getDoc, onSnapshot, setDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
+// Static, not a dynamic import — see the matching note in the main Volley
+// Bandit app: runtime chunk fetching in a constantly-redeployed PWA means a
+// stale client can request a hashed filename that no longer exists.
+import { registerSW } from "virtual:pwa-register";
 import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight, Pencil, ExternalLink } from "lucide-react";
 
 // ---- Shared team-code data model -------------------------------------
@@ -1334,23 +1338,16 @@ function useSWUpdate() {
   const updateRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    import("virtual:pwa-register").then(({ registerSW }) => {
-      if (cancelled) return;
-      updateRef.current = registerSW({
-        onRegisteredSW(swUrl, registration) {
-          if (registration) {
-            setInterval(() => registration.update(), 30 * 60 * 1000);
-          }
-        },
-        onNeedRefresh() {
-          setNeedsRefresh(true);
-        },
-      });
+    updateRef.current = registerSW({
+      onRegisteredSW(swUrl, registration) {
+        if (registration) {
+          setInterval(() => registration.update(), 30 * 60 * 1000);
+        }
+      },
+      onNeedRefresh() {
+        setNeedsRefresh(true);
+      },
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const applyUpdate = () => updateRef.current?.(true);
@@ -1358,10 +1355,97 @@ function useSWUpdate() {
   return { needsRefresh, applyUpdate, dismiss };
 }
 
+// Clears service workers and their caches, then hard-reloads. Leaves
+// localStorage alone so the linked team code survives — this is for
+// recovering from a bad cached build, not for unlinking the device.
+async function clearCachesAndReload() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (err) {
+    console.warn("Cache clear failed:", err);
+  }
+  window.location.reload(true);
+}
+
+// Same rationale as the main app's: a blank screen on a phone gives you
+// nothing to report and no way in. This puts the real error on screen with
+// a recovery button instead.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    this.setState({ error, info });
+    console.error("Caught by ErrorBoundary:", error, info);
+  }
+
+  componentDidMount() {
+    this.onRejection = (e) => {
+      this.setState((s) => (s.error ? s : { error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)), info: null }));
+    };
+    this.onError = (e) => {
+      this.setState((s) => (s.error ? s : { error: e.error instanceof Error ? e.error : new Error(e.message || "Script error"), info: null }));
+    };
+    window.addEventListener("unhandledrejection", this.onRejection);
+    window.addEventListener("error", this.onError);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener("unhandledrejection", this.onRejection);
+    window.removeEventListener("error", this.onError);
+  }
+
+  render() {
+    const { error, info } = this.state;
+    if (!error) return this.props.children;
+    const detail = [
+      `App: Player Eval`,
+      `Error: ${error.message || String(error)}`,
+      error.stack ? `\nStack:\n${error.stack}` : "",
+      info?.componentStack ? `\nComponent:\n${info.componentStack}` : "",
+    ].join("\n");
+    return (
+      <div style={{ minHeight: "100vh", background: "#12161c", color: "#eef0f3", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: 20, overflowY: "auto" }}>
+        <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>Something went wrong</div>
+        <div style={{ fontSize: 12, color: "#9aa3b2", marginBottom: 14, lineHeight: 1.5 }}>
+          Your evaluations are safe — they're stored in the cloud, not on this device.
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          <button onClick={() => window.location.reload()} style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #2c3542", background: "none", color: "#eef0f3", fontWeight: 700, fontSize: 13 }}>
+            Reload
+          </button>
+          <button onClick={clearCachesAndReload} style={{ padding: "10px 14px", borderRadius: 8, border: "none", background: "#e8622c", color: "#12161c", fontWeight: 700, fontSize: 13 }}>
+            Clear cached app &amp; reload
+          </button>
+          <button onClick={() => navigator.clipboard?.writeText(detail)} style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #2c3542", background: "none", color: "#eef0f3", fontWeight: 700, fontSize: 13 }}>
+            Copy details
+          </button>
+        </div>
+        <pre style={{ fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "#1a2029", border: "1px solid #2c3542", borderRadius: 8, padding: 12, margin: 0, color: "#9aa3b2" }}>
+          {detail}
+        </pre>
+      </div>
+    );
+  }
+}
+
 export default function PlayerEvalApp() {
   const { needsRefresh, applyUpdate, dismiss } = useSWUpdate();
   return (
-    <>
+    <ErrorBoundary>
       {needsRefresh && (
         <div
           style={{
@@ -1413,6 +1497,6 @@ export default function PlayerEvalApp() {
         </div>
       )}
       <PlayerEvalAppInner />
-    </>
+    </ErrorBoundary>
   );
 }

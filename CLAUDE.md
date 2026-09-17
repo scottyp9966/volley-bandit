@@ -158,14 +158,27 @@ Worth knowing about even though they're not code issues:
   that looks like "the app randomly reset mid-use" or "went blank/froze,"
   check this hasn't regressed back to `window.confirm`/`alert`/an
   unconditional reload.
-- Volley Bandit's main bundle used to statically import `jspdf` and
-  `html2canvas` (Print-only libraries) at the top of `App.jsx`, meaning
-  roughly a third of the whole bundle got parsed and held in memory on
-  every page load whether or not Print was ever used — real weight
-  multiplied by however many tabs/PWA instances of this app a coach has
-  open. Now loaded via `await import(...)` inside `handlePrint` itself.
-  Keep new heavy, rarely-used dependencies dynamically imported at their
-  point of use rather than statically at the top of the file.
+- **Don't code-split this app.** `jspdf`/`html2canvas` (Print-only, and
+  roughly a third of the bundle) were briefly switched to dynamic
+  `await import(...)` to shrink the initial load. That was reverted the
+  same day: it introduces runtime chunk fetching into an app that
+  redeploys constantly, and every deploy changes the hashed chunk
+  filenames, so a device still running an older build that then
+  lazy-loads a chunk requests a file that no longer exists on the
+  deployment. A single self-contained bundle simply cannot fail that
+  way, which matters more here than initial-load size — this thing runs
+  courtside on gym wifi. If bundle size ever genuinely needs solving,
+  it needs a stale-client recovery story first.
+- **There is an `ErrorBoundary`** wrapping the whole app (bottom of
+  `App.jsx`, same in `player-eval/`). It catches render crashes *and*
+  window-level `error`/`unhandledrejection` events, and replaces the
+  blank screen with the actual error text, the build version, and a
+  "Clear cached app & reload" button (unregisters service workers and
+  deletes their caches, deliberately leaving localStorage/team code
+  intact). This exists because the app is used on phones where there's
+  no console to open — a blank screen previously gave the coach nothing
+  to report and no way back in. Keep it, and keep it dependency-free
+  enough that it can't itself be the thing that crashes.
 - The user has hit real iOS-vs-other-browser inconsistencies (Chrome for
   iOS doesn't support the same file-sharing API Safari does, for example).
   The print flow has fallbacks for this; be careful not to remove them

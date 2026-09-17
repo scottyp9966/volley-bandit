@@ -2,12 +2,22 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon, Repeat } from "lucide-react";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
-// jsPDF and html2canvas are loaded dynamically inside handlePrint instead of
-// imported here — they're a genuinely large chunk of the bundle (roughly a
-// third of it), needed only for the Print feature, which most sessions never
-// touch. Bundling them statically meant every single page load parsed and
-// held onto that code in memory whether or not Print was ever used — real
-// weight on a device with several tabs of this PWA open at once.
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
+import { registerSW } from "virtual:pwa-register";
+
+// NOTE: these are deliberately STATIC imports, even though jsPDF and
+// html2canvas are only used by Print and are a large share of the bundle.
+// They were briefly made dynamic (`await import(...)`) to shrink the
+// initial load — but that introduced runtime chunk fetching into an app
+// that redeploys constantly, and every deploy changes the hashed chunk
+// filenames. A device still running an older build that then tries to
+// lazy-load a chunk gets a 404 for a file that no longer exists on the
+// deployment, which is a failure mode a single self-contained bundle
+// simply cannot have. For a PWA used courtside on flaky gym wifi, "always
+// works offline from one bundle" beats "loads slightly less JS up front."
+// Don't reintroduce dynamic imports here without a cache-busting/recovery
+// story for stale clients.
 
 // ---- Design tokens ----
 // Court charcoal / chalk / volleyball orange / court blue / kill green / error red
@@ -26,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.17a";
+const APP_VERSION = "2026.09.17b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -7092,23 +7102,16 @@ function useSWUpdate() {
   const updateRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    import("virtual:pwa-register").then(({ registerSW }) => {
-      if (cancelled) return;
-      updateRef.current = registerSW({
-        onRegisteredSW(swUrl, registration) {
-          if (registration) {
-            setInterval(() => registration.update(), 30 * 60 * 1000);
-          }
-        },
-        onNeedRefresh() {
-          setNeedsRefresh(true);
-        },
-      });
+    updateRef.current = registerSW({
+      onRegisteredSW(swUrl, registration) {
+        if (registration) {
+          setInterval(() => registration.update(), 30 * 60 * 1000);
+        }
+      },
+      onNeedRefresh() {
+        setNeedsRefresh(true);
+      },
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const applyUpdate = () => updateRef.current?.(true);
@@ -7340,13 +7343,6 @@ function AppInner() {
       console.warn("Print operation force-cleaned after timing out — this shouldn't normally happen.");
     }, 20000);
     try {
-      // Loaded on demand, right when a print is actually requested — see
-      // the note above the imports for why these aren't static imports.
-      const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
-        import("jspdf"),
-        import("html2canvas"),
-      ]);
-
       // Make the print sheet capturable only for this moment — it's
       // display:none the rest of the time, so no ongoing background
       // rendering work happens while the app is just sitting there in
@@ -8000,10 +7996,137 @@ function AppInner() {
   );
 }
 
+// Wipes every client-side cache this app controls — service worker
+// registrations and their caches — then hard-reloads. Deliberately does NOT
+// touch localStorage, so the team code and passcode unlock survive: the
+// point is to recover from a bad/stale cached build, not to make the coach
+// re-link their device. This is the escape hatch for "the app went blank
+// and I can't get back in" without needing to delete and reinstall it.
+async function clearCachesAndReload() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (err) {
+    console.warn("Cache clear failed:", err);
+  }
+  window.location.reload(true);
+}
+
+// A blank screen is the worst possible failure on a phone: there's no
+// console to open and nothing to report back. This catches render-time
+// crashes and puts the actual error on screen, selectable, along with the
+// recovery button above. Non-render failures (a rejected promise, a script
+// that failed to load) are caught by the window-level listeners below and
+// routed to the same place.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    this.setState({ error, info });
+    console.error("Caught by ErrorBoundary:", error, info);
+  }
+
+  componentDidMount() {
+    this.onRejection = (e) => {
+      this.setState((s) => (s.error ? s : { error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)), info: null }));
+    };
+    this.onError = (e) => {
+      this.setState((s) => (s.error ? s : { error: e.error instanceof Error ? e.error : new Error(e.message || "Script error"), info: null }));
+    };
+    window.addEventListener("unhandledrejection", this.onRejection);
+    window.addEventListener("error", this.onError);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener("unhandledrejection", this.onRejection);
+    window.removeEventListener("error", this.onError);
+  }
+
+  render() {
+    const { error, info } = this.state;
+    if (!error) return this.props.children;
+    const detail = [
+      `Build: ${APP_VERSION}`,
+      `Error: ${error.message || String(error)}`,
+      error.stack ? `\nStack:\n${error.stack}` : "",
+      info?.componentStack ? `\nComponent:\n${info.componentStack}` : "",
+    ].join("\n");
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0B0D10",
+          color: "#E8EAED",
+          fontFamily: "'Inter', system-ui, sans-serif",
+          padding: 20,
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>Something went wrong</div>
+        <div style={{ fontSize: 12, color: "#9AA0A6", marginBottom: 14, lineHeight: 1.5 }}>
+          Your team data is safe — it lives in the cloud, not on this device. This is the
+          app itself failing to draw. The details below are what to send along when
+          reporting it.
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #3C4043", background: "none", color: "#E8EAED", fontWeight: 700, fontSize: 13 }}
+          >
+            Reload
+          </button>
+          <button
+            onClick={clearCachesAndReload}
+            style={{ padding: "10px 14px", borderRadius: 8, border: "none", background: "#FF6B35", color: "#1C2128", fontWeight: 700, fontSize: 13 }}
+          >
+            Clear cached app &amp; reload
+          </button>
+          <button
+            onClick={() => navigator.clipboard?.writeText(detail)}
+            style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #3C4043", background: "none", color: "#E8EAED", fontWeight: 700, fontSize: 13 }}
+          >
+            Copy details
+          </button>
+        </div>
+        <pre
+          style={{
+            fontSize: 11,
+            lineHeight: 1.45,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            userSelect: "text",
+            background: "#15181C",
+            border: "1px solid #3C4043",
+            borderRadius: 8,
+            padding: 12,
+            margin: 0,
+            color: "#C9CCD1",
+          }}
+        >
+          {detail}
+        </pre>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   const { needsRefresh, applyUpdate, dismiss } = useSWUpdate();
   return (
-    <>
+    <ErrorBoundary>
       {needsRefresh && (
         <div
           style={{
@@ -8055,6 +8178,6 @@ export default function App() {
         </div>
       )}
       <AppInner />
-    </>
+    </ErrorBoundary>
   );
 }
