@@ -2,8 +2,12 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon, Repeat } from "lucide-react";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
+// jsPDF and html2canvas are loaded dynamically inside handlePrint instead of
+// imported here — they're a genuinely large chunk of the bundle (roughly a
+// third of it), needed only for the Print feature, which most sessions never
+// touch. Bundling them statically meant every single page load parsed and
+// held onto that code in memory whether or not Print was ever used — real
+// weight on a device with several tabs of this PWA open at once.
 
 // ---- Design tokens ----
 // Court charcoal / chalk / volleyball orange / court blue / kill green / error red
@@ -7074,7 +7078,45 @@ function SettingsSheet({
   );
 }
 
-export default function App() {
+// Registers the service-worker update check and surfaces it as in-app
+// state instead of a native window.confirm() dialog. window.confirm/alert
+// are documented as unreliable inside an installed, standalone-mode PWA on
+// iOS — they can fail to actually display anything while still blocking
+// the page's JS thread waiting for a response that will never come, which
+// looks exactly like "the app is frozen/blank." A plain in-app banner has
+// no such failure mode: it's just normal React state, and if the person
+// never sees it (backgrounded tab), nothing blocks — the update simply
+// applies the next time they naturally reopen the app fresh.
+function useSWUpdate() {
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const updateRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("virtual:pwa-register").then(({ registerSW }) => {
+      if (cancelled) return;
+      updateRef.current = registerSW({
+        onRegisteredSW(swUrl, registration) {
+          if (registration) {
+            setInterval(() => registration.update(), 30 * 60 * 1000);
+          }
+        },
+        onNeedRefresh() {
+          setNeedsRefresh(true);
+        },
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const applyUpdate = () => updateRef.current?.(true);
+  const dismiss = () => setNeedsRefresh(false);
+  return { needsRefresh, applyUpdate, dismiss };
+}
+
+function AppInner() {
   const [tab, setTab] = useState("roster");
   const [showStatInfo, setShowStatInfo] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -7298,6 +7340,13 @@ export default function App() {
       console.warn("Print operation force-cleaned after timing out — this shouldn't normally happen.");
     }, 20000);
     try {
+      // Loaded on demand, right when a print is actually requested — see
+      // the note above the imports for why these aren't static imports.
+      const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+
       // Make the print sheet capturable only for this moment — it's
       // display:none the rest of the time, so no ongoing background
       // rendering work happens while the app is just sitting there in
@@ -7948,5 +7997,64 @@ export default function App() {
         <TabBar tab={tab} setTab={setTab} />
       </PhoneFrame>
     </div>
+  );
+}
+
+export default function App() {
+  const { needsRefresh, applyUpdate, dismiss } = useSWUpdate();
+  return (
+    <>
+      {needsRefresh && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            padding: "10px 14px",
+            background: COLORS.orange,
+            color: "#1C2128",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <span>A new version is available.</span>
+          <button
+            onClick={applyUpdate}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              border: "none",
+              background: "#1C2128",
+              color: COLORS.chalk,
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Reload
+          </button>
+          <button
+            onClick={dismiss}
+            style={{
+              padding: "5px 10px",
+              borderRadius: 6,
+              border: "1px solid #1C2128",
+              background: "none",
+              color: "#1C2128",
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Later
+          </button>
+        </div>
+      )}
+      <AppInner />
+    </>
   );
 }

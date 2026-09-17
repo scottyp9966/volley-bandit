@@ -1,18 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
-import { registerSW } from "virtual:pwa-register";
 
-const updateSW = registerSW({
-  onRegisteredSW(swUrl, registration) {
-    if (registration) {
-      setInterval(() => registration.update(), 30 * 60 * 1000);
-    }
-  },
-  onNeedRefresh() {
-    updateSW(true);
-  },
-});
+// Service-worker update registration now lives inside App.jsx (see
+// useSWUpdate) so it can surface as a normal in-app banner instead of
+// reloading immediately or using window.confirm() — see the comment on
+// useSWUpdate for why both were a real risk.
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

@@ -1295,7 +1295,7 @@ function useDeepLinkJoin(teamCode, setTeamCode) {
   return state;
 }
 
-export default function PlayerEvalApp() {
+function PlayerEvalAppInner() {
   const [teamCode, setTeamCode] = usePersisted("pe-team-code", "");
   const deepLink = useDeepLinkJoin(teamCode, setTeamCode);
 
@@ -1317,4 +1317,102 @@ export default function PlayerEvalApp() {
   }
 
   return <AppShell teamCode={teamCode} onSwitchTeam={() => setTeamCode("")} />;
+}
+
+// Registers the service-worker update check and surfaces it as an in-app
+// banner instead of reloading immediately or using window.confirm() —
+// both a real risk in an installed, standalone-mode PWA on iOS. An
+// unannounced immediate reload can hit mid-evaluation-entry (losing
+// unsaved ratings); window.confirm/alert are documented as unreliable in
+// that context — they can block the JS thread waiting on a dialog that
+// never actually renders, which looks exactly like "the app is frozen."
+// A plain in-app banner has neither failure mode: it's just React state,
+// and if nobody sees it (backgrounded tab), nothing blocks — the update
+// just applies next time the app is naturally reopened fresh.
+function useSWUpdate() {
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const updateRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("virtual:pwa-register").then(({ registerSW }) => {
+      if (cancelled) return;
+      updateRef.current = registerSW({
+        onRegisteredSW(swUrl, registration) {
+          if (registration) {
+            setInterval(() => registration.update(), 30 * 60 * 1000);
+          }
+        },
+        onNeedRefresh() {
+          setNeedsRefresh(true);
+        },
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const applyUpdate = () => updateRef.current?.(true);
+  const dismiss = () => setNeedsRefresh(false);
+  return { needsRefresh, applyUpdate, dismiss };
+}
+
+export default function PlayerEvalApp() {
+  const { needsRefresh, applyUpdate, dismiss } = useSWUpdate();
+  return (
+    <>
+      {needsRefresh && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            padding: "10px 14px",
+            background: "#e8622c",
+            color: "#12161c",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <span>A new version is available.</span>
+          <button
+            onClick={applyUpdate}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              border: "none",
+              background: "#12161c",
+              color: "#eef0f3",
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Reload
+          </button>
+          <button
+            onClick={dismiss}
+            style={{
+              padding: "5px 10px",
+              borderRadius: 6,
+              border: "1px solid #12161c",
+              background: "none",
+              color: "#12161c",
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Later
+          </button>
+        </div>
+      )}
+      <PlayerEvalAppInner />
+    </>
+  );
 }
