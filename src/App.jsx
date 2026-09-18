@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18i";
+const APP_VERSION = "2026.09.18j";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2617,6 +2617,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 // ---- Live stat entry screen ----
 const FRONT_ROW_SLOTS = ["P2", "P3", "P4"];
 const BACK_ROW_SLOTS = ["P1", "P5", "P6"];
+// How many captains each player may vote for on one ballot.
+const VOTES_PER_BALLOT = 2;
 const SUB_LIMIT = 18; // Massachusetts high school rule; NFHS default elsewhere is commonly 12
 
 function LiveScreen({
@@ -6902,15 +6904,16 @@ function StatInfoSheet({ onClose }) {
 
 // ---- Captain vote sheet — pass-the-device ballot for picking a captain.
 // Coach sets the candidates once, then hands the phone around: each player
-// taps a name and submits, which immediately blanks the ballot for the next
-// player (no visible running tally, no way to see who anyone else picked).
+// taps up to two names and submits, which immediately blanks the ballot for
+// the next player (no visible running tally, no way to see who anyone else
+// picked).
 // The results view sits behind the same app passcode, hidden behind a small
 // unlabeled dot in the corner rather than a real "Tabulate" button, so it
 // isn't something a player passing the device along could stumble into.
 function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
   const [step, setStep] = useState(captainVote.candidateIds.length ? "vote" : "setup");
   const [pickIds, setPickIds] = useState(captainVote.candidateIds);
-  const [selected, setSelected] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [justVoted, setJustVoted] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [unlockInput, setUnlockInput] = useState("");
@@ -6919,16 +6922,34 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
 
   const candidates = roster.filter((p) => captainVote.candidateIds.includes(p.id));
 
+  // Each ballot is an array of up to VOTES_PER_BALLOT candidate ids. Ballots
+  // cast before that change were a bare id rather than an array, so every
+  // read goes through this — an election already part-way through when the
+  // app updated still tallies correctly instead of counting those as zero.
+  const ballotPicks = (b) => (Array.isArray(b) ? b : b == null ? [] : [b]);
+
   const startElection = () => {
     if (pickIds.length < 2) return;
     setCaptainVote({ candidateIds: pickIds, ballots: [] });
     setStep("vote");
   };
 
+  // Toggling past the limit is a no-op rather than silently dropping an
+  // earlier pick — a player passing the device should never have a choice
+  // they made disappear without tapping it off themselves.
+  const togglePick = (id) =>
+    setSelectedIds((cur) =>
+      cur.includes(id)
+        ? cur.filter((x) => x !== id)
+        : cur.length >= VOTES_PER_BALLOT
+        ? cur
+        : [...cur, id]
+    );
+
   const submitVote = () => {
-    if (!selected) return;
-    setCaptainVote((prev) => ({ ...prev, ballots: [...prev.ballots, selected] }));
-    setSelected(null);
+    if (selectedIds.length === 0) return;
+    setCaptainVote((prev) => ({ ...prev, ballots: [...prev.ballots, selectedIds] }));
+    setSelectedIds([]);
     setJustVoted(true);
     setTimeout(() => setJustVoted(false), 1200);
   };
@@ -6968,11 +6989,15 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
 
   const tally = useMemo(() => {
     const counts = {};
-    captainVote.ballots.forEach((id) => {
-      counts[id] = (counts[id] || 0) + 1;
+    captainVote.ballots.forEach((b) => {
+      ballotPicks(b).forEach((id) => {
+        counts[id] = (counts[id] || 0) + 1;
+      });
     });
     return candidates.map((p) => ({ player: p, votes: counts[p.id] || 0 })).sort((a, b) => b.votes - a.votes);
   }, [candidates, captainVote.ballots]);
+
+  const totalVotesCast = captainVote.ballots.reduce((n, b) => n + ballotPicks(b).length, 0);
 
   return (
     <div
@@ -7083,47 +7108,84 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
               </div>
             ) : (
               <>
-                <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 10 }}>
-                  Tap your pick for captain, then Submit. {captainVote.ballots.length} vote
+                <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 4 }}>
+                  Tap up to {VOTES_PER_BALLOT} picks for captain, then Submit.{" "}
+                  {captainVote.ballots.length} ballot
                   {captainVote.ballots.length === 1 ? "" : "s"} cast so far.
                 </div>
-                {candidates.map((p) => (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: selectedIds.length >= VOTES_PER_BALLOT ? COLORS.gold : COLORS.chalkDim,
+                    marginBottom: 10,
+                  }}
+                >
+                  {selectedIds.length} of {VOTES_PER_BALLOT} selected
+                  {selectedIds.length >= VOTES_PER_BALLOT
+                    ? " — tap one off to change it"
+                    : selectedIds.length === 0
+                    ? ""
+                    : " — one more if you want it"}
+                </div>
+                {candidates.map((p) => {
+                  const picked = selectedIds.includes(p.id);
+                  const atLimit = !picked && selectedIds.length >= VOTES_PER_BALLOT;
+                  return (
                   <button
                     key={p.id}
-                    onClick={() => setSelected(p.id)}
+                    onClick={() => togglePick(p.id)}
                     style={{
-                      display: "block",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
                       width: "100%",
                       textAlign: "left",
                       padding: "14px 12px",
                       marginBottom: 8,
                       borderRadius: 10,
-                      border: `1.5px solid ${selected === p.id ? COLORS.orange : COLORS.line}`,
-                      background: selected === p.id ? "rgba(255,107,53,0.12)" : "transparent",
+                      border: `1.5px solid ${picked ? COLORS.orange : COLORS.line}`,
+                      background: picked ? "rgba(255,107,53,0.12)" : "transparent",
                       color: COLORS.chalk,
                       fontSize: 14,
                       fontWeight: 600,
+                      opacity: atLimit ? 0.45 : 1,
                     }}
                   >
+                    <span
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        border: `1.5px solid ${picked ? COLORS.orange : COLORS.line}`,
+                        background: picked ? COLORS.orange : "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {picked && <Check size={12} color={COLORS.bg} />}
+                    </span>
                     #{p.num} {displayName(p)}
                   </button>
-                ))}
+                  );
+                })}
                 <button
                   onClick={submitVote}
-                  disabled={!selected}
+                  disabled={selectedIds.length === 0}
                   style={{
                     width: "100%",
                     marginTop: 8,
                     padding: "12px",
                     borderRadius: 8,
                     border: "none",
-                    background: selected ? COLORS.orange : COLORS.line,
+                    background: selectedIds.length ? COLORS.orange : COLORS.line,
                     color: "#1C2128",
                     fontWeight: 700,
                     fontSize: 14,
                   }}
                 >
-                  Submit Vote
+                  Submit {selectedIds.length === VOTES_PER_BALLOT ? "Votes" : "Vote"}
                 </button>
               </>
             )}
@@ -7166,7 +7228,9 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
         {tallyOpen && (
           <>
             <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 12 }}>
-              {captainVote.ballots.length} vote{captainVote.ballots.length === 1 ? "" : "s"} total.
+              {captainVote.ballots.length} ballot{captainVote.ballots.length === 1 ? "" : "s"} ·{" "}
+              {totalVotesCast} vote{totalVotesCast === 1 ? "" : "s"} (up to {VOTES_PER_BALLOT} per
+              player).
             </div>
             {tally.map(({ player, votes }) => (
               <div

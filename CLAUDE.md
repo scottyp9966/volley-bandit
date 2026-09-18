@@ -207,6 +207,16 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   libero can reach the court from the free-sub sheet too. The guard is
   `onCourtAfterRotation` (computed from `rotated`) on both suggestion
   branches.
+- **A captain-vote ballot holds up to `VOTES_PER_BALLOT` (2) picks.**
+  `captainVote.ballots` is therefore an array of arrays, not of bare ids.
+  Ballots cast under the old one-pick shape are bare ids, so every read goes
+  through `ballotPicks(b)` — an election already part-way through when the
+  app updates still tallies correctly instead of counting those as zero.
+  Keep that normalizer if you touch the vote. Submitting needs at least one
+  pick, not two ("up to 2"), and tapping a third candidate is a no-op rather
+  than dropping an earlier pick — a player passing the device should never
+  have a choice vanish without tapping it off. The results view counts
+  ballots and votes separately, since they're no longer the same number.
 - **`activeLineupId` can go stale.** It's only ever updated by
   `startNextSet()`/`endMatch()` on the Live screen — deleting a lineup on
   the Lineup screen didn't used to check whether it was the active one, so
