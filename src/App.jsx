@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18a";
+const APP_VERSION = "2026.09.18b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2640,6 +2640,7 @@ function LiveScreen({
   setPointLog,
   onStartNextSet,
   setTab,
+  printStatKeys,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
   const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
@@ -2665,6 +2666,17 @@ function LiveScreen({
   // banner, the undo tray) reads this and doesn't care which mode set it.
   const currentPlayerId = simpleMode ? simplePlayerId : slots[selectedSlot];
   const currentPlayer = currentPlayerId ? playerFor(currentPlayerId) : null;
+  // The Settings "Stats to Track & Print" list does double duty: it picks
+  // the columns on printed box scores AND which buttons appear here. An
+  // empty list falls back to all of them rather than leaving a Live screen
+  // with nothing to tap — unchecking everything shouldn't be able to
+  // strand you mid-match with no way to record anything.
+  const visibleStatButtons = useMemo(() => {
+    const keys = printStatKeys || [];
+    if (keys.length === 0) return STAT_BUTTONS;
+    return STAT_BUTTONS.filter((s) => keys.includes(s.key));
+  }, [printStatKeys]);
+
   const simpleRoster = useMemo(() => {
     const numOf = (p) => {
       const n = Number(p.num);
@@ -3353,7 +3365,7 @@ function LiveScreen({
           alignContent: "start",
         }}
       >
-        {STAT_BUTTONS.map((s) => (
+        {visibleStatButtons.map((s) => (
           <button
             key={s.key}
             disabled={!currentPlayerId}
@@ -7178,7 +7190,12 @@ function SettingsSheet({
         </div>
 
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Stats to Print
+          Stats to Track &amp; Print
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8, lineHeight: 1.45 }}>
+          Controls both the buttons you get on the Live screen and the columns on
+          printed box scores. Unchecking one hides its button — it doesn't delete
+          anything already recorded, and re-checking brings it back.
         </div>
         <div style={{ marginBottom: 18 }}>
           {STAT_BUTTONS.map((s) => {
@@ -8099,6 +8116,7 @@ function AppInner() {
             setPointLog={setPointLog}
             onStartNextSet={startNextSet}
             setTab={setTab}
+            printStatKeys={printStatKeys}
           />
         )}
         {tab === "box" && (
