@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18k";
+const APP_VERSION = "2026.09.18l";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -6958,11 +6958,24 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
 
   const candidates = roster.filter((p) => captainVote.candidateIds.includes(p.id));
 
-  // Each ballot is an array of up to VOTES_PER_BALLOT candidate ids. Ballots
-  // cast before that change were a bare id rather than an array, so every
-  // read goes through this — an election already part-way through when the
-  // app updated still tallies correctly instead of counting those as zero.
-  const ballotPicks = (b) => (Array.isArray(b) ? b : b == null ? [] : [b]);
+  // Each ballot is an OBJECT wrapping up to VOTES_PER_BALLOT candidate ids:
+  // { picks: [id, id] }. The wrapper is not cosmetic — Firestore rejects
+  // nested arrays outright, so `ballots` cannot be an array of arrays. It
+  // was, briefly, and the resulting setDoc error failed every write to the
+  // whole main doc, not just the vote. An array of maps is fine, and a map
+  // may contain an array, so this shape is legal. Don't flatten it back.
+  //
+  // Ballots cast before multi-pick voting are a bare id, so reads go
+  // through this — an election already part-way through when the app
+  // updates still tallies instead of counting those as zero. The bare-array
+  // case is handled too, purely to cope with state left over in a session
+  // that ran the broken build before reloading.
+  const ballotPicks = (b) => {
+    if (b == null) return [];
+    if (Array.isArray(b)) return b;
+    if (typeof b === "object") return Array.isArray(b.picks) ? b.picks : [];
+    return [b];
+  };
 
   const startElection = () => {
     if (pickIds.length < 2) return;
@@ -6984,7 +6997,7 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
 
   const submitVote = () => {
     if (selectedIds.length === 0) return;
-    setCaptainVote((prev) => ({ ...prev, ballots: [...prev.ballots, selectedIds] }));
+    setCaptainVote((prev) => ({ ...prev, ballots: [...prev.ballots, { picks: selectedIds }] }));
     setSelectedIds([]);
     setJustVoted(true);
     setTimeout(() => setJustVoted(false), 1200);

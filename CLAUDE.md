@@ -207,8 +207,14 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   libero can reach the court from the free-sub sheet too. The guard is
   `onCourtAfterRotation` (computed from `rotated`) on both suggestion
   branches.
-- **A captain-vote ballot holds up to `VOTES_PER_BALLOT` (2) picks.**
-  `captainVote.ballots` is therefore an array of arrays, not of bare ids.
+- **A captain-vote ballot holds up to `VOTES_PER_BALLOT` (2) picks, wrapped
+  in an object: `{ picks: [id, id] }`.** The wrapper is load-bearing.
+  `ballots` was briefly an array of arrays, and **Firestore rejects nested
+  arrays outright** — the resulting `setDoc` error failed every write to the
+  entire `main` doc, not just the vote, and took the app to the
+  `ErrorBoundary`. An array of maps is legal and a map may hold an array, so
+  this shape is fine; don't flatten it back. The same rule applies to any
+  new field: an array may never directly contain another array.
   Ballots cast under the old one-pick shape are bare ids, so every read goes
   through `ballotPicks(b)` — an election already part-way through when the
   app updates still tallies correctly instead of counting those as zero.
@@ -358,6 +364,14 @@ sandboxed dev-server/headless-browser session may still be unable to reach
 Firestore directly (network policy) — in that case, verify pure logic with
 a standalone Node script against the same data shapes, and be explicit
 with the user about what was and wasn't actually verified end-to-end.
+
+The sharper version of that warning: a *stub* standing in for Firestore
+only catches what it models. A session built one to test in the browser
+without real network access, and it happily accepted a nested array —
+so a change that broke every write in production passed every test here.
+If you build such a stub, make it enforce the real service's constraints
+(nested arrays, field-name rules, document size), not just its shape.
+Anything the stub doesn't enforce, you haven't actually tested.
 
 ## Workflow note
 
