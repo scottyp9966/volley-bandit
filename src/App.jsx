@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18j";
+const APP_VERSION = "2026.09.18k";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -3825,6 +3825,42 @@ function LiveScreen({
 
 // Full-width swipe-to-confirm control, for state-changing actions during live play
 // (rotation, substitution, new set) that would be a real nuisance if mid-tapped.
+// A destructive action that asks twice, in-app, instead of calling
+// window.confirm(). The first tap arms the button and swaps its label; the
+// second fires. It disarms itself after ARM_TIMEOUT so a button left armed
+// and forgotten can't be triggered by a later stray tap.
+//
+// This exists because window.confirm/alert are documented as unreliable
+// inside an installed standalone PWA on iOS — the dialog can fail to render
+// while still blocking the page's JS thread, which is indistinguishable
+// from the app freezing. See the CLAUDE.md note; that was a real report.
+// Anywhere a native confirm is still in use, this is the replacement.
+const CONFIRM_ARM_TIMEOUT = 4000;
+function ConfirmButton({ label, confirmLabel, onConfirm, style, armedStyle, disabled }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), CONFIRM_ARM_TIMEOUT);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      disabled={disabled}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onConfirm();
+      }}
+      style={{ ...style, ...(armed ? armedStyle : null) }}
+    >
+      {armed ? confirmLabel : label}
+    </button>
+  );
+}
+
 function SwipeConfirm({ label, color, onConfirm, disabled, height = 20 }) {
   const trackRef = useRef(null);
   const [dragX, setDragX] = useState(0);
@@ -6973,14 +7009,16 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
     }
   };
 
+  // Both of these used to ask via window.confirm. This sheet is handed
+  // around a locker room on the installed PWA, which is the worst possible
+  // place for a native dialog that can silently fail to render — see
+  // ConfirmButton. They're two-tap in-app confirms now.
   const resetVotes = () => {
-    if (!window.confirm("Clear all votes cast so far? Candidates stay the same.")) return;
     setCaptainVote((prev) => ({ ...prev, ballots: [] }));
     setTallyOpen(false);
   };
 
   const newElection = () => {
-    if (!window.confirm("Start a brand new election? This clears the candidates and every vote.")) return;
     setCaptainVote({ candidateIds: [], ballots: [] });
     setPickIds([]);
     setTallyOpen(false);
@@ -7264,8 +7302,10 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
             >
               Back to Voting
             </button>
-            <button
-              onClick={resetVotes}
+            <ConfirmButton
+              label="Reset Votes (keep candidates)"
+              confirmLabel="Tap again to clear every vote"
+              onConfirm={resetVotes}
               style={{
                 width: "100%",
                 marginTop: 8,
@@ -7276,11 +7316,12 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
                 color: COLORS.red,
                 fontSize: 13,
               }}
-            >
-              Reset Votes (keep candidates)
-            </button>
-            <button
-              onClick={newElection}
+              armedStyle={{ background: "rgba(198,92,80,0.18)", fontWeight: 700 }}
+            />
+            <ConfirmButton
+              label="Start a New Election"
+              confirmLabel="Tap again to clear candidates and votes"
+              onConfirm={newElection}
               style={{
                 width: "100%",
                 marginTop: 8,
@@ -7291,9 +7332,8 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
                 color: COLORS.chalkDim,
                 fontSize: 12,
               }}
-            >
-              Start a New Election
-            </button>
+              armedStyle={{ color: COLORS.red, fontWeight: 700 }}
+            />
           </>
         )}
 
