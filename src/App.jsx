@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18c";
+const APP_VERSION = "2026.09.18d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2737,8 +2737,25 @@ function LiveScreen({
     }
   };
 
-  const setActiveSlots = (newSlots) => {
-    setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, slots: newSlots } : l)));
+  // Accepts either a plain slots object or an updater function. The updater
+  // form matters: it derives from the lineup's CURRENT slots rather than
+  // whatever `slots` happened to be when this render closed over it. A
+  // rotation can produce two suggested subs at once (the libero
+  // criss-cross — one middle rotating to the front as the other rotates to
+  // the back), and tapping both quickly used to apply only the second: each
+  // call rebuilt the whole slots object from the same stale snapshot, so
+  // the first swap was silently overwritten. Both suggestions still
+  // disappeared from the list, so nothing indicated a sub hadn't happened —
+  // the app's idea of who was on court then disagreed with the actual court
+  // for the rest of the set.
+  const setActiveSlots = (updater) => {
+    setLineups((prev) =>
+      prev.map((l) =>
+        l.id === activeLineup.id
+          ? { ...l, slots: typeof updater === "function" ? updater(l.slots) : updater }
+          : l
+      )
+    );
   };
 
   // Tracks which of the 6 rotations this lineup is currently sitting in, so
@@ -2800,7 +2817,7 @@ function LiveScreen({
     const outgoingId = subSheet.playerId;
     const incomingId = subReplacementId;
     pushHistory(`Sub: #${playerFor(outgoingId)?.num} out, #${playerFor(incomingId)?.num} in`);
-    setActiveSlots({ ...slots, [subSheet.slot]: incomingId });
+    setActiveSlots((cur) => ({ ...cur, [subSheet.slot]: incomingId }));
     setLineups((prev) =>
       prev.map((l) =>
         l.id === activeLineup.id
@@ -2869,7 +2886,7 @@ function LiveScreen({
     const out = playerFor(sug.outId);
     const inP = playerFor(sug.inId);
     pushHistory(`Sub: ${displayName(inP)} in for ${displayName(out)} (${sug.slot})`);
-    setActiveSlots({ ...slots, [sug.slot]: sug.inId });
+    setActiveSlots((cur) => ({ ...cur, [sug.slot]: sug.inId }));
     setSubSuggestions((prev) => prev.filter((s) => s.id !== sug.id));
     if (sug.isLibero) {
       setLiberoSubCount((c) => c + 1);

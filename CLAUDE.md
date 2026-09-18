@@ -118,6 +118,27 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     `findActiveLiberoPairing` + the cue banners in `LineupScreen`/
     `LiveScreen` surface whether the libero is currently allowed to serve
     or the real player needs to sub in just for that turn.
+- **`setActiveSlots` must be given an updater function, not a prebuilt
+  object**, for anything that changes one slot. It replaces the lineup's
+  whole `slots` object, so `setActiveSlots({ ...slots, [x]: y })` built
+  from a render-captured `slots` silently loses any other change made in
+  the same tick. That was a real, reproduced bug: a rotation can produce
+  two suggested subs at once (the libero criss-cross — one middle
+  rotating front as the other rotates back), and tapping both quickly
+  applied only the second. Both suggestions still vanished from the list,
+  so nothing showed a sub hadn't happened, and the app's court then
+  disagreed with the real court for the rest of the set — corrupting
+  later rotations and attributing stats to the wrong players. Fixed by
+  making `setActiveSlots` accept an updater that derives from the
+  lineup's current `slots`; `confirmSuggestion` and
+  `confirmFreeSubstitution` both use that form. `advanceRotation` still
+  passes a plain object, which is fine — it's one wholesale write per
+  swipe gesture and can't double-fire in a tick.
+- **The free-substitution sheet deliberately excludes designated liberos**
+  from the bench list, so a libero can never be manually placed into a
+  slot (front row especially, which would be illegal). Liberos only ever
+  come on via pairing-driven swaps. If that ever needs to change, the
+  front-row case needs its own guard.
 - **`activeLineupId` can go stale.** It's only ever updated by
   `startNextSet()`/`endMatch()` on the Live screen — deleting a lineup on
   the Lineup screen didn't used to check whether it was the active one, so
