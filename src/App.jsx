@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.17c";
+const APP_VERSION = "2026.09.18a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2647,13 +2647,31 @@ function LiveScreen({
   const [markInjured, setMarkInjured] = useState(false);
   const [subSuggestions, setSubSuggestions] = useState([]);
   const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, pairings, injuredPlayerIds, label} — undo for rotation/subs
+  // Simple mode: tap any roster number, tap a stat, done — no rotation, no
+  // subs, no court. Running the full Live screen solo during a match turned
+  // out to be too much to manage, so this is the stripped-down path for
+  // when you just need the stats recorded. A per-device display preference
+  // (like the theme), not team data — two people could be on the same team
+  // code with one in each mode.
+  const [simpleMode, setSimpleMode] = usePersisted("vb-live-simple", false);
+  const [simplePlayerId, setSimplePlayerId] = useState(null);
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineup.setNumber || 1;
   const slots = activeLineup.slots;
   const pairings = activeLineup.pairings || [];
   const playerFor = (id) => roster.find((p) => p.id === id);
-  const currentPlayerId = slots[selectedSlot];
+  // The one thing the two modes disagree on: who a stat gets recorded
+  // against. Everything downstream (the stat buttons, the "Recording for"
+  // banner, the undo tray) reads this and doesn't care which mode set it.
+  const currentPlayerId = simpleMode ? simplePlayerId : slots[selectedSlot];
   const currentPlayer = currentPlayerId ? playerFor(currentPlayerId) : null;
+  const simpleRoster = useMemo(() => {
+    const numOf = (p) => {
+      const n = Number(p.num);
+      return Number.isFinite(n) ? n : Infinity;
+    };
+    return [...roster].sort((a, b) => numOf(a) - numOf(b));
+  }, [roster]);
 
   const recordStat = (statKey) => {
     if (!currentPlayerId) return;
@@ -2662,7 +2680,11 @@ function LiveScreen({
       {
         id: Date.now() + Math.random(),
         playerId: currentPlayerId,
-        slot: selectedSlot,
+        // No court position in simple mode — the player may not even be on
+        // court. Nothing in the app reads this field back (it's written for
+        // possible future use only), so leaving it null is safe: box score,
+        // season stats and Player Eval all key off playerId/matchId/setNumber.
+        slot: simpleMode ? null : selectedSlot,
         stat: statKey,
         matchId: activeMatchId ?? null,
         lineupId: activeLineup.id,
@@ -2852,6 +2874,43 @@ function LiveScreen({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+      {/* Simple / Full mode switch. Deliberately at the very top and always
+          visible so you can flip to Full mid-match for a substitution and
+          straight back, rather than committing to one mode for the game. */}
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: "8px 20px 0",
+          flexShrink: 0,
+        }}
+      >
+        {[
+          { key: true, label: "Simple" },
+          { key: false, label: "Full" },
+        ].map((m) => {
+          const on = simpleMode === m.key;
+          return (
+            <button
+              key={m.label}
+              onClick={() => setSimpleMode(m.key)}
+              style={{
+                flex: 1,
+                padding: "7px 0",
+                borderRadius: 8,
+                border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
+                background: on ? "rgba(255,107,53,0.15)" : "none",
+                color: on ? COLORS.orange : COLORS.chalkDim,
+                fontWeight: 700,
+                fontSize: 12,
+              }}
+            >
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Score bar */}
       <div
         style={{
@@ -2886,6 +2945,12 @@ function LiveScreen({
         />
       </div>
 
+      {/* Everything from here down to the rotation strip is the full
+          match-management surface — sub counters, rotation advance, sub
+          suggestions, the court. Simple mode hides all of it; the score
+          bar above and the stat buttons / undo tray below are shared. */}
+      {!simpleMode && (
+        <>
       {/* Sub counter */}
       <div
         style={{
@@ -3195,6 +3260,67 @@ function LiveScreen({
           </div>
         );
       })()}
+
+        </>
+      )}
+
+      {/* Simple mode: the whole roster as tappable numbers — including
+          players who aren't on court, which is the point. Tap a number,
+          then tap a stat. */}
+      {simpleMode && (
+        <div
+          style={{
+            padding: "10px 20px 4px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+            gap: 8,
+            flexShrink: 0,
+            maxHeight: "38vh",
+            overflowY: "auto",
+          }}
+        >
+          {simpleRoster.length === 0 && (
+            <div style={{ fontSize: 12, color: COLORS.chalkDim }}>
+              No players on the roster yet.
+            </div>
+          )}
+          {simpleRoster.map((p) => {
+            const on = simplePlayerId === p.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => setSimplePlayerId(on ? null : p.id)}
+                style={{
+                  padding: "10px 4px 8px",
+                  borderRadius: 10,
+                  border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
+                  background: on ? "rgba(255,107,53,0.18)" : COLORS.bgRaised,
+                  color: COLORS.chalk,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 2,
+                  lineHeight: 1.1,
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "'Oswald', sans-serif",
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: on ? COLORS.orange : COLORS.chalk,
+                  }}
+                >
+                  {p.num}
+                </span>
+                <span style={{ fontSize: 9, color: COLORS.chalkDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                  {displayName(p)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Selected player banner */}
       <div

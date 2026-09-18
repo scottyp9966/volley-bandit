@@ -129,6 +129,18 @@ non-obvious things that look like they could be "simplified" but are load-bearin
 - **`endMatch()` resets every lineup's rotation to 1** and returns to the
   Set-1 lineup — lineups are persistent templates reused match to match,
   not per-match data.
+- **The Live screen has a Simple/Full toggle** (`vb-live-simple`, a
+  per-device localStorage preference, not team data). Full is the original
+  match-management surface; Simple hides rotation, subs, sub counters and
+  the court, and shows the entire roster as tappable numbers — tap a
+  player, tap a stat. It exists because running the full screen solo
+  during a live match was too much to manage. Both modes share the score
+  bar, the "Recording for" banner, the stat buttons and the undo tray;
+  the only thing they disagree on is `currentPlayerId` (court slot vs.
+  the simple-mode selection). Stat entries carry a `slot` field that
+  **nothing in the app ever reads**, so Simple mode writes `slot: null`
+  with no downstream effect — box score, season stats and Player Eval all
+  key off `playerId`/`matchId`/`setNumber`.
 
 ## Things that broke for reasons outside the app's own code
 
