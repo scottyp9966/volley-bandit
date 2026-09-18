@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18d";
+const APP_VERSION = "2026.09.18e";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2812,26 +2812,54 @@ function LiveScreen({
   // correctly without needing the pairing rebuilt by hand. Subbing a player
   // back in this same way automatically clears their injured tag, since
   // that's literally the "they've recovered" action.
+  //
+  // Liberos are a special case in three ways, because a coach running a match
+  // without any pairings configured has this sheet as their ONLY route to
+  // getting the libero on court:
+  //   1. They're only offered for back-row slots (see the bench filter in the
+  //      sheet) — a libero in the front row is illegal.
+  //   2. The swap counts as a libero replacement, not a substitution, which is
+  //      what it actually is by rule.
+  //   3. Bringing a libero on this way records the pairing it implies, so the
+  //      rotation logic will prompt to swap them back out before they reach
+  //      the front row. Taking a libero off does NOT rewrite pairings the way
+  //      a regular sub does — mapping the libero's id onto a regular player
+  //      would leave a pairing flagged isLibero with nobody's libero in it.
   const confirmFreeSubstitution = () => {
     if (!subSheet || !subReplacementId) return;
     const outgoingId = subSheet.playerId;
     const incomingId = subReplacementId;
+    const liberoIds = (activeLineup.liberos || []).filter(Boolean);
+    const incomingIsLibero = liberoIds.includes(incomingId);
+    const outgoingIsLibero = liberoIds.includes(outgoingId);
     pushHistory(`Sub: #${playerFor(outgoingId)?.num} out, #${playerFor(incomingId)?.num} in`);
     setActiveSlots((cur) => ({ ...cur, [subSheet.slot]: incomingId }));
     setLineups((prev) =>
-      prev.map((l) =>
-        l.id === activeLineup.id
-          ? {
-              ...l,
-              pairings: (l.pairings || []).map((pr) => ({
-                ...pr,
-                frontId: pr.frontId === outgoingId ? incomingId : pr.frontId,
-                backId: pr.backId === outgoingId ? incomingId : pr.backId,
-              })),
-            }
-          : l
-      )
+      prev.map((l) => {
+        if (l.id !== activeLineup.id) return l;
+        const existing = l.pairings || [];
+        if (outgoingIsLibero) return l; // see note 3 above — leave the libero's pairings intact
+        if (incomingIsLibero) {
+          const already = existing.some(
+            (pr) => pr.backId === incomingId && pr.frontId === outgoingId
+          );
+          if (already) return l;
+          return {
+            ...l,
+            pairings: [...existing, { frontId: outgoingId, backId: incomingId, isLibero: true }],
+          };
+        }
+        return {
+          ...l,
+          pairings: existing.map((pr) => ({
+            ...pr,
+            frontId: pr.frontId === outgoingId ? incomingId : pr.frontId,
+            backId: pr.backId === outgoingId ? incomingId : pr.backId,
+          })),
+        };
+      })
     );
+    if (incomingIsLibero || outgoingIsLibero) setLiberoSubCount((c) => c + 1);
     setInjuredPlayerIds((prev) => {
       let next = prev.filter((id) => id !== incomingId); // coming back in clears their injured tag
       if (markInjured && !next.includes(outgoingId)) next = [...next, outgoingId];
@@ -2857,11 +2885,17 @@ function LiveScreen({
     setActiveRotation(((activeLineup.currentRotation || 1) % 6) + 1);
 
     // Check pairings against the new rotation: anyone in the wrong row for their designated role?
+    // A pairing can only ever suggest bringing in someone who is actually on
+    // the bench. Without this check, a libero with more than one pairing gets
+    // suggested "in" for a second player while already standing on court —
+    // easy to hit now that a libero can be put on court from the free-sub
+    // sheet as well as from a pairing.
+    const onCourtAfterRotation = new Set(Object.values(rotated).filter(Boolean));
     const suggestions = [];
     pairings.forEach((pr) => {
       const frontSlot = Object.keys(rotated).find((s) => rotated[s] === pr.frontId);
       const backSlot = Object.keys(rotated).find((s) => rotated[s] === pr.backId);
-      if (frontSlot && BACK_ROW_SLOTS.includes(frontSlot)) {
+      if (frontSlot && BACK_ROW_SLOTS.includes(frontSlot) && !onCourtAfterRotation.has(pr.backId)) {
         suggestions.push({
           id: Date.now() + Math.random(),
           slot: frontSlot,
@@ -2869,7 +2903,11 @@ function LiveScreen({
           inId: pr.backId,
           isLibero: pr.isLibero,
         });
-      } else if (backSlot && FRONT_ROW_SLOTS.includes(backSlot)) {
+      } else if (
+        backSlot &&
+        FRONT_ROW_SLOTS.includes(backSlot) &&
+        !onCourtAfterRotation.has(pr.frontId)
+      ) {
         suggestions.push({
           id: Date.now() + Math.random(),
           slot: backSlot,
@@ -3467,7 +3505,18 @@ function LiveScreen({
         const outgoing = playerFor(subSheet.playerId);
         const onCourtIds = new Set(Object.values(slots).filter(Boolean));
         const liberoIds = (activeLineup.liberos || []).filter(Boolean);
-        const bench = roster.filter((p) => !onCourtIds.has(p.id) && !liberoIds.includes(p.id));
+        // Liberos are offered here only for a back-row slot. Front row would
+        // be an illegal placement, and this sheet is the only way onto the
+        // court for a coach who hasn't set up pairings — so filtering them
+        // out everywhere (which it used to do) meant the libero could never
+        // be subbed in at all.
+        const liberoAllowed = BACK_ROW_SLOTS.includes(subSheet.slot);
+        const bench = roster.filter(
+          (p) => !onCourtIds.has(p.id) && (liberoAllowed || !liberoIds.includes(p.id))
+        );
+        const outgoingIsLibero = liberoIds.includes(subSheet.playerId);
+        const incomingIsLibero = liberoIds.includes(subReplacementId);
+        const isLiberoSwap = outgoingIsLibero || incomingIsLibero;
         return (
           <div
             onClick={() => setSubSheet(null)}
@@ -3495,7 +3544,10 @@ function LiveScreen({
                 Substitute
               </div>
               <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 14 }}>
-                Out: #{outgoing?.num} {displayName(outgoing)} · doesn't count against your sub limit
+                Out: #{outgoing?.num} {displayName(outgoing)} ·{" "}
+                {isLiberoSwap
+                  ? "counts as a libero swap, not a substitution"
+                  : "doesn't count against your sub limit"}
               </div>
               <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
                 Bringing In
@@ -3523,6 +3575,11 @@ function LiveScreen({
                     <span>
                       #{p.num} {displayName(p)} {p.position ? `(${p.position})` : ""}
                     </span>
+                    {liberoIds.includes(p.id) && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: COLORS.orange, border: `1px solid ${COLORS.orange}`, borderRadius: 4, padding: "1px 5px", marginLeft: "auto", marginRight: 6 }}>
+                        LIBERO
+                      </span>
+                    )}
                     {injuredPlayerIds.includes(p.id) && (
                       <span style={{ fontSize: 9, fontWeight: 700, color: COLORS.red, border: `1px solid ${COLORS.red}`, borderRadius: 4, padding: "1px 5px" }}>
                         OUT

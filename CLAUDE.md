@@ -134,11 +134,32 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   `confirmFreeSubstitution` both use that form. `advanceRotation` still
   passes a plain object, which is fine — it's one wholesale write per
   swipe gesture and can't double-fire in a tick.
-- **The free-substitution sheet deliberately excludes designated liberos**
-  from the bench list, so a libero can never be manually placed into a
-  slot (front row especially, which would be illegal). Liberos only ever
-  come on via pairing-driven swaps. If that ever needs to change, the
-  front-row case needs its own guard.
+- **The free-substitution sheet offers a libero for back-row slots only.**
+  It used to exclude designated liberos from the bench list entirely, on
+  the theory that liberos should only ever come on via pairing-driven
+  swaps. That was wrong in practice: a coach who hasn't set up pairings
+  runs the whole match off this sheet, and it meant the libero could never
+  be put on court at all. Now `bench` keeps liberos when
+  `BACK_ROW_SLOTS.includes(subSheet.slot)` and still drops them for P2/P3/P4,
+  where a libero would be illegal. Three things follow in
+  `confirmFreeSubstitution`:
+  - The swap increments `liberoSubCount`, not `subCount` — by rule it's a
+    libero replacement, not a substitution. The sheet's caption switches to
+    say so as soon as a libero is the selected incoming player.
+  - Bringing a libero on **records the pairing it implies**
+    (`{frontId: outgoing, backId: libero, isLibero: true}`, appended only if
+    that exact pair isn't already there). Without it, nothing would prompt
+    to take the libero back off before they rotate to the front row — the
+    manual sub teaches the app the pairing it wasn't given.
+  - Taking a libero **off** this way deliberately skips the pairing rewrite
+    that a regular free sub does. Mapping the libero's id onto a regular
+    player would leave a pairing flagged `isLibero` with no libero in it.
+- **`advanceRotation` never suggests bringing in a player who is already on
+  court.** A libero with more than one pairing otherwise gets suggested "in"
+  for a second player while standing on court — easy to hit now that a
+  libero can reach the court from the free-sub sheet too. The guard is
+  `onCourtAfterRotation` (computed from `rotated`) on both suggestion
+  branches.
 - **`activeLineupId` can go stale.** It's only ever updated by
   `startNextSet()`/`endMatch()` on the Live screen — deleting a lineup on
   the Lineup screen didn't used to check whether it was the active one, so
