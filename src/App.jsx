@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18g";
+const APP_VERSION = "2026.09.18h";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2649,6 +2649,10 @@ function LiveScreen({
   const [subReplacementId, setSubReplacementId] = useState("");
   const [markInjured, setMarkInjured] = useState(false);
   const [savePairing, setSavePairing] = useState(false);
+  // Why a "start next set" attempt didn't go through, shown in-app. Never an
+  // alert() — see startNextSet's comment and CLAUDE.md on why a native
+  // dialog inside an installed iOS PWA can look exactly like a frozen app.
+  const [setBlockedMsg, setSetBlockedMsg] = useState("");
   const [subSuggestions, setSubSuggestions] = useState([]);
   const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, pairings, injuredPlayerIds, label} — undo for rotation/subs
   // Simple mode: tap any roster number, tap a stat, done — no rotation, no
@@ -2996,6 +3000,13 @@ function LiveScreen({
     setSubSuggestions((prev) => prev.filter((s) => s.id !== id));
   };
 
+  // Simple mode manages no lineups, so it's allowed to create the next
+  // set's lineup on the spot; Full mode still blocks and says why.
+  const advanceSet = () => {
+    setSetBlockedMsg(onStartNextSet({ autoCreate: simpleMode }) || "");
+    setSimplePlayerId(null);
+  };
+
   const recent = [...log].slice(-5).reverse();
 
   return (
@@ -3148,16 +3159,11 @@ function LiveScreen({
           label={`Swipe to Start Set ${(activeLineup.setNumber || 1) + 1}`}
           color={COLORS.red}
           height={30}
-          onConfirm={() => {
-            const nextSetNumber = (activeLineup.setNumber || 1) + 1;
-            const nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
-            if (!nextLineup) {
-              alert(`The lineup for Set ${nextSetNumber} needs to be created — create or duplicate a lineup on the Lineup screen first.`);
-              return;
-            }
-            onStartNextSet();
-          }}
+          onConfirm={advanceSet}
         />
+        {setBlockedMsg && (
+          <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 6 }}>{setBlockedMsg}</div>
+        )}
       </div>
 
       {/* Suggested substitutions from pairings, tied to the new rotation */}
@@ -3391,6 +3397,25 @@ function LiveScreen({
         </>
       )}
 
+      {/* Simple mode's only match-management control: advance the set, which
+          clears the score and starts logging stats under the next set
+          number. A swipe rather than a tap for the same reason Full mode
+          uses one — this wipes the scoreboard, and the stat grid it sits
+          above is tapped constantly. */}
+      {simpleMode && (
+        <div style={{ padding: "8px 20px 0", flexShrink: 0 }}>
+          <SwipeConfirm
+            label={`Swipe to Start Set ${setNumber + 1}`}
+            color={COLORS.red}
+            height={26}
+            onConfirm={advanceSet}
+          />
+          {setBlockedMsg && (
+            <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 6 }}>{setBlockedMsg}</div>
+          )}
+        </div>
+      )}
+
       {/* Simple mode: the whole roster as tappable numbers — including
           players who aren't on court, which is the point. Tap a number,
           then tap a stat. */}
@@ -3503,33 +3528,28 @@ function LiveScreen({
         ))}
       </div>
 
-      {/* Undo tray - always visible, last 5 entries individually reversible */}
+      {/* Undo tray - always visible, last 5 entries individually reversible.
+          Deliberately one row: the "Recent entries — tap to undo" caption
+          used to sit on its own line above the chips, which cost ~26px of
+          vertical space on a phone for a label the chips already explain.
+          The undo icon leads the row instead. */}
       <div
         style={{
           borderTop: `1px solid ${COLORS.line}`,
           background: COLORS.bgRaised,
-          padding: "10px 16px 14px",
+          padding: "6px 16px 8px",
           flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
         }}
       >
-        <div
-          style={{
-            fontSize: 10,
-            color: COLORS.chalkDim,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            textTransform: "uppercase",
-            marginBottom: 6,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <Undo2 size={12} /> Recent entries — tap to undo
-        </div>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+        <Undo2 size={13} color={COLORS.chalkDim} style={{ flexShrink: 0 }} />
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", flex: 1 }}>
           {recent.length === 0 && (
-            <span style={{ fontSize: 11, color: COLORS.chalkDim }}>No entries yet</span>
+            <span style={{ fontSize: 11, color: COLORS.chalkDim, whiteSpace: "nowrap" }}>
+              Recent entries — tap to undo
+            </span>
           )}
           {recent.map((e) => {
             const p = playerFor(e.playerId);
@@ -7687,24 +7707,43 @@ function AppInner() {
     });
   };
 
-  // Advances to the next set: requires that set's lineup already exists
-  // (created or duplicated on the Lineup screen) — blocks with a clear
-  // message rather than silently guessing which lineup to use. Resets the
-  // scoreboard and switches to that lineup, freshly at Rotation 1.
-  const startNextSet = () => {
+  // Advances to the next set: resets the scoreboard, the sub counters and
+  // the per-set sub record, and switches to that set's lineup freshly at
+  // Rotation 1. Returns null on success, or a message to show if it can't
+  // proceed — deliberately NOT an alert(), which is the documented
+  // iOS-standalone-PWA hazard described in CLAUDE.md (the dialog can fail
+  // to render while still blocking the JS thread, i.e. "the app froze").
+  //
+  // In Full mode a missing lineup for the next set is a block: that mode is
+  // built around per-set lineups and guessing one would be worse than
+  // saying so. Simple mode doesn't manage lineups at all, so there it
+  // duplicates the current one rather than dead-ending a coach who only
+  // wanted the score cleared — same players, rotation 1, renamed for the set.
+  const startNextSet = ({ autoCreate = false } = {}) => {
     const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
     const nextSetNumber = (activeLineup.setNumber || 1) + 1;
-    const nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
+    let nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
+    if (!nextLineup && !autoCreate) {
+      return `The lineup for Set ${nextSetNumber} needs to be created — create or duplicate a lineup on the Lineup screen first.`;
+    }
     if (!nextLineup) {
-      alert(`The lineup for Set ${nextSetNumber} needs to be created — create or duplicate a lineup on the Lineup screen first.`);
-      return;
+      nextLineup = {
+        ...activeLineup,
+        id: Date.now(),
+        name: `Set ${nextSetNumber}`,
+        setNumber: nextSetNumber,
+        currentRotation: 1,
+      };
+      setLineups((prev) => [...prev, nextLineup]);
+    } else {
+      setLineups((prev) => prev.map((l) => (l.id === nextLineup.id ? { ...l, currentRotation: 1 } : l)));
     }
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
     setSubEntries([]);
-    setLineups((prev) => prev.map((l) => (l.id === nextLineup.id ? { ...l, currentRotation: 1 } : l)));
     setActiveLineupId(nextLineup.id);
+    return null;
   };
 
   // Ends the active match: resets the live scoreboard, returns to Set 1's
@@ -7724,10 +7763,24 @@ function AppInner() {
     setActiveMatchId(null);
   };
 
+  // The Live tab's subtitle shipped as a hardcoded placeholder
+  // ("Riverside High vs. Lincoln") — the only tab whose subtitle was never
+  // wired to real data. It's the team's own name against whichever match is
+  // currently active, and says plainly when no match is active, since that's
+  // also what decides where stat entries get logged.
+  // Just "vs. Opponent", matching every other tab — the team's own name is
+  // on the logo beside it, and spelling it out here wrapped the header onto
+  // a second line on a phone, which is exactly the vertical space this
+  // screen has least of.
+  const liveMatch = activeMatchId != null ? matches.find((m) => m.id === activeMatchId) : null;
+  const liveSubtitle = liveMatch
+    ? `vs. ${liveMatch.opponent}`
+    : "No active match — pick one on Schedule";
+
   const titles = {
     roster: { title: "Roster", sub: "Your full team" },
     lineup: { title: "Lineup", sub: "Tap a slot to assign a player" },
-    live: { title: "Live Stats", sub: "Riverside High vs. Lincoln" },
+    live: { title: "Live Stats", sub: liveSubtitle },
     box: { title: "Stats", sub: "Box score, insights, trends & season" },
     schedule: { title: "Schedule", sub: "Upcoming and past matches" },
   };

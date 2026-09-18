@@ -190,6 +190,17 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   re-checks that before writing. Which side is which comes from the slot:
   subbing into a back-row slot makes the incoming player the `backId` half,
   a front-row slot makes them `frontId`.
+- **Simple mode can advance the set, and creates the next lineup itself.**
+  `startNextSet({ autoCreate })` returns `null` on success or a message
+  string when it can't proceed — it no longer calls `alert()`, which was
+  the exact iOS-standalone-PWA hazard documented further down this file
+  (there were two such calls, one here and one at the Full-mode swipe's
+  call site). Full mode still blocks on a missing lineup for the next set
+  and shows that message in-app, since that mode is built around per-set
+  lineups. Simple mode passes `autoCreate: true` and duplicates the current
+  lineup instead, because Simple mode manages no lineups at all and a coach
+  who only wanted the score cleared would otherwise dead-end. Both modes
+  use a `SwipeConfirm`, not a tap — it wipes the scoreboard.
 - **`advanceRotation` never suggests bringing in a player who is already on
   court.** A libero with more than one pairing otherwise gets suggested "in"
   for a second player while standing on court — easy to hit now that a
