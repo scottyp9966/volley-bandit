@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18h";
+const APP_VERSION = "2026.09.18i";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -3422,10 +3422,14 @@ function LiveScreen({
       {simpleMode && (
         <div
           style={{
-            padding: "10px 20px 4px",
+            // Sized so a 390px-wide phone fits 5 numbers across rather than
+            // 4 — a 10-player roster lands in 2 rows instead of 3, which is
+            // the single biggest vertical saving available on this screen.
+            // The buttons stay at/above a 44px touch target.
+            padding: "8px 20px 4px",
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
-            gap: 8,
+            gridTemplateColumns: "repeat(auto-fill, minmax(62px, 1fr))",
+            gap: 6,
             flexShrink: 0,
             maxHeight: "38vh",
             overflowY: "auto",
@@ -3443,8 +3447,8 @@ function LiveScreen({
                 key={p.id}
                 onClick={() => setSimplePlayerId(on ? null : p.id)}
                 style={{
-                  padding: "10px 4px 8px",
-                  borderRadius: 10,
+                  padding: "6px 3px 5px",
+                  borderRadius: 9,
                   border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
                   background: on ? "rgba(255,107,53,0.18)" : COLORS.bgRaised,
                   color: COLORS.chalk,
@@ -3458,7 +3462,7 @@ function LiveScreen({
                 <span
                   style={{
                     fontFamily: "'Oswald', sans-serif",
-                    fontSize: 22,
+                    fontSize: 19,
                     fontWeight: 700,
                     color: on ? COLORS.orange : COLORS.chalk,
                   }}
