@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18f";
+const APP_VERSION = "2026.09.18g";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2633,6 +2633,8 @@ function LiveScreen({
   setSubCount,
   liberoSubCount,
   setLiberoSubCount,
+  subEntries,
+  setSubEntries,
   injuredPlayerIds,
   setInjuredPlayerIds,
   activeMatchId,
@@ -2646,6 +2648,7 @@ function LiveScreen({
   const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
   const [subReplacementId, setSubReplacementId] = useState("");
   const [markInjured, setMarkInjured] = useState(false);
+  const [savePairing, setSavePairing] = useState(false);
   const [subSuggestions, setSubSuggestions] = useState([]);
   const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, pairings, injuredPlayerIds, label} — undo for rotation/subs
   // Simple mode: tap any roster number, tap a stat, done — no rotation, no
@@ -2767,6 +2770,24 @@ function LiveScreen({
 
   // Snapshot current match state before a rotation/sub/substitution action,
   // so it can be stepped back afterward — not just a single "undo last," but
+  // The player someone is tied to for the rest of the set, either direction:
+  // whoever they went in for, or whoever went in for them. NFHS re-entry has
+  // to be back into the same spot in the serving order, so both halves of a
+  // swap are bound to each other from the moment it happens — #37 going out
+  // for #20 means #37 can only come back in for #20, and vice versa. The
+  // FIRST entry is the binding one; later ones are the same two players
+  // trading places again. Liberos are never recorded here (a libero
+  // replacement isn't a substitution and carries no such rule).
+  const boundCounterpart = (playerId) => {
+    const first = subEntries.find(
+      (e) => e.playerId === playerId || e.forPlayerId === playerId
+    );
+    if (!first) return null;
+    return first.playerId === playerId ? first.forPlayerId : first.playerId;
+  };
+  const recordSubEntry = (playerId, forPlayerId, slot) =>
+    setSubEntries((prev) => [...(prev || []), { playerId, forPlayerId, slot, at: Date.now() }]);
+
   // a real stack. Includes pairings and injured status too, since a free
   // substitution (unlike a normal rotation or sub) can change both of those.
   const pushHistory = (label) => {
@@ -2777,6 +2798,7 @@ function LiveScreen({
           slots,
           subCount,
           liberoSubCount,
+          subEntries,
           currentRotation: activeLineup.currentRotation || 1,
           pairings: activeLineup.pairings || [],
           injuredPlayerIds,
@@ -2793,6 +2815,7 @@ function LiveScreen({
       setActiveSlots(last.slots);
       setSubCount(last.subCount);
       setLiberoSubCount(last.liberoSubCount);
+      setSubEntries(last.subEntries || []);
       setActiveRotation(last.currentRotation || 1);
       if (last.pairings) {
         setLineups((prev2) => prev2.map((l) => (l.id === activeLineup.id ? { ...l, pairings: last.pairings } : l)));
@@ -2854,20 +2877,45 @@ function LiveScreen({
             pairings: [...existing, { frontId: outgoingId, backId: incomingId, isLibero: true }],
           };
         }
+        const rewritten = existing.map((pr) => ({
+          ...pr,
+          frontId: pr.frontId === outgoingId ? incomingId : pr.frontId,
+          backId: pr.backId === outgoingId ? incomingId : pr.backId,
+        }));
+        const alreadyPaired = existing.some(
+          (pr) =>
+            pr.frontId === outgoingId ||
+            pr.backId === outgoingId ||
+            pr.frontId === incomingId ||
+            pr.backId === incomingId
+        );
+        if (!savePairing || alreadyPaired) return { ...l, pairings: rewritten };
+        // "Make this a pair" — turn the sub just made into a standing pairing
+        // so later rotations suggest it on their own. Which side is which
+        // comes from the slot: subbing into a back-row slot means the player
+        // coming on is the back-row half of the pair, and vice versa.
+        const incomingIsBack = BACK_ROW_SLOTS.includes(subSheet.slot);
         return {
           ...l,
-          pairings: existing.map((pr) => ({
-            ...pr,
-            frontId: pr.frontId === outgoingId ? incomingId : pr.frontId,
-            backId: pr.backId === outgoingId ? incomingId : pr.backId,
-          })),
+          pairings: [
+            ...rewritten,
+            {
+              id: Date.now(),
+              frontId: incomingIsBack ? outgoingId : incomingId,
+              backId: incomingIsBack ? incomingId : outgoingId,
+              isLibero: false,
+            },
+          ],
         };
       })
     );
     if (incomingIsLibero || outgoingIsLibero) {
       setLiberoSubCount((c) => c + 1);
-    } else if (!markInjured) {
-      setSubCount((c) => c + 1);
+    } else {
+      if (!markInjured) setSubCount((c) => c + 1);
+      // An injury sub isn't charged against the limit, but it's still an
+      // entry — the returning player is still bound to this spot in the order.
+      recordSubEntry(incomingId, outgoingId, subSheet.slot);
     }
     setInjuredPlayerIds((prev) => {
       let next = prev.filter((id) => id !== incomingId); // coming back in clears their injured tag
@@ -2877,6 +2925,7 @@ function LiveScreen({
     setSubSheet(null);
     setSubReplacementId("");
     setMarkInjured(false);
+    setSavePairing(false);
   };
 
   // Rotate all 6 court positions one clockwise step: P1<-P2, P2<-P3, P3<-P4, P4<-P5, P5<-P6, P6<-P1
@@ -2939,6 +2988,7 @@ function LiveScreen({
       setLiberoSubCount((c) => c + 1);
     } else {
       setSubCount((c) => c + 1);
+      recordSubEntry(sug.inId, sug.outId, sug.slot);
     }
   };
 
@@ -3278,6 +3328,7 @@ function LiveScreen({
                     setSubSheet({ slot, playerId: pid });
                     setSubReplacementId("");
                     setMarkInjured(false);
+                    setSavePairing(false);
                   }}
                   title="Substitute this player"
                   style={{
@@ -3526,6 +3577,21 @@ function LiveScreen({
         const outgoingIsLibero = liberoIds.includes(subSheet.playerId);
         const incomingIsLibero = liberoIds.includes(subReplacementId);
         const isLiberoSwap = outgoingIsLibero || incomingIsLibero;
+        // Who the player being taken out is already tied to for this set.
+        const outgoingCounterpart = outgoingIsLibero
+          ? null
+          : playerFor(boundCounterpart(subSheet.playerId));
+        // "Make this a pair" is only offered when it would actually be a new,
+        // valid pairing: a real (non-libero) sub where neither player is
+        // already tied to a pairing for this lineup. A libero sub records its
+        // own pairing automatically and doesn't need the offer.
+        const inPairing = (id) =>
+          pairings.some((pr) => pr.frontId === id || pr.backId === id);
+        const canPair =
+          !!subReplacementId &&
+          !isLiberoSwap &&
+          !inPairing(subSheet.playerId) &&
+          !inPairing(subReplacementId);
         return (
           <div
             onClick={() => setSubSheet(null)}
@@ -3559,6 +3625,11 @@ function LiveScreen({
                   : markInjured
                   ? "injury sub — doesn't count against your sub limit"
                   : "counts as one of your " + SUB_LIMIT + " subs"}
+                {outgoingCounterpart && (
+                  <div style={{ marginTop: 3 }}>
+                    Tied to #{outgoingCounterpart.num} {displayName(outgoingCounterpart)} this set
+                  </div>
+                )}
               </div>
               {!isLiberoSwap && !markInjured && subCount >= SUB_LIMIT && (
                 <div style={{ fontSize: 12, color: COLORS.red, fontWeight: 700, marginTop: -8, marginBottom: 14 }}>
@@ -3572,10 +3643,20 @@ function LiveScreen({
                 {bench.length === 0 && (
                   <div style={{ fontSize: 12, color: COLORS.chalkDim }}>No bench players available.</div>
                 )}
-                {bench.map((p) => (
+                {bench.map((p) => {
+                  // What this player is already committed to for the set. A
+                  // returning player has to go back in for the same person —
+                  // shown as a reminder, never as a block.
+                  const counterpartId = liberoIds.includes(p.id) ? null : boundCounterpart(p.id);
+                  const counterpart = playerFor(counterpartId);
+                  const sameSpot = counterpartId && counterpartId === subSheet.playerId;
+                  return (
                   <button
                     key={p.id}
-                    onClick={() => setSubReplacementId(p.id)}
+                    onClick={() => {
+                      setSubReplacementId(p.id);
+                      setSavePairing(false);
+                    }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -3588,8 +3669,24 @@ function LiveScreen({
                       fontSize: 13,
                     }}
                   >
-                    <span>
-                      #{p.num} {displayName(p)} {p.position ? `(${p.position})` : ""}
+                    <span style={{ textAlign: "left" }}>
+                      <span>
+                        #{p.num} {displayName(p)} {p.position ? `(${p.position})` : ""}
+                      </span>
+                      {counterpart && (
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: 10,
+                            marginTop: 2,
+                            color: sameSpot ? COLORS.chalkDim : COLORS.gold,
+                          }}
+                        >
+                          {sameSpot
+                            ? `back in for #${counterpart.num}`
+                            : `tied to #${counterpart.num} this set — different spot in the order`}
+                        </span>
+                      )}
                     </span>
                     {liberoIds.includes(p.id) && (
                       <span style={{ fontSize: 9, fontWeight: 700, color: COLORS.orange, border: `1px solid ${COLORS.orange}`, borderRadius: 4, padding: "1px 5px", marginLeft: "auto", marginRight: 6 }}>
@@ -3602,7 +3699,8 @@ function LiveScreen({
                       </span>
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <button
                 onClick={() => setMarkInjured((v) => !v)}
@@ -3637,6 +3735,43 @@ function LiveScreen({
                 </span>
                 Mark #{outgoing?.num} {displayName(outgoing)} as injured (doesn't count against the sub limit, and doesn't block them from returning)
               </button>
+              {canPair && (
+                <button
+                  onClick={() => setSavePairing((v) => !v)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    background: "none",
+                    border: "none",
+                    padding: "6px 0",
+                    marginTop: -6,
+                    marginBottom: 14,
+                    color: COLORS.chalkDim,
+                    fontSize: 12,
+                    textAlign: "left",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 4,
+                      border: `1.5px solid ${savePairing ? COLORS.green : COLORS.line}`,
+                      background: savePairing ? COLORS.green : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {savePairing && <Check size={11} color={COLORS.chalk} />}
+                  </span>
+                  Make this a pair — the app will suggest this swap on its own at
+                  the right rotation from now on
+                </button>
+              )}
               <button
                 onClick={confirmFreeSubstitution}
                 disabled={!subReplacementId}
@@ -7448,6 +7583,7 @@ function AppInner() {
     score: { us: 0, opp: 0 },
     subCount: 0,
     liberoSubCount: 0,
+    subEntries: [], // per-set log of who went in for whom — see LiveScreen's partnerFor
     injuredPlayerIds: [],
     printStatKeys: STAT_BUTTONS.map((s) => s.key), // which stats show on printed box scores — defaults to all
     trackStatKeys: STAT_BUTTONS.map((s) => s.key), // which stat buttons show on the Live screen — defaults to all
@@ -7493,6 +7629,12 @@ function AppInner() {
   const setSubCount = fieldSetter(setMainDoc, "subCount");
   const liberoSubCount = mainDoc.liberoSubCount;
   const setLiberoSubCount = fieldSetter(setMainDoc, "liberoSubCount");
+  // Per-set record of each substitution: { playerId, forPlayerId, slot }. Used
+  // only to remind the coach who a returning player originally went in for —
+  // NFHS re-entry has to be for the same spot in the serving order. Reset with
+  // subCount at every set boundary, since the rule is per set.
+  const subEntries = mainDoc.subEntries || [];
+  const setSubEntries = fieldSetter(setMainDoc, "subEntries");
   const injuredPlayerIds = mainDoc.injuredPlayerIds || [];
   const setInjuredPlayerIds = fieldSetter(setMainDoc, "injuredPlayerIds");
   const printStatKeys = mainDoc.printStatKeys || STAT_BUTTONS.map((s) => s.key);
@@ -7560,6 +7702,7 @@ function AppInner() {
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
+    setSubEntries([]);
     setLineups((prev) => prev.map((l) => (l.id === nextLineup.id ? { ...l, currentRotation: 1 } : l)));
     setActiveLineupId(nextLineup.id);
   };
@@ -7574,6 +7717,7 @@ function AppInner() {
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
     setLiberoSubCount(0);
+    setSubEntries([]);
     setInjuredPlayerIds([]);
     setLineups((prev) => prev.map((l) => ({ ...l, currentRotation: 1 })));
     setActiveLineupId(setOneLineup.id);
@@ -8245,6 +8389,8 @@ function AppInner() {
             setSubCount={setSubCount}
             liberoSubCount={liberoSubCount}
             setLiberoSubCount={setLiberoSubCount}
+            subEntries={subEntries}
+            setSubEntries={setSubEntries}
             injuredPlayerIds={injuredPlayerIds}
             setInjuredPlayerIds={setInjuredPlayerIds}
             activeMatchId={activeMatchId}

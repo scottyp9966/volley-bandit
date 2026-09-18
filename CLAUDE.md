@@ -166,6 +166,30 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   `subCount`. The sheet's caption names which of the three is about to
   happen, and going over the limit warns rather than blocks, matching how
   `overLimit` already behaves on the suggestion cards.
+- **`mainDoc.subEntries` is the per-set record of who went in for whom**
+  (`{ playerId, forPlayerId, slot, at }`, appended by both sub paths, reset
+  alongside `subCount` at every set boundary, and snapshotted by
+  `pushHistory` so Undo rolls it back). It exists for one reason: NFHS
+  re-entry has to be back into the same spot in the serving order, so once
+  #37 goes out for #20 those two are bound to each other for the set, in
+  **both** directions — hence `boundCounterpart(playerId)`, which matches a
+  player on either side of the first entry they appear in. The free-sub
+  sheet renders it in two places: a second line on each bench row (`back in
+  for #20` dim, or `tied to #20 this set — different spot in the order` in
+  gold) and a `Tied to #N` clause under the outgoing player. Both are
+  reminders only — nothing is disabled and nothing blocks, deliberately,
+  because this is read one-handed during a live match. Liberos are never
+  recorded here; a libero replacement isn't a substitution and carries no
+  re-entry rule.
+- **"Make this a pair"** is a checkbox in the free-sub sheet that turns the
+  substitution being made into a standing pairing on the lineup, so later
+  rotations suggest it on their own — the point being that a coach who
+  never set pairings up can build them from the bench as the match happens.
+  It's only offered when it would be a valid new pairing (a real sub, and
+  neither player already in one — `canPair`), and `confirmFreeSubstitution`
+  re-checks that before writing. Which side is which comes from the slot:
+  subbing into a back-row slot makes the incoming player the `backId` half,
+  a front-row slot makes them `frontId`.
 - **`advanceRotation` never suggests bringing in a player who is already on
   court.** A libero with more than one pairing otherwise gets suggested "in"
   for a second player while standing on court — easy to hit now that a
