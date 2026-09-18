@@ -154,6 +154,18 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   - Taking a libero **off** this way deliberately skips the pairing rewrite
     that a regular free sub does. Mapping the libero's id onto a regular
     player would leave a pairing flagged `isLibero` with no libero in it.
+- **A free substitution counts against `SUB_LIMIT`** unless "mark injured"
+  is checked or a libero is involved. It used to count against nothing at
+  all — the sheet said so outright — on the reasoning that pairing-driven
+  subs were the "real" ones. In practice a coach without pairings set up
+  runs the entire match off this sheet, so `Subs: 0/18` sat there all night
+  while real substitutions were being spent. The three cases, all in
+  `confirmFreeSubstitution`: libero involved → `liberoSubCount` only;
+  `markInjured` → neither counter (an injury sub isn't charged, which is
+  now what that checkbox is *for*, not just a visual tag); otherwise →
+  `subCount`. The sheet's caption names which of the three is about to
+  happen, and going over the limit warns rather than blocks, matching how
+  `overLimit` already behaves on the suggestion cards.
 - **`advanceRotation` never suggests bringing in a player who is already on
   court.** A libero with more than one pairing otherwise gets suggested "in"
   for a second player while standing on court — easy to hit now that a

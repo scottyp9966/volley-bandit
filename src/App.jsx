@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18e";
+const APP_VERSION = "2026.09.18f";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2806,7 +2806,12 @@ function LiveScreen({
   // Free substitution — any bench player in for any on-court player, for any
   // reason (injury, a short serve-specialist swap, anything else), unlike
   // the pairing-suggested subs which only fire when a specific rotation is
-  // reached. Doesn't count against the normal sub limit. The replacement
+  // reached. It DOES count against the sub limit, unless "mark injured" is
+  // checked (an injury sub isn't charged) or a libero is involved (that's a
+  // libero replacement, counted separately and not limited). This used to
+  // count against nothing at all, which meant a coach running the match off
+  // this sheet instead of pairings watched "Subs: 0/18" all night while
+  // actually burning real substitutions. The replacement
   // fully takes over the outgoing player's role in any pairing they were
   // part of (either side — starter or sub), so future rotations keep working
   // correctly without needing the pairing rebuilt by hand. Subbing a player
@@ -2859,7 +2864,11 @@ function LiveScreen({
         };
       })
     );
-    if (incomingIsLibero || outgoingIsLibero) setLiberoSubCount((c) => c + 1);
+    if (incomingIsLibero || outgoingIsLibero) {
+      setLiberoSubCount((c) => c + 1);
+    } else if (!markInjured) {
+      setSubCount((c) => c + 1);
+    }
     setInjuredPlayerIds((prev) => {
       let next = prev.filter((id) => id !== incomingId); // coming back in clears their injured tag
       if (markInjured && !next.includes(outgoingId)) next = [...next, outgoingId];
@@ -3547,8 +3556,15 @@ function LiveScreen({
                 Out: #{outgoing?.num} {displayName(outgoing)} ·{" "}
                 {isLiberoSwap
                   ? "counts as a libero swap, not a substitution"
-                  : "doesn't count against your sub limit"}
+                  : markInjured
+                  ? "injury sub — doesn't count against your sub limit"
+                  : "counts as one of your " + SUB_LIMIT + " subs"}
               </div>
+              {!isLiberoSwap && !markInjured && subCount >= SUB_LIMIT && (
+                <div style={{ fontSize: 12, color: COLORS.red, fontWeight: 700, marginTop: -8, marginBottom: 14 }}>
+                  Over sub limit
+                </div>
+              )}
               <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
                 Bringing In
               </div>
@@ -3619,7 +3635,7 @@ function LiveScreen({
                 >
                   {markInjured && <Check size={11} color={COLORS.chalk} />}
                 </span>
-                Mark #{outgoing?.num} {displayName(outgoing)} as injured (just a visual reminder — doesn't block them from returning)
+                Mark #{outgoing?.num} {displayName(outgoing)} as injured (doesn't count against the sub limit, and doesn't block them from returning)
               </button>
               <button
                 onClick={confirmFreeSubstitution}
