@@ -141,14 +141,20 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   **nothing in the app ever reads**, so Simple mode writes `slot: null`
   with no downstream effect — box score, season stats and Player Eval all
   key off `playerId`/`matchId`/`setNumber`.
-- **`printStatKeys` does double duty**, despite the name: the Settings
-  list ("Stats to Track & Print") picks both the columns on printed box
-  scores *and* which stat buttons appear on the Live screen, in both
-  modes. It's team data (in `mainDoc`), so it syncs across devices.
-  Unchecking a stat only hides its button — nothing already recorded is
-  deleted, and re-checking brings it back. An empty list deliberately
+- **Two separate stat lists**, both team data in `mainDoc`, edited through
+  one Settings section ("Stats") with a Track/Print toggle:
+  - `trackStatKeys` → which stat buttons appear on the Live screen (both
+    Simple and Full).
+  - `printStatKeys` → which columns appear on printed box scores.
+  They were briefly merged into one list, then split again on the
+  realization that what you record live and what you hand to parents are
+  different decisions (track block errors for yourself, leave them off the
+  sheet). The Print list flags any stat that's printed but not tracked
+  with "not tracked, will print empty", since that combination always
+  yields a blank column. Unchecking a stat only hides it — nothing
+  already recorded is deleted. An empty `trackStatKeys` deliberately
   falls back to showing all stats rather than leaving a Live screen with
-  nothing to tap; note `mainDoc.printStatKeys || [...]` does NOT cover
+  nothing to tap; note `mainDoc.trackStatKeys || [...]` does NOT cover
   that case, since `[]` is truthy — the fallback is in
   `visibleStatButtons` in `LiveScreen`.
 

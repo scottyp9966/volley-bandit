@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18b";
+const APP_VERSION = "2026.09.18c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2640,7 +2640,7 @@ function LiveScreen({
   setPointLog,
   onStartNextSet,
   setTab,
-  printStatKeys,
+  trackStatKeys,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
   const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
@@ -2666,16 +2666,16 @@ function LiveScreen({
   // banner, the undo tray) reads this and doesn't care which mode set it.
   const currentPlayerId = simpleMode ? simplePlayerId : slots[selectedSlot];
   const currentPlayer = currentPlayerId ? playerFor(currentPlayerId) : null;
-  // The Settings "Stats to Track & Print" list does double duty: it picks
-  // the columns on printed box scores AND which buttons appear here. An
-  // empty list falls back to all of them rather than leaving a Live screen
-  // with nothing to tap — unchecking everything shouldn't be able to
-  // strand you mid-match with no way to record anything.
+  // Which stat buttons to show, from Settings > Stats > Track. Kept
+  // separate from the print list: what you record live and what you put on
+  // a printed sheet are different decisions. An empty list falls back to
+  // all of them rather than leaving a Live screen with nothing to tap —
+  // unchecking everything shouldn't strand you mid-match unable to record.
   const visibleStatButtons = useMemo(() => {
-    const keys = printStatKeys || [];
+    const keys = trackStatKeys || [];
     if (keys.length === 0) return STAT_BUTTONS;
     return STAT_BUTTONS.filter((s) => keys.includes(s.key));
-  }, [printStatKeys]);
+  }, [trackStatKeys]);
 
   const simpleRoster = useMemo(() => {
     const numOf = (p) => {
@@ -7064,11 +7064,14 @@ function SettingsSheet({
   setIncludePairingsLineup,
   printStatKeys,
   setPrintStatKeys,
+  trackStatKeys,
+  setTrackStatKeys,
   teamCode,
   setTeamCode,
   setUnlockedWith,
   exportAllData,
 }) {
+  const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
   const checkboxRow = (checked, onToggle, label) => (
     <button
       onClick={onToggle}
@@ -7190,24 +7193,59 @@ function SettingsSheet({
         </div>
 
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Stats to Track &amp; Print
+          Stats
         </div>
         <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8, lineHeight: 1.45 }}>
-          Controls both the buttons you get on the Live screen and the columns on
-          printed box scores. Unchecking one hides its button — it doesn't delete
-          anything already recorded, and re-checking brings it back.
+          {statListMode === "track"
+            ? "Which stat buttons show on the Live screen. Unchecking one only hides its button — nothing already recorded is deleted, and re-checking brings it back."
+            : "Which columns show on printed box scores. Independent of what you track, so you can record something for yourself and leave it off the sheet."}
+        </div>
+        {/* Two separate lists, one at a time: what you record during a match
+            and what you put on a printed sheet are different decisions. */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          {[
+            { key: "track", label: "Track" },
+            { key: "print", label: "Print" },
+          ].map((m) => {
+            const on = statListMode === m.key;
+            return (
+              <button
+                key={m.key}
+                onClick={() => setStatListMode(m.key)}
+                style={{
+                  flex: 1,
+                  padding: "7px 0",
+                  borderRadius: 8,
+                  border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
+                  background: on ? "rgba(255,107,53,0.15)" : "none",
+                  color: on ? COLORS.orange : COLORS.chalkDim,
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
         </div>
         <div style={{ marginBottom: 18 }}>
           {STAT_BUTTONS.map((s) => {
-            const checked = (printStatKeys || []).includes(s.key);
+            const isTrack = statListMode === "track";
+            const activeKeys = isTrack ? trackStatKeys : printStatKeys;
+            const setActiveKeys = isTrack ? setTrackStatKeys : setPrintStatKeys;
+            const checked = (activeKeys || []).includes(s.key);
+            // Printing a stat you don't track gives you a column that's
+            // always empty — worth flagging rather than silently allowing.
+            const untracked =
+              !isTrack && checked && !(trackStatKeys || []).includes(s.key);
             return checkboxRow(
               checked,
               () =>
-                setPrintStatKeys((prev) => {
+                setActiveKeys((prev) => {
                   const current = prev || STAT_BUTTONS.map((b) => b.key);
                   return checked ? current.filter((k) => k !== s.key) : [...current, s.key];
                 }),
-              s.label
+              untracked ? `${s.label} — not tracked, will print empty` : s.label
             );
           })}
         </div>
@@ -7322,6 +7360,7 @@ function AppInner() {
     liberoSubCount: 0,
     injuredPlayerIds: [],
     printStatKeys: STAT_BUTTONS.map((s) => s.key), // which stats show on printed box scores — defaults to all
+    trackStatKeys: STAT_BUTTONS.map((s) => s.key), // which stat buttons show on the Live screen — defaults to all
     matches: [],
     activeMatchId: null,
     statsView: { section: "boxscore", insightsMatchId: null },
@@ -7368,6 +7407,11 @@ function AppInner() {
   const setInjuredPlayerIds = fieldSetter(setMainDoc, "injuredPlayerIds");
   const printStatKeys = mainDoc.printStatKeys || STAT_BUTTONS.map((s) => s.key);
   const setPrintStatKeys = fieldSetter(setMainDoc, "printStatKeys");
+  // Separate from printStatKeys on purpose: what you record during a match
+  // and what you put on a printed sheet are different decisions (track block
+  // errors for yourself, leave them off the sheet you hand out).
+  const trackStatKeys = mainDoc.trackStatKeys || STAT_BUTTONS.map((s) => s.key);
+  const setTrackStatKeys = fieldSetter(setMainDoc, "trackStatKeys");
   const matches = mainDoc.matches;
   const setMatches = fieldSetter(setMainDoc, "matches");
   const activeMatchId = mainDoc.activeMatchId;
@@ -8055,6 +8099,8 @@ function AppInner() {
             setIncludePairingsLineup={setIncludePairingsLineup}
             printStatKeys={printStatKeys}
             setPrintStatKeys={setPrintStatKeys}
+            trackStatKeys={trackStatKeys}
+            setTrackStatKeys={setTrackStatKeys}
             teamCode={teamCode}
             setTeamCode={setTeamCode}
             setUnlockedWith={setUnlockedWith}
@@ -8116,7 +8162,7 @@ function AppInner() {
             setPointLog={setPointLog}
             onStartNextSet={startNextSet}
             setTab={setTab}
-            printStatKeys={printStatKeys}
+            trackStatKeys={trackStatKeys}
           />
         )}
         {tab === "box" && (
