@@ -263,6 +263,27 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   that case, since `[]` is truthy — the fallback is in
   `visibleStatButtons` in `LiveScreen`.
 
+- **Translucent fills are palette tokens (`accentSoft`, `greenSoft`,
+  `redSoft`, `blueSoft`, `goldSoft`, `tintHex`), never inline `rgba()`.**
+  Every tint in the app used to be a hardcoded literal of a *dark-theme*
+  hue, so light mode drew a salmon-orange "selected" fill everywhere while
+  its accent is actually dark green, and the fills were pale enough on white
+  to read as washed out. Light mode now carries both deeper hues
+  (green/blue/red/gold) and stronger alpha. If you add a colored fill, use a
+  token; a new inline `rgba()` silently reintroduces the bug in one theme
+  only, which is easy to miss when you develop in the other.
+  Two specific traps this uncovered, both fixed, both worth not repeating:
+  - `STAT_BUTTONS` held `color: COLORS.green` at module scope. That module
+    is evaluated once, while `COLORS` is still the dark palette, so it froze
+    the dark green permanently. It stores a `colorKey` now and resolves
+    through `COLORS` at render. **Anything at module scope that reads
+    `COLORS` captures the dark theme forever** — `COLORS` is reassigned by
+    `Object.assign` per render, so only render-time reads are theme-aware.
+  - `SwipeConfirm` built its fill from hardcoded RGB triplets picked by
+    comparing the passed color against `COLORS.gold`/`COLORS.red`. It
+    derives the triplet from whatever color it's given now
+    (`hexToRgbTriplet`), so it tracks the live palette.
+
 ## Things that broke for reasons outside the app's own code
 
 Worth knowing about even though they're not code issues:

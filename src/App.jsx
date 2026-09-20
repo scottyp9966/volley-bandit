@@ -36,13 +36,21 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.18l";
+const APP_VERSION = "2026.09.20a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
 // every existing style in the app — which reads COLORS.xxx directly — picks
 // up the new values automatically on the next render, without needing every
 // single component rewritten to consume a theme prop or context.
+// The *Soft keys are the translucent fills behind a colored button or a
+// selected row. They're palette entries rather than inline rgba() literals
+// because every one of those literals was a dark-theme hue: in light mode
+// the whole app drew a salmon-orange tint for "selected" while the light
+// accent is actually dark green, and the fills were so pale they read as
+// washed out. Light mode uses both darker hues and stronger alpha.
+// tintHex is the same idea as an 8-digit hex suffix, for the stat buttons
+// which tint from their own per-stat color rather than a fixed one.
 const DARK_COLORS = {
   bg: "#1C2128",
   bgRaised: "#242A33",
@@ -54,6 +62,12 @@ const DARK_COLORS = {
   red: "#C1443C",
   line: "#333B46",
   gold: "#FFC857",
+  accentSoft: "rgba(255,107,53,0.15)",
+  greenSoft: "rgba(76,154,99,0.14)",
+  redSoft: "rgba(193,68,60,0.14)",
+  blueSoft: "rgba(62,124,166,0.14)",
+  goldSoft: "rgba(255,200,87,0.12)",
+  tintHex: "22",
 };
 const LIGHT_COLORS = {
   bg: "#E8E8E6",
@@ -61,11 +75,17 @@ const LIGHT_COLORS = {
   chalk: "#12261A",
   chalkDim: "#42604C",
   orange: "#155C2E", // primary accent — key name kept as "orange" everywhere it's referenced, value repurposed to green for this theme
-  blue: "#3E7CA6",
-  green: "#4C9A63",
-  red: "#C1443C",
+  blue: "#2B6285", // all three deepened from the dark theme's mid-tones: at 13% alpha
+  green: "#2E7D4F", // over white those read as pale pastels, which is what made
+  red: "#A63A32", // the Live screen's stat buttons look washed out
   line: "#CBD1CA",
-  gold: "#B8860B", // deepened from the dark theme's pale gold for contrast on a light background
+  gold: "#8A6508", // deepened from the dark theme's pale gold for contrast on a light background
+  accentSoft: "rgba(21,92,46,0.24)",
+  greenSoft: "rgba(46,125,79,0.26)",
+  redSoft: "rgba(166,58,50,0.24)",
+  blueSoft: "rgba(43,98,133,0.24)",
+  goldSoft: "rgba(138,101,8,0.24)",
+  tintHex: "40",
 };
 let COLORS = { ...DARK_COLORS };
 
@@ -487,19 +507,24 @@ function groupStatsByPlayer(entries, roster) {
     .filter((r) => r.player);
 }
 
+// Each entry names its palette KEY rather than holding a color value. This
+// module is evaluated once, while COLORS is still the dark palette, so a
+// literal `color: COLORS.green` here froze the dark theme's green forever —
+// invisible while both themes shared those hues, a real bug the moment
+// light mode deepened them. Resolve through COLORS at render instead.
 const STAT_BUTTONS = [
-  { key: "ace", label: "Ace", group: "Serve", color: COLORS.green },
-  { key: "serviceAtt", label: "Service Att.", group: "Serve", color: COLORS.blue },
-  { key: "serveErr", label: "Serve Err", group: "Serve", color: COLORS.red },
-  { key: "kill", label: "Kill", group: "Attack", color: COLORS.green },
-  { key: "assist", label: "Assist", group: "Attack", color: COLORS.green },
-  { key: "attackErr", label: "Attack Err", group: "Attack", color: COLORS.red },
-  { key: "dig", label: "Dig", group: "Reception", color: COLORS.green },
-  { key: "recErr", label: "Rec Err", group: "Reception", color: COLORS.red },
-  { key: "passingErr", label: "Passing Err", group: "Reception", color: COLORS.red },
-  { key: "blockSolo", label: "Block Solo", group: "Block", color: COLORS.green },
-  { key: "blockAst", label: "Block Ast", group: "Block", color: COLORS.green },
-  { key: "blockErr", label: "Block Err", group: "Block", color: COLORS.red },
+  { key: "ace", label: "Ace", group: "Serve", colorKey: "green" },
+  { key: "serviceAtt", label: "Service Att.", group: "Serve", colorKey: "blue" },
+  { key: "serveErr", label: "Serve Err", group: "Serve", colorKey: "red" },
+  { key: "kill", label: "Kill", group: "Attack", colorKey: "green" },
+  { key: "assist", label: "Assist", group: "Attack", colorKey: "green" },
+  { key: "attackErr", label: "Attack Err", group: "Attack", colorKey: "red" },
+  { key: "dig", label: "Dig", group: "Reception", colorKey: "green" },
+  { key: "recErr", label: "Rec Err", group: "Reception", colorKey: "red" },
+  { key: "passingErr", label: "Passing Err", group: "Reception", colorKey: "red" },
+  { key: "blockSolo", label: "Block Solo", group: "Block", colorKey: "green" },
+  { key: "blockAst", label: "Block Ast", group: "Block", colorKey: "green" },
+  { key: "blockErr", label: "Block Err", group: "Block", colorKey: "red" },
 ];
 
 const STAT_LABELS = Object.fromEntries(STAT_BUTTONS.map((s) => [s.key, s.label]));
@@ -626,7 +651,7 @@ function TopBar({ title, sub, onPrint, printing, teamLogo, onInfo, onSettings })
             disabled={printing}
             title={printing ? "Generating PDF…" : "Print / Export PDF"}
             style={{
-              background: printing ? "rgba(255,107,53,0.15)" : "none",
+              background: printing ? COLORS.accentSoft : "none",
               border: `1px solid ${printing ? COLORS.orange : COLORS.line}`,
               borderRadius: 8,
               padding: 8,
@@ -992,7 +1017,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               padding: "7px 12px",
               borderRadius: 8,
               border: `1.5px solid ${l.id === viewingLineupId ? COLORS.orange : COLORS.line}`,
-              background: l.id === viewingLineupId ? "rgba(255,107,53,0.15)" : "transparent",
+              background: l.id === viewingLineupId ? COLORS.accentSoft : "transparent",
               color: COLORS.chalk,
               fontSize: 12,
               fontWeight: l.id === viewingLineupId ? 700 : 500,
@@ -1128,7 +1153,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     padding: "8px 0",
                     borderRadius: 8,
                     border: `1.5px solid ${previewRotation === r ? COLORS.orange : COLORS.line}`,
-                    background: previewRotation === r ? "rgba(255,107,53,0.15)" : "transparent",
+                    background: previewRotation === r ? COLORS.accentSoft : "transparent",
                     color: COLORS.chalk,
                     fontSize: 12,
                     fontWeight: 700,
@@ -1145,7 +1170,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 padding: "9px",
                 borderRadius: 8,
                 border: `1.5px solid ${COLORS.green}`,
-                background: "rgba(76,154,99,0.15)",
+                background: COLORS.greenSoft,
                 color: COLORS.chalk,
                 fontSize: 12,
                 fontWeight: 700,
@@ -1195,7 +1220,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 padding: "9px",
                 borderRadius: 8,
                 border: `1.5px solid ${servesFirst === opt.key ? COLORS.orange : COLORS.line}`,
-                background: servesFirst === opt.key ? "rgba(255,107,53,0.15)" : "transparent",
+                background: servesFirst === opt.key ? COLORS.accentSoft : "transparent",
                 color: COLORS.chalk,
                 fontSize: 12,
                 fontWeight: 700,
@@ -1227,7 +1252,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             marginBottom: 8,
             borderRadius: 8,
             border: `1.5px solid ${COLORS.gold}`,
-            background: "rgba(255,200,87,0.12)",
+            background: COLORS.goldSoft,
           }}
         >
           <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.chalk }}>
@@ -1287,7 +1312,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               style={{
                 gridArea,
                 aspectRatio: "1",
-                background: player ? "rgba(255,107,53,0.12)" : COLORS.bgRaised,
+                background: player ? COLORS.accentSoft : COLORS.bgRaised,
                 border: `2px solid ${isServer ? COLORS.gold : player ? COLORS.orange : COLORS.line}`,
                 borderRadius: 12,
                 display: "flex",
@@ -1412,7 +1437,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               borderRadius: 8,
               fontSize: 11,
               fontWeight: 600,
-              background: activePairing.liberoServes ? "rgba(76,154,99,0.12)" : "rgba(255,200,87,0.12)",
+              background: activePairing.liberoServes ? COLORS.greenSoft : COLORS.goldSoft,
               border: `1px solid ${activePairing.liberoServes ? COLORS.green : COLORS.gold}`,
               color: activePairing.liberoServes ? COLORS.green : COLORS.gold,
             }}
@@ -1447,7 +1472,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               style={{
                 flex: 1,
                 minHeight: 56,
-                background: player ? "rgba(62,124,166,0.14)" : COLORS.bgRaised,
+                background: player ? COLORS.blueSoft : COLORS.bgRaised,
                 border: `2px solid ${player ? COLORS.blue : COLORS.line}`,
                 borderRadius: 10,
                 display: "flex",
@@ -1844,7 +1869,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     padding: "9px 0",
                     borderRadius: 8,
                     border: `1.5px solid ${roleSystem?.system === s.key ? COLORS.orange : COLORS.line}`,
-                    background: roleSystem?.system === s.key ? "rgba(255,107,53,0.15)" : "transparent",
+                    background: roleSystem?.system === s.key ? COLORS.accentSoft : "transparent",
                     color: COLORS.chalk,
                     fontSize: 13,
                     fontWeight: 700,
@@ -2053,7 +2078,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
                 {markers.map((m) => {
                   const borderColor = m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line;
-                  const bg = m.isSetter ? "rgba(255,200,87,0.15)" : m.isPasser ? "rgba(62,124,166,0.15)" : COLORS.bgRaised;
+                  const bg = m.isSetter ? COLORS.goldSoft : m.isPasser ? COLORS.blueSoft : COLORS.bgRaised;
                   return (
                     <div
                       key={m.pos}
@@ -3038,7 +3063,7 @@ function LiveScreen({
                 padding: "7px 0",
                 borderRadius: 8,
                 border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
-                background: on ? "rgba(255,107,53,0.15)" : "none",
+                background: on ? COLORS.accentSoft : "none",
                 color: on ? COLORS.orange : COLORS.chalkDim,
                 fontWeight: 700,
                 fontSize: 12,
@@ -3179,7 +3204,7 @@ function LiveScreen({
               <div
                 key={sug.id}
                 style={{
-                  background: "rgba(255,200,87,0.10)",
+                  background: COLORS.goldSoft,
                   border: `1.5px solid ${overLimit ? COLORS.red : COLORS.gold}`,
                   borderRadius: 10,
                   padding: "10px 10px",
@@ -3305,7 +3330,7 @@ function LiveScreen({
                 padding: "5px 8px",
                 borderRadius: 8,
                 border: `1.5px solid ${active ? COLORS.orange : COLORS.line}`,
-                background: active ? "rgba(255,107,53,0.15)" : "transparent",
+                background: active ? COLORS.accentSoft : "transparent",
                 color: COLORS.chalk,
                 display: "flex",
                 alignItems: "center",
@@ -3384,7 +3409,7 @@ function LiveScreen({
               borderRadius: 8,
               fontSize: 11,
               fontWeight: 600,
-              background: activePairing.liberoServes ? "rgba(76,154,99,0.12)" : "rgba(255,200,87,0.12)",
+              background: activePairing.liberoServes ? COLORS.greenSoft : COLORS.goldSoft,
               border: `1px solid ${activePairing.liberoServes ? COLORS.green : COLORS.gold}`,
               color: activePairing.liberoServes ? COLORS.green : COLORS.gold,
             }}
@@ -3452,7 +3477,7 @@ function LiveScreen({
                   padding: "6px 3px 5px",
                   borderRadius: 9,
                   border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
-                  background: on ? "rgba(255,107,53,0.18)" : COLORS.bgRaised,
+                  background: on ? COLORS.accentSoft : COLORS.bgRaised,
                   color: COLORS.chalk,
                   display: "flex",
                   flexDirection: "column",
@@ -3519,8 +3544,8 @@ function LiveScreen({
             style={{
               padding: "12px 4px",
               borderRadius: 10,
-              border: `1.5px solid ${s.color}`,
-              background: `${s.color}22`,
+              border: `1.5px solid ${COLORS[s.colorKey]}`,
+              background: `${COLORS[s.colorKey]}${COLORS.tintHex}`,
               color: COLORS.chalk,
               fontSize: 11,
               fontWeight: 700,
@@ -3690,7 +3715,7 @@ function LiveScreen({
                       padding: "9px 10px",
                       borderRadius: 8,
                       border: `1.5px solid ${subReplacementId === p.id ? COLORS.orange : COLORS.line}`,
-                      background: subReplacementId === p.id ? "rgba(255,107,53,0.15)" : "transparent",
+                      background: subReplacementId === p.id ? COLORS.accentSoft : "transparent",
                       color: COLORS.chalk,
                       fontSize: 13,
                     }}
@@ -3806,7 +3831,7 @@ function LiveScreen({
                   padding: "11px",
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.green}`,
-                  background: subReplacementId ? "rgba(76,154,99,0.15)" : "transparent",
+                  background: subReplacementId ? COLORS.greenSoft : "transparent",
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
@@ -3835,6 +3860,17 @@ function LiveScreen({
 // while still blocking the page's JS thread, which is indistinguishable
 // from the app freezing. See the CLAUDE.md note; that was a real report.
 // Anywhere a native confirm is still in use, this is the replacement.
+// "#4C9A63" -> "76,154,99", so a translucent fill can be built from whatever
+// color was actually passed in. SwipeConfirm used to carry hardcoded RGB
+// triplets and pick between them by comparing the color against COLORS.gold
+// / COLORS.red, which meant it always drew the DARK theme's hues no matter
+// which palette was live.
+function hexToRgbTriplet(hex) {
+  const h = String(hex).replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
 const CONFIRM_ARM_TIMEOUT = 4000;
 function ConfirmButton({ label, confirmLabel, onConfirm, style, armedStyle, disabled }) {
   const [armed, setArmed] = useState(false);
@@ -3906,7 +3942,9 @@ function SwipeConfirm({ label, color, onConfirm, disabled, height = 20 }) {
         position: "relative",
         height,
         borderRadius: height / 2,
-        background: `rgba(${color === COLORS.gold ? "255,200,87" : color === COLORS.red ? "193,68,60" : "62,124,166"},${0.1 + progress * 0.2})`,
+        background: `rgba(${hexToRgbTriplet(color)},${
+          parseInt(COLORS.tintHex, 16) / 255 + progress * 0.2
+        })`,
         border: `1.5px solid ${color}`,
         overflow: "hidden",
         opacity: disabled ? 0.4 : 1,
@@ -4141,7 +4179,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
         padding: "9px 4px",
         borderRadius: 8,
         border: `1.5px solid ${section === key ? COLORS.orange : COLORS.line}`,
-        background: section === key ? "rgba(255,107,53,0.15)" : "transparent",
+        background: section === key ? COLORS.accentSoft : "transparent",
         color: COLORS.chalk,
         fontSize: 11,
         fontWeight: 700,
@@ -4212,7 +4250,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                       fontSize: 11,
                       padding: "3px 8px",
                       borderRadius: 6,
-                      background: "rgba(193,68,60,0.15)",
+                      background: COLORS.redSoft,
                       border: `1px solid ${COLORS.red}`,
                       color: COLORS.chalk,
                       display: "flex",
@@ -4260,7 +4298,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                 display: "flex",
                 alignItems: "center",
                 gap: 4,
-                background: editMode ? "rgba(255,107,53,0.15)" : "none",
+                background: editMode ? COLORS.accentSoft : "none",
                 border: `1px solid ${editMode ? COLORS.orange : COLORS.line}`,
                 borderRadius: 6,
                 padding: "4px 8px",
@@ -4296,7 +4334,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                 padding: "10px",
                 borderRadius: 8,
                 border: `1.5px solid ${COLORS.red}`,
-                background: "rgba(193,68,60,0.12)",
+                background: COLORS.redSoft,
                 color: COLORS.chalk,
                 fontSize: 13,
                 fontWeight: 700,
@@ -4519,7 +4557,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                           style={{
                             width: "100%",
                             height: Math.max(3, (values[i] / max) * 40),
-                            background: s.color,
+                            background: COLORS[s.colorKey],
                             borderRadius: 3,
                           }}
                         />
@@ -4765,7 +4803,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           padding: "10px",
           borderRadius: 8,
           border: `1px solid ${COLORS.gold}`,
-          background: "rgba(212,175,55,0.1)",
+          background: COLORS.goldSoft,
           color: roster.length < 2 ? COLORS.chalkDim : COLORS.chalk,
           fontSize: 12,
           fontWeight: 700,
@@ -4783,7 +4821,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             padding: "10px",
             borderRadius: 8,
             border: `1.5px solid ${COLORS.orange}`,
-            background: "rgba(255,107,53,0.12)",
+            background: COLORS.accentSoft,
             color: COLORS.chalk,
             fontSize: 12,
             fontWeight: 700,
@@ -4843,7 +4881,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 padding: "4px 10px",
                 borderRadius: 6,
                 border: `1px solid ${sortBy === opt.key ? COLORS.orange : COLORS.line}`,
-                background: sortBy === opt.key ? "rgba(255,107,53,0.15)" : "transparent",
+                background: sortBy === opt.key ? COLORS.accentSoft : "transparent",
                 color: COLORS.chalk,
                 fontSize: 11,
                 fontWeight: 700,
@@ -5240,7 +5278,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
             padding: "10px",
             borderRadius: 8,
             border: `1.5px solid ${COLORS.orange}`,
-            background: "rgba(255,107,53,0.12)",
+            background: COLORS.accentSoft,
             color: COLORS.chalk,
             fontSize: 12,
             fontWeight: 700,
@@ -5450,7 +5488,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
                     padding: "8px",
                     borderRadius: 8,
                     border: `1.5px solid ${form.homeAway === ha ? COLORS.orange : COLORS.line}`,
-                    background: form.homeAway === ha ? "rgba(255,107,53,0.15)" : "transparent",
+                    background: form.homeAway === ha ? COLORS.accentSoft : "transparent",
                     color: COLORS.chalk,
                     fontSize: 12,
                     fontWeight: 700,
@@ -6698,7 +6736,7 @@ function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
     marginBottom: 10,
     borderRadius: 8,
     border: `1.5px solid ${COLORS.orange}`,
-    background: "rgba(255,107,53,0.12)",
+    background: COLORS.accentSoft,
     color: COLORS.chalk,
     fontWeight: 700,
     fontSize: 14,
@@ -6927,7 +6965,7 @@ function StatInfoSheet({ onClose }) {
         </div>
         {STAT_BUTTONS.map((s) => (
           <div key={s.key} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: s.color, marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS[s.colorKey], marginBottom: 2 }}>{s.label}</div>
             <div style={{ fontSize: 12, color: COLORS.chalkDim, lineHeight: 1.4 }}>
               {STAT_DEFINITIONS[s.key]}
             </div>
@@ -7195,7 +7233,7 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
                       marginBottom: 8,
                       borderRadius: 10,
                       border: `1.5px solid ${picked ? COLORS.orange : COLORS.line}`,
-                      background: picked ? "rgba(255,107,53,0.12)" : "transparent",
+                      background: picked ? COLORS.accentSoft : "transparent",
                       color: COLORS.chalk,
                       fontSize: 14,
                       fontWeight: 600,
@@ -7329,7 +7367,7 @@ function CaptainVoteSheet({ onClose, roster, captainVote, setCaptainVote }) {
                 color: COLORS.red,
                 fontSize: 13,
               }}
-              armedStyle={{ background: "rgba(198,92,80,0.18)", fontWeight: 700 }}
+              armedStyle={{ background: COLORS.redSoft, fontWeight: 700 }}
             />
             <ConfirmButton
               label="Start a New Election"
@@ -7538,7 +7576,7 @@ function SettingsSheet({
                 padding: "10px",
                 borderRadius: 8,
                 border: `1.5px solid ${theme === t ? COLORS.orange : COLORS.line}`,
-                background: theme === t ? "rgba(255,107,53,0.12)" : "transparent",
+                background: theme === t ? COLORS.accentSoft : "transparent",
                 color: COLORS.chalk,
                 fontWeight: 700,
                 fontSize: 13,
@@ -7583,7 +7621,7 @@ function SettingsSheet({
                   padding: "7px 0",
                   borderRadius: 8,
                   border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
-                  background: on ? "rgba(255,107,53,0.15)" : "none",
+                  background: on ? COLORS.accentSoft : "none",
                   color: on ? COLORS.orange : COLORS.chalkDim,
                   fontWeight: 700,
                   fontSize: 12,
@@ -7632,11 +7670,11 @@ function SettingsSheet({
           actionBtn(
             () => window.open(`${PLAYER_EVAL_URL}?code=${encodeURIComponent(teamCode)}`, "_blank", "noopener,noreferrer"),
             "Open Player Eval ↗",
-            { border: `1px solid ${COLORS.orange}`, background: "rgba(255,107,53,0.1)" }
+            { border: `1px solid ${COLORS.orange}`, background: COLORS.accentSoft }
           )}
         {actionBtn(exportAllData, "Export All Data (Backup)", {
           border: `1px solid ${COLORS.blue}`,
-          background: "rgba(62,124,166,0.1)",
+          background: COLORS.blueSoft,
         })}
         <div style={{ textAlign: "center", fontSize: 10, color: COLORS.chalkDim, marginTop: 10 }}>
           Volley Bandit · Build {APP_VERSION}
@@ -8332,7 +8370,7 @@ function AppInner() {
                   marginBottom: 8,
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.orange}`,
-                  background: "rgba(255,107,53,0.12)",
+                  background: COLORS.accentSoft,
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
@@ -8354,7 +8392,7 @@ function AppInner() {
                   padding: "12px",
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.green}`,
-                  background: "rgba(76,154,99,0.12)",
+                  background: COLORS.greenSoft,
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
@@ -8377,7 +8415,7 @@ function AppInner() {
                   marginTop: 8,
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.blue}`,
-                  background: "rgba(62,124,166,0.12)",
+                  background: COLORS.blueSoft,
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
@@ -8450,7 +8488,7 @@ function AppInner() {
                   marginBottom: 8,
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.orange}`,
-                  background: "rgba(255,107,53,0.12)",
+                  background: COLORS.accentSoft,
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
@@ -8472,7 +8510,7 @@ function AppInner() {
                   padding: "12px",
                   borderRadius: 8,
                   border: `1.5px solid ${COLORS.green}`,
-                  background: "rgba(76,154,99,0.12)",
+                  background: COLORS.greenSoft,
                   color: COLORS.chalk,
                   fontSize: 13,
                   fontWeight: 700,
