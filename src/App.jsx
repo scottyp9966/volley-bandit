@@ -8197,6 +8197,14 @@ function AppInner() {
   const [printChoiceOpen, setPrintChoiceOpen] = useState(false);
   const [boxPrintChoiceOpen, setBoxPrintChoiceOpen] = useState(false);
   const [printTarget, setPrintTarget] = useState(null); // null = use the current tab's default target
+  // Tournament Builder owns its own print logic (its data has nothing to do
+  // with the roster/lineup/match print targets below) — this ref/state pair
+  // is just how its Print action reaches the shared TopBar button, same
+  // spot as every other tab's. See TournamentBuilder.jsx's own comment on
+  // the ref for the full reasoning.
+  const tourneyPrintRef = useRef(null);
+  const [tourneyPrinting, setTourneyPrinting] = useState(false);
+  const [tourneyReady, setTourneyReady] = useState(false);
   const handlePrint = async (explicitTarget) => {
     if (printing) return;
     setPrinting(true);
@@ -8560,7 +8568,11 @@ function AppInner() {
           title={titles[tab].title}
           sub={titles[tab].sub}
           onPrint={
-            PRINTABLE_TABS[tab]
+            tab === "tourney"
+              ? tourneyReady
+                ? () => tourneyPrintRef.current?.print()
+                : null
+              : PRINTABLE_TABS[tab]
               ? tab === "lineup"
                 ? () => setPrintChoiceOpen(true)
                 : tab === "box"
@@ -8568,7 +8580,7 @@ function AppInner() {
                 : () => handlePrint(PRINTABLE_TABS[tab])
               : null
           }
-          printing={printing}
+          printing={tab === "tourney" ? tourneyPrinting : printing}
           teamLogo={teamLogo}
           onInfo={tab === "box" ? () => setShowStatInfo(true) : null}
           onSettings={() => setShowSettings(true)}
@@ -8880,7 +8892,14 @@ function AppInner() {
             setStatsView={setStatsView}
           />
         )}
-        {tab === "tourney" && <TournamentBuilder roster={roster} />}
+        {tab === "tourney" && (
+          <TournamentBuilder
+            ref={tourneyPrintRef}
+            roster={roster}
+            onPrintingChange={setTourneyPrinting}
+            onReadyChange={setTourneyReady}
+          />
+        )}
         <TabBar tab={tab} setTab={setTab} />
       </PhoneFrame>
     </div>

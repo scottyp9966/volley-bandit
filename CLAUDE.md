@@ -104,18 +104,44 @@ bracket are all in. Not built: saving past tournament results, and roster
 auto-sync of attendance state across sessions.
 
 - **PDF export** (`handlePrintBracket` in `TournamentBuilder.jsx`) is a
-  second, self-contained copy of the same jsPDF + html2canvas pattern
-  `handlePrint`/`PrintArea` in `App.jsx` use — see "Read this before
+  second, self-contained copy of the same jsPDF + html2canvas + share-sheet
+  pattern `handlePrint`/`PrintArea` in `App.jsx` use (see "Read this before
   touching print/PDF code" below for why that pattern looks the way it
-  does (display:none-except-while-capturing root, one real PDF page per
-  repeating section, share-sheet-with-download-fallback delivery instead
-  of `window.print()`/`alert()`). It was built as its own copy rather than
-  plugged into the main `PrintArea`, since this component's data (the
-  generated schedule, letters, points) has nothing to do with the
-  roster/lineup/match print targets that component already handles, and
-  because Tournament Builder is deliberately kept decoupled from `App.jsx`
-  internals (see below). If the main print pattern changes, this needs the
-  same fix applied twice — there's no shared helper between them (yet).
+  does) — but **deliberately does NOT copy the one-page-per-repeating-
+  section behavior** that pattern also uses. This sheet is meant to be a
+  single at-a-glance reference card a coach can hold during practice, not
+  a paginated document — the first version forced one PDF page per round
+  (plus separate pages for a roster-key legend and standings), which for a
+  5-round tournament produced 7 mostly-blank pages. Fixed: one continuous
+  `html2canvas` capture of the whole sheet (no `.tourney-page-group`
+  splitting), a dense layout (small type, tight spacing, `columnCount: 2`
+  standings), and **real player names inline in every matchup** instead of
+  just the on-screen A/B/C letters — the letters are a fine shorthand for
+  tapping winners live on a phone, but useless on a printed sheet meant to
+  be read by someone who wasn't standing there. It naturally still
+  overflows onto a second page if the round/player count is large enough;
+  nothing forces it to stay at one beyond the layout being kept dense.
+  It was built as its own copy rather than plugged into the main
+  `PrintArea`, since this component's data (the generated schedule,
+  points) has nothing to do with the roster/lineup/match print targets
+  that component already handles, and because Tournament Builder is
+  deliberately kept decoupled from `App.jsx` internals (see below). If the
+  main print pattern changes, this needs the same fix applied twice —
+  there's no shared helper between them (yet).
+- **The print icon lives in the shared `TopBar`**, same spot as every
+  other tab (next to Settings), not as a button inside
+  `TournamentBuilder`'s own content — matching how print works everywhere
+  else in the app. Since the print logic and its data (`schedule`,
+  `points`) live inside `TournamentBuilder` while the button lives in
+  `App.jsx`, the two talk through a `forwardRef`: `TournamentBuilder`
+  exposes `{ print }` via `useImperativeHandle`, and reports state back up
+  through two callback props — `onPrintingChange` (so the TopBar button
+  shows the same spinner/disabled look every other print button does) and
+  `onReadyChange` (so the icon is hidden entirely until a schedule exists
+  — there's nothing to print on the setup/strategy screens). `App.jsx`
+  holds `tourneyPrintRef`/`tourneyPrinting`/`tourneyReady` purely to wire
+  this through; it never touches `TournamentBuilder`'s internal state
+  directly.
 - **Standings has two ways to change**, and both write into the same
   `points` computation: the tap-to-record winner buttons on each round
   (the primary path — awards the whole winning team +1) and a manual +/-

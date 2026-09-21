@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { ChevronLeft, Check, RotateCcw, X, Printer } from "lucide-react";
+import React, { useState, useMemo, forwardRef, useImperativeHandle, useEffect } from "react";
+import { ChevronLeft, Check, RotateCcw, X } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { COLORS, usePersisted, displayName } from "./shared.js";
@@ -7,15 +7,28 @@ import { computeRoundPlan, planTeamLayout, generateSchedule } from "./tournament
 
 // PDF export follows the same pattern as handlePrint/PrintArea in App.jsx
 // (see CLAUDE.md's "Read this before touching print/PDF code"): a
-// display:none-except-while-capturing root, html2canvas + jsPDF sliced to
-// page size, one PDF page per repeating section (here: one per round) so a
-// round never gets cut mid-table, and the share-sheet-with-download-fallback
-// delivery — window.print()/alert() are avoidably unreliable inside an
-// installed iOS PWA, so this deliberately doesn't use either. Kept
-// self-contained here rather than added to the main PrintArea/handlePrint,
-// since this component's data (schedule, letters, points) has nothing to do
-// with the roster/lineup/match print targets those already handle.
+// display:none-except-while-capturing root, html2canvas + jsPDF, and the
+// share-sheet-with-download-fallback delivery — window.print()/alert() are
+// avoidably unreliable inside an installed iOS PWA, so this deliberately
+// doesn't use either. Kept self-contained here rather than added to the
+// main PrintArea/handlePrint, since this component's data (schedule,
+// points) has nothing to do with the roster/lineup/match print targets
+// those already handle. UNLIKE the main app's print (which forces one PDF
+// page per repeating section), this captures the whole sheet as ONE
+// element — it's meant to be a single at-a-glance reference card, not a
+// paginated document, so it must stay one page. Keep the printable layout
+// dense (small type, real names inline, no per-round page breaks) so it
+// actually does.
 const PRINT_ROOT_ID = "tourney-print-root";
+
+// The print icon lives in App.jsx's shared TopBar (next to Settings, same
+// as every other tab), not inside this component's own content — but the
+// print logic and its schedule/points data live here. This ref is how
+// App.jsx triggers it without either side needing to know the other's
+// internals: forwardRef + useImperativeHandle exposes just `.print()`,
+// and `onPrintingChange` reports the in-flight/error state back up so the
+// TopBar button can show the same spinner/disabled state every other
+// print button does.
 
 // "King & Queen of the Court" tournament generator — see
 // tournament-builder-spec.md this was built from. Deliberately local-only
@@ -106,7 +119,7 @@ function pointStepperButtonStyle() {
   };
 }
 
-export default function TournamentBuilder({ roster }) {
+const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrintingChange, onReadyChange }, ref) {
   const [state, setState] = usePersisted("vb-tournament", initialState);
   const { step, config, layout, playerOrder, letterFor, schedule, winners, error } = state;
   const manualAdjustments = state.manualAdjustments || {};
@@ -114,6 +127,17 @@ export default function TournamentBuilder({ roster }) {
   const [guestName, setGuestName] = useState("");
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState(null);
+
+  useEffect(() => {
+    onPrintingChange?.(printing);
+  }, [printing, onPrintingChange]);
+
+  // The TopBar print icon only makes sense once there's a schedule to
+  // print — tells App.jsx whether to show it at all, same idea as
+  // onPrintingChange above.
+  useEffect(() => {
+    onReadyChange?.(!!schedule);
+  }, [schedule, onReadyChange]);
 
   const patch = (fields) => setState((s) => ({ ...s, ...fields }));
   const patchConfig = (fields) => setState((s) => ({ ...s, config: { ...s.config, ...fields } }));
@@ -272,31 +296,29 @@ export default function TournamentBuilder({ roster }) {
       const MARGIN = 26;
       const contentWidth = pageWidth - MARGIN * 2;
       const contentHeight = pageHeight - MARGIN * 2;
+
+      // One continuous capture, not one-page-per-round — this is meant to
+      // be a single at-a-glance reference sheet. It only overflows onto a
+      // second page if the content genuinely doesn't fit (very high round
+      // or player counts); the printable layout below is kept dense
+      // specifically so that doesn't normally happen.
+      const canvas = await html2canvas(root, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const scaleFactor = contentWidth / canvas.width;
+      const sliceHeightPx = contentHeight / scaleFactor;
+      let renderedPx = 0;
       let pageIndex = 0;
-
-      const captureElementToPdf = async (el) => {
-        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-        const scaleFactor = contentWidth / canvas.width;
-        const sliceHeightPx = contentHeight / scaleFactor;
-        let renderedPx = 0;
-        while (renderedPx < canvas.height) {
-          const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
-          const sliceCanvas = document.createElement("canvas");
-          sliceCanvas.width = canvas.width;
-          sliceCanvas.height = thisSliceHeightPx;
-          const ctx = sliceCanvas.getContext("2d");
-          ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
-          const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
-          if (pageIndex > 0) pdf.addPage();
-          pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
-          renderedPx += thisSliceHeightPx;
-          pageIndex++;
-        }
-      };
-
-      const groups = Array.from(root.querySelectorAll(".tourney-page-group"));
-      for (const group of groups) {
-        await captureElementToPdf(group);
+      while (renderedPx < canvas.height) {
+        const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = thisSliceHeightPx;
+        const ctx = sliceCanvas.getContext("2d");
+        ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+        const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
+        renderedPx += thisSliceHeightPx;
+        pageIndex++;
       }
 
       const blob = pdf.output("blob");
@@ -334,6 +356,8 @@ export default function TournamentBuilder({ roster }) {
       setPrinting(false);
     }
   };
+
+  useImperativeHandle(ref, () => ({ print: handlePrintBracket }));
 
   if (step === "setup") {
     return (
@@ -578,21 +602,12 @@ export default function TournamentBuilder({ roster }) {
           {schedule.stats.distinctPairsCovered} of {schedule.stats.totalPossiblePairs} possible pairings happened at least
           once · no pair repeated more than {schedule.stats.maxRepeat}×
         </div>
-        <div style={{ display: "flex", gap: 14, flexShrink: 0, marginLeft: 8 }}>
-          <button
-            onClick={handlePrintBracket}
-            disabled={printing}
-            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: printing ? COLORS.chalkDim : COLORS.orange, cursor: printing ? "default" : "pointer", fontSize: 12, fontWeight: 700 }}
-          >
-            <Printer size={13} /> {printing ? "Printing…" : "Print"}
-          </button>
-          <button
-            onClick={startOver}
-            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12 }}
-          >
-            <RotateCcw size={13} /> New
-          </button>
-        </div>
+        <button
+          onClick={startOver}
+          style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12, flexShrink: 0, marginLeft: 8 }}
+        >
+          <RotateCcw size={13} /> New
+        </button>
       </div>
 
       {printError && <div style={{ color: COLORS.red, fontSize: 12, fontWeight: 600, padding: "0 2px" }}>{printError}</div>}
@@ -702,78 +717,58 @@ export default function TournamentBuilder({ roster }) {
           position: fixed;
           top: 0;
           left: -9999px;
-          width: 816px;
+          width: 780px;
           background: #fff;
           color: #000;
-          padding: 32px;
+          padding: 24px 28px;
           font-family: 'Inter', system-ui, sans-serif;
         }
       `}</style>
+      {/* One dense reference sheet, not a paginated document — real names
+          inline per matchup (not just letters) since this is meant to be
+          read at a glance mid-practice, and no per-round page breaks so it
+          actually stays to one printed page. */}
       <div id={PRINT_ROOT_ID}>
-        <div className="tourney-page-group">
-          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 22, marginBottom: 4 }}>King &amp; Queen of the Court</div>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 18 }}>{new Date().toLocaleDateString()}</div>
-          <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Roster Key</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 18px", fontSize: 13 }}>
-            {playerOrder.map((id) => {
-              const p = playerById[id];
-              if (!p) return null;
-              return (
-                <div key={id}>
-                  <b>{letterFor[id]}</b> — {displayName(p)}
-                  {p.guest ? " (guest)" : ""}
-                </div>
-              );
-            })}
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18 }}>King &amp; Queen of the Court</div>
+          <div style={{ fontSize: 11, color: "#666" }}>{new Date().toLocaleDateString()}</div>
         </div>
 
         {schedule.rounds.map((round, r) => (
-          <div className="tourney-page-group" key={r}>
-            <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18, marginBottom: 12 }}>Round {r + 1}</div>
+          <div key={r} style={{ marginBottom: 6, breakInside: "avoid" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>Round {r + 1}</div>
             {round.courts.map((court, c) => (
-              <div key={c} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 4 }}>COURT {court.court}</div>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
-                  <tbody>
-                    <tr>
-                      {[
-                        ["A", court.teamA],
-                        ["B", court.teamB],
-                      ].map(([side, team]) => (
-                        <td key={side} style={{ border: "1px solid #ccc", padding: 10, width: "50%", fontWeight: 700 }}>
-                          {team.map((idx) => letterFor[playerOrder[idx]]).join(" ")}
-                          {winners[`${r}-${c}`] === side ? "  ✓ WINNER" : ""}
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
+              <div key={c} style={{ fontSize: 11, marginBottom: 1 }}>
+                <span style={{ color: "#666" }}>Court {court.court}: </span>
+                <b>{court.teamA.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                <span style={{ color: "#666" }}> vs </span>
+                <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                {winners[`${r}-${c}`] && (
+                  <span style={{ color: "#2E7D4F", fontWeight: 700 }}>
+                    {" "}
+                    — {winners[`${r}-${c}`] === "A" ? court.teamA.map((idx) => displayName(playerAt(idx))).join("/") : court.teamB.map((idx) => displayName(playerAt(idx))).join("/")} won
+                  </span>
+                )}
               </div>
             ))}
             {round.byes.length > 0 && (
-              <div style={{ fontSize: 12, color: "#666" }}>Sitting out: {round.byes.map((idx) => letterFor[playerOrder[idx]]).join(" ")}</div>
+              <div style={{ fontSize: 10, color: "#666" }}>Sitting out: {round.byes.map((idx) => displayName(playerAt(idx))).join(", ")}</div>
             )}
           </div>
         ))}
 
-        <div className="tourney-page-group">
-          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18, marginBottom: 12 }}>Standings</div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-            <tbody>
-              {standings.map((row, i) => (
-                <tr key={row.player.id}>
-                  <td style={{ border: "1px solid #ccc", padding: "7px 10px" }}>
-                    {i + 1}. {displayName(row.player)}
-                    {row.player.guest ? " (guest)" : ""}
-                  </td>
-                  <td style={{ border: "1px solid #ccc", padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{row.points}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ fontSize: 12, fontWeight: 700, marginTop: 10, marginBottom: 4 }}>Standings</div>
+        <div style={{ columnCount: 2, columnGap: 24, fontSize: 11 }}>
+          {standings.map((row, i) => (
+            <div key={row.player.id} style={{ breakInside: "avoid" }}>
+              {i + 1}. {displayName(row.player)}
+              {row.player.guest ? " (guest)" : ""} — {row.points}
+            </div>
+          ))}
         </div>
       </div>
     </div>
   );
-}
+});
+
+export default TournamentBuilder;
