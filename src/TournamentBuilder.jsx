@@ -1,5 +1,5 @@
 import React, { useState, useMemo, forwardRef, useImperativeHandle, useEffect } from "react";
-import { ChevronLeft, Check, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, Check, RotateCcw, X, Pencil } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { COLORS, usePersisted, displayName } from "./shared.js";
@@ -20,6 +20,7 @@ import { computeRoundPlan, planTeamLayout, generateSchedule } from "./tournament
 // dense (small type, real names inline, no per-round page breaks) so it
 // actually does.
 const PRINT_ROOT_ID = "tourney-print-root";
+const PRINT_MIN_TEXT_PX = 14; // never shrink printed text smaller than this — see pxText below
 
 // The print icon lives in App.jsx's shared TopBar (next to Settings, same
 // as every other tab), not inside this component's own content — but the
@@ -132,7 +133,15 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
   // taller than one page, so a big tournament shrinks to fit instead of
   // spilling onto a second page. 1 = the full, most-readable size.
   const [printScale, setPrintScale] = useState(1);
+  // Layout sizes (padding, margins, row height, column width) — free to
+  // shrink all the way down with printScale to reclaim space.
   const px = (n) => Math.round(n * printScale);
+  // Font sizes — shrink with printScale too, but never below 14px. Text
+  // any smaller stops being useful on a sheet meant to be read at a
+  // glance mid-practice, so past this floor handlePrintBracket falls back
+  // to a second page (see PRINT_MIN_TEXT_PX below) instead of shrinking
+  // text further.
+  const pxText = (n) => Math.max(PRINT_MIN_TEXT_PX, Math.round(n * printScale));
 
   useEffect(() => {
     onPrintingChange?.(printing);
@@ -173,6 +182,13 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
   };
 
   const startOver = () => setState(initialState);
+
+  // "New" wipes everything (a genuinely different tournament). This is for
+  // the much more common case — the coach wants to tweak the headcount,
+  // add a late guest, or adjust the time, then regenerate — without losing
+  // who's already checked in. Only step changes; config (attendance,
+  // guests, courts, time) is left exactly as it was.
+  const editSetup = () => patch({ step: "setup" });
 
   const buildLayout = () => {
     const attending = [...roster, ...guests].filter((p) => config.attendingIds.includes(p.id));
@@ -307,40 +323,57 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
       const contentWidth = pageWidth - MARGIN * 2;
       const contentHeight = pageHeight - MARGIN * 2;
 
-      // One continuous capture, not one-page-per-round — this is meant to
-      // be a single reference sheet a coach can hold, not a paginated
-      // document. To actually stay on one page for a big tournament
-      // (lots of players/rounds), measure the rendered sheet against how
-      // tall a full page's worth of content is at this root's width, and
-      // shrink `printScale` (which every size in the sheet below is
-      // computed from) until it fits or hits a legibility floor — rather
-      // than a fixed dense layout that either wastes the page (small
-      // tournament) or overflows it (large one).
+      // Captures one element, sliced into as many PDF pages as its height
+      // actually needs (normally one). Shared `pageIndex` across calls so
+      // capturing a second element right after a first correctly starts
+      // it on a new page instead of overlapping the first's last slice.
+      let pageIndex = 0;
+      const captureElementToPdf = async (el) => {
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+        const scaleFactor = contentWidth / canvas.width;
+        const sliceHeightPx = contentHeight / scaleFactor;
+        let renderedPx = 0;
+        while (renderedPx < canvas.height) {
+          const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
+          const sliceCanvas = document.createElement("canvas");
+          sliceCanvas.width = canvas.width;
+          sliceCanvas.height = thisSliceHeightPx;
+          const ctx = sliceCanvas.getContext("2d");
+          ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+          const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
+          if (pageIndex > 0) pdf.addPage();
+          pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
+          renderedPx += thisSliceHeightPx;
+          pageIndex++;
+        }
+      };
+
+      // Not one-page-per-round (that's the main app's PrintArea pattern,
+      // wrong here — see the block comment on the printable DOM below).
+      // This is meant to be a single reference sheet a coach can hold. To
+      // actually stay on one page for a big tournament (lots of
+      // players/rounds), measure the rendered sheet against how tall a
+      // full page's worth of content is at this root's width, and shrink
+      // `printScale` until it fits. But text has a floor (`pxText`, see
+      // below) it won't shrink past — so if the sheet still doesn't fit
+      // even once scaled down that far (a genuinely large tournament:
+      // many players AND many rounds), fall back to two pages — matchups
+      // on one, the results grid on the other — rather than making the
+      // text illegible to force one page.
       const targetHeightPx = contentHeight * (PRINT_ROOT_WIDTH_PX / contentWidth);
-      const renderedHeightPx = root.scrollHeight;
+      let renderedHeightPx = root.scrollHeight;
       if (renderedHeightPx > targetHeightPx) {
-        const fitScale = Math.max(0.55, targetHeightPx / renderedHeightPx);
+        const fitScale = Math.max(0.4, targetHeightPx / renderedHeightPx);
         setPrintScale(fitScale);
         await waitPaint();
+        renderedHeightPx = root.scrollHeight;
       }
 
-      const canvas = await html2canvas(root, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-      const scaleFactor = contentWidth / canvas.width;
-      const sliceHeightPx = contentHeight / scaleFactor;
-      let renderedPx = 0;
-      let pageIndex = 0;
-      while (renderedPx < canvas.height) {
-        const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
-        const sliceCanvas = document.createElement("canvas");
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = thisSliceHeightPx;
-        const ctx = sliceCanvas.getContext("2d");
-        ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
-        const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
-        if (pageIndex > 0) pdf.addPage();
-        pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
-        renderedPx += thisSliceHeightPx;
-        pageIndex++;
+      if (renderedHeightPx > targetHeightPx) {
+        await captureElementToPdf(root.querySelector(".tourney-print-matchups"));
+        await captureElementToPdf(root.querySelector(".tourney-print-grid"));
+      } else {
+        await captureElementToPdf(root);
       }
 
       const blob = pdf.output("blob");
@@ -624,12 +657,20 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
           {schedule.stats.distinctPairsCovered} of {schedule.stats.totalPossiblePairs} possible pairings happened at least
           once · no pair repeated more than {schedule.stats.maxRepeat}×
         </div>
-        <button
-          onClick={startOver}
-          style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12, flexShrink: 0, marginLeft: 8 }}
-        >
-          <RotateCcw size={13} /> New
-        </button>
+        <div style={{ display: "flex", gap: 14, flexShrink: 0, marginLeft: 8 }}>
+          <button
+            onClick={editSetup}
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12 }}
+          >
+            <Pencil size={13} /> Edit
+          </button>
+          <button
+            onClick={startOver}
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12 }}
+          >
+            <RotateCcw size={13} /> New
+          </button>
+        </div>
       </div>
 
       {printError && <div style={{ color: COLORS.red, fontSize: 12, fontWeight: 600, padding: "0 2px" }}>{printError}</div>}
@@ -748,73 +789,80 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
       `}</style>
       {/* One reference sheet, not a paginated document (no per-round page
           breaks — see the main app's PrintArea/handlePrint for why that
-          pattern exists elsewhere but is wrong here). Two parts: who plays
-          whom each round (real names, not just the on-screen A/B/C letters
-          — those are a fine shorthand for tapping winners live on a phone,
-          useless on paper), and a blank grid below it sized to fill the
-          rest of the page — this is deliberately NOT pre-filled from
+          pattern exists elsewhere but is wrong here). Two sections, each
+          wrapped in its own marker class: who plays whom each round (real
+          names, not just the on-screen A/B/C letters — those are a fine
+          shorthand for tapping winners live on a phone, useless on
+          paper), and a blank grid — deliberately NOT pre-filled from
           `points`/`winners`; it's a paper scoresheet for the coach to mark
           up by hand during play, not a printout of the live tally.
-          Every size below is `px(n)` rather than a literal number —
-          handlePrintBracket measures the rendered height against one page
-          and lowers `printScale` (re-rendering this) if it overflows, so a
-          big tournament (many players/rounds) still fits one page instead
-          of spilling onto a second the way a fixed-size layout would. */}
+          Layout sizes use `px(n)`, font sizes use `pxText(n)` (floored at
+          `PRINT_MIN_TEXT_PX`) — handlePrintBracket measures the rendered
+          height against one page and lowers `printScale` if it overflows,
+          re-rendering this. If it still doesn't fit once text has hit
+          that floor (a big tournament — many players AND many rounds),
+          handlePrintBracket captures `.tourney-print-matchups` and
+          `.tourney-print-grid` as two separate PDF pages instead of
+          continuing to shrink illegible. */}
       <div id={PRINT_ROOT_ID}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: px(16) }}>
-          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: px(26) }}>King &amp; Queen of the Court</div>
-          <div style={{ fontSize: px(14), color: "#666" }}>{new Date().toLocaleDateString()}</div>
+        <div className="tourney-print-matchups">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: px(16) }}>
+            <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: pxText(26) }}>King &amp; Queen of the Court</div>
+            <div style={{ fontSize: pxText(14), color: "#666" }}>{new Date().toLocaleDateString()}</div>
+          </div>
+
+          {schedule.rounds.map((round, r) => (
+            <div key={r} style={{ marginBottom: px(10), breakInside: "avoid" }}>
+              <div style={{ fontSize: pxText(16), fontWeight: 700, marginBottom: px(3) }}>Round {r + 1}</div>
+              {round.courts.map((court, c) => (
+                <div key={c} style={{ fontSize: pxText(14), marginBottom: px(2) }}>
+                  <span style={{ color: "#666" }}>Court {court.court}: </span>
+                  <b>{court.teamA.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                  <span style={{ color: "#666" }}> vs </span>
+                  <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                </div>
+              ))}
+              {round.byes.length > 0 && (
+                <div style={{ fontSize: pxText(13), color: "#666" }}>Sitting out: {round.byes.map((idx) => displayName(playerAt(idx))).join(", ")}</div>
+              )}
+            </div>
+          ))}
         </div>
 
-        {schedule.rounds.map((round, r) => (
-          <div key={r} style={{ marginBottom: px(10), breakInside: "avoid" }}>
-            <div style={{ fontSize: px(16), fontWeight: 700, marginBottom: px(3) }}>Round {r + 1}</div>
-            {round.courts.map((court, c) => (
-              <div key={c} style={{ fontSize: px(14), marginBottom: px(2) }}>
-                <span style={{ color: "#666" }}>Court {court.court}: </span>
-                <b>{court.teamA.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
-                <span style={{ color: "#666" }}> vs </span>
-                <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
-              </div>
-            ))}
-            {round.byes.length > 0 && (
-              <div style={{ fontSize: px(13), color: "#666" }}>Sitting out: {round.byes.map((idx) => displayName(playerAt(idx))).join(", ")}</div>
-            )}
-          </div>
-        ))}
-
-        <div style={{ fontSize: px(18), fontWeight: 700, marginTop: px(20), marginBottom: px(8) }}>Results — fill in as you go</div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: px(15) }}>
-          <thead>
-            <tr>
-              <th style={{ border: "1px solid #000", padding: `${px(8)}px ${px(10)}px`, textAlign: "left", background: "#f0f0f0" }}>Player</th>
-              {schedule.rounds.map((_, r) => (
-                <th key={r} style={{ border: "1px solid #000", padding: `${px(8)}px ${px(6)}px`, background: "#f0f0f0", minWidth: px(40) }}>
-                  R{r + 1}
-                </th>
-              ))}
-              <th style={{ border: "1px solid #000", padding: `${px(8)}px ${px(10)}px`, background: "#f0f0f0", minWidth: px(56) }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...playerOrder]
-              .map((id) => playerById[id])
-              .filter(Boolean)
-              .sort((a, b) => displayName(a).localeCompare(displayName(b)))
-              .map((p) => (
-                <tr key={p.id}>
-                  <td style={{ border: "1px solid #000", padding: `${px(10)}px`, fontWeight: 600 }}>
-                    {displayName(p)}
-                    {p.guest ? " (guest)" : ""}
-                  </td>
-                  {schedule.rounds.map((_, r) => (
-                    <td key={r} style={{ border: "1px solid #000", height: px(34) }} />
-                  ))}
-                  <td style={{ border: "1px solid #000" }} />
-                </tr>
-              ))}
-          </tbody>
-        </table>
+        <div className="tourney-print-grid">
+          <div style={{ fontSize: pxText(18), fontWeight: 700, marginTop: px(20), marginBottom: px(8) }}>Results — fill in as you go</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: pxText(15) }}>
+            <thead>
+              <tr>
+                <th style={{ border: "1px solid #000", padding: `${px(8)}px ${px(10)}px`, textAlign: "left", background: "#f0f0f0" }}>Player</th>
+                {schedule.rounds.map((_, r) => (
+                  <th key={r} style={{ border: "1px solid #000", padding: `${px(8)}px ${px(6)}px`, background: "#f0f0f0", minWidth: px(40) }}>
+                    R{r + 1}
+                  </th>
+                ))}
+                <th style={{ border: "1px solid #000", padding: `${px(8)}px ${px(10)}px`, background: "#f0f0f0", minWidth: px(56) }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...playerOrder]
+                .map((id) => playerById[id])
+                .filter(Boolean)
+                .sort((a, b) => displayName(a).localeCompare(displayName(b)))
+                .map((p) => (
+                  <tr key={p.id}>
+                    <td style={{ border: "1px solid #000", padding: `${px(10)}px`, fontWeight: 600 }}>
+                      {displayName(p)}
+                      {p.guest ? " (guest)" : ""}
+                    </td>
+                    {schedule.rounds.map((_, r) => (
+                      <td key={r} style={{ border: "1px solid #000", height: px(34) }} />
+                    ))}
+                    <td style={{ border: "1px solid #000" }} />
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -93,6 +93,17 @@ still around). Lives in its own files rather than inside `App.jsx`:
   team-size form → (if the headcount doesn't divide evenly) a strategy
   picker → the round-by-round schedule with tap-to-record winners and a
   standings table.
+  - **Two different reset actions on the schedule screen — don't merge
+    them.** "New" (`startOver`) wipes everything back to
+    `initialState` — a genuinely different tournament. "Edit"
+    (`editSetup`) only sets `step: "setup"`, leaving `config` (attendance,
+    guests, courts, time, team size) untouched, for the far more common
+    case: the coach wants to add a late guest, adjust the headcount, or
+    change the time, then regenerate, without re-doing attendance from
+    scratch. This distinction exists because "New" used to be the only
+    option, and it was wiping guests the coach had just added — the
+    tap-to-return-to-setup coaches actually wanted was "keep what I
+    entered, let me tweak it."
   - **Guests** (`config.guests`): the coach sometimes practices with
     another squad (JV2, varsity) whose players aren't on this team's
     roster. Typed into a plain text box, split naively on the first space
@@ -157,22 +168,35 @@ auto-sync of attendance state across sessions.
     tally — don't wire it up to pre-fill from that state without checking
     that's actually what's being asked for, since the whole point was to
     get *away* from the on-screen tally for this one sheet.
-  - **Auto-shrinks to fit one page** (`printScale`/the `px()` helper in
-    `TournamentBuilder.jsx`): every size in the printable sheet is
-    `px(n) = n * printScale` rather than a literal number.
-    `handlePrintBracket` renders at `printScale: 1` first, measures
-    `root.scrollHeight` against how tall one full letter page's worth of
-    content is at the root's fixed width, and — only if it's taller —
-    lowers `printScale` (floor `0.55`, so it never shrinks past
-    legibility) and re-renders once before capturing. A small tournament
-    renders at full size and fills the page; a large one (many
-    players/rounds — verified with 31 players/5 rounds/5 courts) shrinks
-    to still fit one page instead of spilling onto a second. This
-    replaced an earlier fixed-size dense layout that either wasted the
-    page (small tournaments) or overflowed it (large ones) — if you touch
-    this sheet again, verify visually (render the actual PDF at both a
-    small and a large player count, don't just trust the JSX) rather than
-    picking one fixed size and assuming it covers every tournament.
+  - **Auto-shrinks to fit one page, but text has a 14px floor** — past
+    that, it falls back to two pages rather than keep shrinking illegible.
+    Two size helpers in `TournamentBuilder.jsx`, both driven by
+    `printScale` state: `px(n)` for layout (padding, margins, row
+    height/width — shrinks all the way down, no floor) and `pxText(n)` for
+    anything that's a font-size (`Math.max(PRINT_MIN_TEXT_PX=14,
+    n * printScale)`). `handlePrintBracket` renders at `printScale: 1`
+    first, measures `root.scrollHeight` against how tall one full letter
+    page's worth of content is at the root's fixed width, and if it's
+    taller, sets `printScale` to the ratio needed to fit (floor `0.4`,
+    just a sanity clamp — `pxText`'s own floor is what actually protects
+    legibility) and re-measures. If it *still* doesn't fit even then
+    (`pxText` refusing to shrink text further is exactly why it might
+    not) it captures `.tourney-print-matchups` and `.tourney-print-grid`
+    — the sheet's two halves — as two separate PDF pages instead of one,
+    each still auto-fit-shrunk (and each can in principle split further if
+    even one half alone doesn't fit, via the same per-element slicing
+    `captureElementToPdf` always did). Verified: 16 players/5 rounds fills
+    one page at full size; 31 players/5 rounds/5 courts shrinks to fit one
+    page; 30 players/8 rounds — enough that shrinking alone can't keep
+    text ≥14px and still fit — correctly produces two pages with text
+    still comfortably readable, not tiny. This replaced an earlier version
+    with only a layout-wide scale and a much lower floor (0.55, applied to
+    everything including text) that could still get too small to read
+    before ever falling back to a second page. If you touch this sheet
+    again, verify visually (render the actual PDF at a small, a
+    one-page-after-shrink, and a two-page-fallback player/round count —
+    don't just trust the JSX) rather than assuming any one fixed size or
+    floor covers every tournament.
   It was built as its own copy rather than plugged into the main
   `PrintArea`, since this component's data (the generated schedule,
   points) has nothing to do with the roster/lineup/match print targets
