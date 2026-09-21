@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { ChevronLeft, Check, RotateCcw } from "lucide-react";
+import { ChevronLeft, Check, RotateCcw, X } from "lucide-react";
 import { COLORS, usePersisted, displayName } from "./shared.js";
 import { computeRoundPlan, planTeamLayout, generateSchedule } from "./tournamentLogic.js";
 
@@ -18,7 +18,14 @@ const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ".split(""); // skip I/O, same reasonin
 
 const initialState = {
   step: "setup", // "setup" | "strategy" | "schedule"
-  config: { attendingIds: [], courts: 2, totalMinutes: 45, targetRoundLength: 7, teamSizePref: "auto" },
+  config: {
+    attendingIds: [],
+    guests: [], // players from another team practicing together — not on this team's roster, so kept here rather than written to it
+    courts: 2,
+    totalMinutes: 45,
+    targetRoundLength: 7,
+    teamSizePref: "auto",
+  },
   layout: null,
   playerOrder: [], // roster ids, index-stable for the life of this tournament
   letterFor: {}, // roster id -> display letter
@@ -69,6 +76,8 @@ function primaryButtonStyle(disabled) {
 export default function TournamentBuilder({ roster }) {
   const [state, setState] = usePersisted("vb-tournament", initialState);
   const { step, config, layout, playerOrder, letterFor, schedule, winners, error } = state;
+  const guests = config.guests || [];
+  const [guestName, setGuestName] = useState("");
 
   const patch = (fields) => setState((s) => ({ ...s, ...fields }));
   const patchConfig = (fields) => setState((s) => ({ ...s, config: { ...s.config, ...fields } }));
@@ -81,10 +90,26 @@ export default function TournamentBuilder({ roster }) {
     });
   };
 
+  const addGuest = () => {
+    const trimmed = guestName.trim();
+    if (!trimmed) return;
+    const [firstName, ...rest] = trimmed.split(" ");
+    const guest = { id: -Date.now(), firstName, lastName: rest.join(" "), guest: true };
+    patchConfig({ guests: [...guests, guest], attendingIds: [...config.attendingIds, guest.id] });
+    setGuestName("");
+  };
+
+  const removeGuest = (id) => {
+    patchConfig({
+      guests: guests.filter((g) => g.id !== id),
+      attendingIds: config.attendingIds.filter((x) => x !== id),
+    });
+  };
+
   const startOver = () => setState(initialState);
 
   const buildLayout = () => {
-    const attending = roster.filter((p) => config.attendingIds.includes(p.id));
+    const attending = [...roster, ...guests].filter((p) => config.attendingIds.includes(p.id));
     if (attending.length < 4) {
       patch({ error: "Check off at least 4 players before generating a tournament." });
       return;
@@ -142,8 +167,9 @@ export default function TournamentBuilder({ roster }) {
   const playerById = useMemo(() => {
     const map = {};
     roster.forEach((p) => (map[p.id] = p));
+    guests.forEach((p) => (map[p.id] = p));
     return map;
-  }, [roster]);
+  }, [roster, guests]);
 
   const playerAt = (idx) => playerById[playerOrder[idx]];
 
@@ -186,7 +212,7 @@ export default function TournamentBuilder({ roster }) {
           <div style={labelStyle()}>Who's here today</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <button
-              onClick={() => patchConfig({ attendingIds: roster.map((p) => p.id) })}
+              onClick={() => patchConfig({ attendingIds: [...roster, ...guests].map((p) => p.id) })}
               style={{ fontSize: 12, color: COLORS.orange, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}
             >
               Select all
@@ -240,6 +266,69 @@ export default function TournamentBuilder({ roster }) {
                 </button>
               );
             })}
+            {guests.map((p) => {
+              const checked = config.attendingIds.includes(p.id);
+              return (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "9px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${checked ? COLORS.orange : COLORS.line}`,
+                    background: checked ? COLORS.accentSoft : "transparent",
+                  }}
+                >
+                  <button
+                    onClick={() => toggleAttending(p.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}
+                  >
+                    <div
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        border: `1.5px solid ${checked ? COLORS.orange : COLORS.chalkDim}`,
+                        background: checked ? COLORS.orange : "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {checked && <Check size={13} color="#fff" strokeWidth={3} />}
+                    </div>
+                    <span style={{ fontSize: 14, color: COLORS.chalk }}>
+                      {displayName(p)} <span style={{ color: COLORS.chalkDim, fontSize: 11 }}>(guest)</span>
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => removeGuest(p.id)}
+                    title="Remove guest"
+                    style={{ background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", padding: 4, flexShrink: 0 }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <input
+              type="text"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addGuest();
+              }}
+              placeholder="Add a guest (JV2, Varsity, etc.)"
+              style={{ ...numberInputStyle(), flex: 1 }}
+            />
+            <button onClick={addGuest} style={{ ...primaryButtonStyle(!guestName.trim()), width: 72 }}>
+              Add
+            </button>
           </div>
         </div>
 

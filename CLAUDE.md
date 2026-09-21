@@ -63,6 +63,16 @@ still around). Lives in its own files rather than inside `App.jsx`:
   team-size form → (if the headcount doesn't divide evenly) a strategy
   picker → the round-by-round schedule with tap-to-record winners and a
   standings table.
+  - **Guests** (`config.guests`): the coach sometimes practices with
+    another squad (JV2, varsity) whose players aren't on this team's
+    roster. Typed into a plain text box, split naively on the first space
+    into first/last name, given a negative id (`-Date.now()`, so it can't
+    collide with a real roster id), and stored in the tournament's own
+    local `config` — never written to the team's actual `roster`. They're
+    auto-checked-in the moment they're added and removable with the ×.
+    `playerById`/`buildLayout`/"Select all" all merge `roster` and
+    `guests` — if you touch attendance logic, keep reading both, not just
+    `roster`.
 - `src/shared.js` — `COLORS`, `usePersisted`, `displayName`/`fullName`
   moved out of `App.jsx` so this new file could import them without
   `App.jsx` importing `TournamentBuilder.jsx` right back (a circular
