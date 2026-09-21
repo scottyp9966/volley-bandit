@@ -59,12 +59,45 @@ still around). Lives in its own files rather than inside `App.jsx`:
   No React, no Firestore — testable with a plain Node script, which is how
   it was actually verified (see CLAUDE.md's "On testing" section on why
   that matters more than it sounds like it should).
-  - **`planTeamLayout`'s fallback strategies now span every candidate team
+  - **There is no `"subs"` strategy anymore — replaced by `"uneven"`.**
+    Subs rotated leftover players into teams round to round to keep every
+    team the same fixed size, and it shipped with two real, reported bugs
+    that both come from the same root cause (an unrotated, fixed idle
+    "team slot" — see the `bye` bullet below for the general shape of this
+    class of bug): (1) a leftover sub could be silently dropped from
+    playing at all for a round with no indication anywhere — not even
+    counted as a "bye" — whenever their rotation math happened to land on
+    the fixed idle team index that round; (2) when the team count was odd,
+    the *same team index* (not the same players — team membership still
+    reshuffled — but the same numbered slot) sat idle **every single
+    round**, with zero tracking of who'd already sat there, so a player
+    could easily land in that slot two rounds running. `"uneven"` sidesteps
+    the whole bug class by not having an idle slot at all: it splits the
+    headcount straight into `courts * 2` teams whose sizes differ by at
+    most one (e.g. 18 players/2 courts → 5/5/4/4), so every court is full
+    every round and nobody ever sits out or gets bumped in/out — same
+    `optimizePartition` teammate-repeat minimization as everything else,
+    just with a `groupSizes` array instead of one uniform size (see next
+    bullet). Offered whenever the average team size would land in [2, 6]
+    (`planTeamLayout`), listed **before** `bye` in the strategy picker —
+    it's a strictly simpler result whenever it's available, since nothing
+    rotates and nobody ever misses a round.
+  - **`optimizePartition` takes a `groupSizes` array, not one `groupSize`
+    number** — e.g. `[5,5,4,4]` for uneven teams, or `uniformSizes(n, s)`
+    (`Array(n/s).fill(s)`) for every other strategy, which still wants N
+    equal-size groups. The simulated annealing swaps which *group label*
+    two players hold, never how many players are in a group, so it
+    already worked correctly for unequal sizes with no other change to
+    the search itself — only `randomPartition`'s initial assignment
+    (slice a shuffled player list into the given sizes, in order) needed
+    to change.
+  - **`planTeamLayout`'s fallback strategies span every candidate team
     size** (3-6) when left on "auto", not just size 4. E.g. 18 players
-    doesn't divide evenly at size 4 (4 teams + 2 subs), but size 3 gives 6
-    exact teams — a strictly cleaner bye rotation the coach would
-    otherwise never see offered. Only relevant when no size gives a
-    perfect standard fit; that search still tries sizes in `[4, 3, 5, 6]`
+    doesn't divide evenly at size 4, but size 3 gives 6 exact teams — a
+    strictly cleaner bye rotation the coach would otherwise never see
+    offered. Only relevant when no size gives a perfect standard fit
+    (checked first, independent of this) or the `uneven` option above
+    isn't a good fit; that search still tries sizes in `[4, 3, 5, 6]`
     preference order and returns immediately on the first hit, same as
     before.
   - **The `bye` strategy picks WHO sits out before deciding any teams**,

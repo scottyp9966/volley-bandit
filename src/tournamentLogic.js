@@ -31,12 +31,7 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
     }
   }
 
-  // No perfect fit at any size. Build fallback options across every
-  // candidate team size when left on auto (not just one default size) —
-  // e.g. 18 players doesn't split evenly at size 4, but size 3 gives 6
-  // exact teams (a clean bye rotation, no partial-team subs needed), which
-  // the coach would otherwise never be offered. When the coach picked an
-  // explicit size, only that size's options are shown.
+  // No perfect fit at any size. Build fallback options.
   const sizesForFallbacks = teamSizePref === "auto" ? [3, 4, 5, 6] : [teamSizePref];
   const strategies = [];
 
@@ -51,13 +46,30 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
     });
   }
 
+  // Uneven teams (sizes differ by at most 1, e.g. 5/5/4/4) — everyone
+  // plays every round, all courts full every round, nothing rotates in or
+  // out. Offered first: it's strictly simpler than subs (no one gets
+  // shuffled onto a mid-round bench pairing that only sometimes lands
+  // them a game) and strictly friendlier than byes (no one sits at all)
+  // whenever the headcount can support it. Doesn't depend on teamSizePref
+  // at all — "5/5/4/4" isn't any one size — so it's computed once here,
+  // not per candidate size like the other fallbacks below.
+  const evenBase = Math.floor(playerCount / desiredTeams);
+  const evenRemainder = playerCount % desiredTeams;
+  if (evenBase >= 2 && evenBase + (evenRemainder > 0 ? 1 : 0) <= 6) {
+    const sizesDesc =
+      evenRemainder > 0 ? `${evenRemainder} of ${desiredTeams} teams at ${evenBase + 1}, the rest at ${evenBase}` : `all ${desiredTeams} teams at ${evenBase}`;
+    strategies.push({
+      key: "uneven",
+      label: `Uneven teams (${sizesDesc})`,
+      detail: "Every court full every round, nobody sits — team sizes differ by at most one.",
+      courtsUsed: courts,
+    });
+  }
+
   for (const teamSize of sizesForFallbacks) {
     const numFullTeams = Math.floor(playerCount / teamSize);
     const leftover = playerCount - numFullTeams * teamSize;
-
-    // A given team size is either an exact multiple of playerCount (bye
-    // candidate) or isn't (subs candidate) — never both — so this is just
-    // "which one applies at this size," not a preference between them.
     if (numFullTeams > desiredTeams && leftover === 0) {
       strategies.push({
         key: "bye",
@@ -67,16 +79,6 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
         numFullTeams,
         leftover: 0,
         courtsUsed: courts,
-      });
-    } else if (numFullTeams >= 2 && leftover > 0) {
-      strategies.push({
-        key: "subs",
-        label: `Team size ${teamSize}: ${numFullTeams} teams, ${leftover} rotating sub${leftover > 1 ? "s" : ""}`,
-        detail: `Leftover player${leftover > 1 ? "s" : ""} join a different team each round.`,
-        teamSize,
-        numFullTeams,
-        leftover,
-        courtsUsed: Math.min(Math.floor(numFullTeams / 2), courts),
       });
     }
   }
@@ -147,26 +149,37 @@ function scheduleCost(schedule) {
   return { cost, pairCount };
 }
 
-function randomPartition(numPlayers, groupSize, rng) {
+// `groupSizes` is an array of this round's group sizes (e.g. [4,4,4,4], or
+// [5,5,4,4] for uneven teams) — must sum to numPlayers. Assigning by
+// slicing a shuffled player list into consecutive chunks of these sizes,
+// then letting the SA below swap group labels between any two players,
+// preserves each group's size through every swap without the SA needing
+// to know or care that sizes differ.
+function randomPartition(numPlayers, groupSizes, rng) {
   const players = Array.from({ length: numPlayers }, (_, i) => i);
   for (let i = players.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [players[i], players[j]] = [players[j], players[i]];
   }
   const assignment = new Array(numPlayers);
-  players.forEach((p, i) => {
-    assignment[p] = Math.floor(i / groupSize);
+  let idx = 0;
+  groupSizes.forEach((size, g) => {
+    for (let k = 0; k < size; k++) assignment[players[idx++]] = g;
   });
   return assignment;
 }
+
+// Uniform-size convenience for call sites that just want N groups of the
+// same size (everything except the "uneven teams" strategy).
+const uniformSizes = (numPlayers, groupSize) => Array(numPlayers / groupSize).fill(groupSize);
 
 // Simulated annealing: minimize repeated-teammate pairs across rounds via a
 // sum-of-squares cost (spreads repeats evenly instead of stacking one pair
 // together many times). Small search space (<=24 players, a handful of
 // rounds), so a few thousand iterations across a few restarts runs well
-// under a second — no web worker needed.
-export function optimizePartition(numPlayers, groupSize, numRounds, rng = Math.random) {
-  if (numRounds <= 0) return { schedule: [], stats: emptyStats(numPlayers, groupSize, numRounds) };
+// under a second — no web worker needed. `groupSizes` — see randomPartition.
+export function optimizePartition(numPlayers, groupSizes, numRounds, rng = Math.random) {
+  if (numRounds <= 0) return { schedule: [], stats: emptyStats(numPlayers, numRounds) };
 
   let best = null;
   let bestCost = Infinity;
@@ -174,7 +187,7 @@ export function optimizePartition(numPlayers, groupSize, numRounds, rng = Math.r
   const iterationsPerRestart = 1500;
 
   for (let restart = 0; restart < restarts; restart++) {
-    let schedule = Array.from({ length: numRounds }, () => randomPartition(numPlayers, groupSize, rng));
+    let schedule = Array.from({ length: numRounds }, () => randomPartition(numPlayers, groupSizes, rng));
     let { cost } = scheduleCost(schedule);
     let temp = 4;
     const cooling = 0.995;
@@ -206,10 +219,10 @@ export function optimizePartition(numPlayers, groupSize, numRounds, rng = Math.r
     if (bestCost === 0) break;
   }
 
-  return { schedule: best, stats: computeStats(best, numPlayers, groupSize) };
+  return { schedule: best, stats: computeStats(best, numPlayers) };
 }
 
-function emptyStats(numPlayers, groupSize, numRounds) {
+function emptyStats(numPlayers, numRounds) {
   return { distinctPairsCovered: 0, totalPossiblePairs: (numPlayers * (numPlayers - 1)) / 2, maxRepeat: 0, numRounds };
 }
 
@@ -317,7 +330,7 @@ function optimizeRoundGroups(pool, groupSize, pairCounts, rng) {
 // back to real roster entries for display.
 export function generateSchedule({ playerCount, teamSize, numRounds, courts, strategy, rng = Math.random }) {
   if (strategy === "single") {
-    const { schedule, stats } = optimizePartition(playerCount, teamSize, numRounds, rng);
+    const { schedule, stats } = optimizePartition(playerCount, uniformSizes(playerCount, teamSize), numRounds, rng);
     const rounds = schedule.map((assignment) => ({
       courts: [{ court: 1, teamA: assignmentToGroups(assignment, 2)[0], teamB: assignmentToGroups(assignment, 2)[1] }],
       idleCourts: Array.from({ length: Math.max(0, courts - 1) }, (_, i) => i + 2),
@@ -326,35 +339,26 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
     return { rounds, stats, strategy };
   }
 
-  if (strategy === "subs") {
-    const numFullTeams = Math.floor(playerCount / teamSize);
-    const basePlayers = numFullTeams * teamSize;
-    const leftover = playerCount - basePlayers;
-    const { schedule, stats } = optimizePartition(basePlayers, teamSize, numRounds, rng);
-    const courtsUsed = Math.floor(numFullTeams / 2);
-    const oddTeamOut = numFullTeams % 2 === 1 ? numFullTeams - 1 : null; // sits idle if teams don't pair evenly
-
-    const rounds = schedule.map((assignment, r) => {
-      const groups = assignmentToGroups(assignment, numFullTeams).map((g) => g.slice());
-      // Rotate the leftover (sub-pool) players onto a different team each round.
-      for (let i = 0; i < leftover; i++) {
-        const subPlayerIndex = basePlayers + i;
-        const targetTeam = (r + i) % numFullTeams;
-        if (targetTeam !== oddTeamOut) groups[targetTeam].push(subPlayerIndex);
-      }
+  if (strategy === "uneven") {
+    // Sizes differ by at most 1 (e.g. 5/5/4/4) so every court is full every
+    // round and nobody ever sits out — see planTeamLayout for why this
+    // replaced the old "subs" strategy (rotating leftover players into
+    // teams turned out to have two separate back-to-back-bye-style bugs:
+    // a sub could be silently dropped from playing entirely some rounds,
+    // and an odd team count benched the same fixed team-index every round
+    // with no fairness/no-repeat tracking at all).
+    const desiredTeams = courts * 2;
+    const base = Math.floor(playerCount / desiredTeams);
+    const remainder = playerCount % desiredTeams;
+    const groupSizes = Array.from({ length: desiredTeams }, (_, g) => base + (g < remainder ? 1 : 0));
+    const { schedule, stats } = optimizePartition(playerCount, groupSizes, numRounds, rng);
+    const rounds = schedule.map((assignment) => {
+      const groups = assignmentToGroups(assignment, desiredTeams);
       const courtsArr = [];
-      for (let c = 0; c < courtsUsed; c++) {
-        const teamA = groups[c * 2];
-        const teamB = groups[c * 2 + 1];
-        if (oddTeamOut !== c * 2 && oddTeamOut !== c * 2 + 1) {
-          courtsArr.push({ court: c + 1, teamA, teamB });
-        }
+      for (let c = 0; c < desiredTeams / 2; c++) {
+        courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
       }
-      return {
-        courts: courtsArr,
-        idleCourts: Array.from({ length: Math.max(0, courts - courtsUsed) }, (_, i) => courtsUsed + i + 1),
-        byes: oddTeamOut != null ? groups[oddTeamOut] : [],
-      };
+      return { courts: courtsArr, idleCourts: [], byes: [] };
     });
     return { rounds, stats, strategy };
   }
@@ -431,7 +435,7 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
     });
     stats = computeStats(schedule, 16);
   } else {
-    ({ schedule, stats } = optimizePartition(playerCount, teamSize, numRounds, rng));
+    ({ schedule, stats } = optimizePartition(playerCount, uniformSizes(playerCount, teamSize), numRounds, rng));
   }
 
   const rounds = schedule.map((assignment) => {
