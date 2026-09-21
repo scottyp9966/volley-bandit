@@ -13,29 +13,39 @@ export function computeRoundPlan(totalMinutes, targetRoundLength) {
 // ---- Step 2: how the headcount maps onto team size / court usage ----
 // Returns the standard (perfect-fit) layout when one exists, otherwise a
 // list of fallback strategies for the coach to choose between.
-export function planTeamLayout(playerCount, courts, teamSizePref) {
-  const desiredTeams = courts * 2;
+//
+// `courtLayout`: "full" (default) — two groups per court, facing off, same
+// as a real match. "half" — one group per court with no opponent, for
+// running the same drill through different combinations of players (the
+// group takes up only one side of the court, hence "half"). The two
+// differ only in `teamsPerCourt` (2 vs 1) — every strategy below (standard
+// fit, uneven, bye) already works off `desiredTeams = courts *
+// teamsPerCourt` generically, so half-court reuses all of it unchanged
+// except: no pairing-into-courts step (each group IS a court, not half of
+// one), and no "single" option (that's specifically "one full match",
+// which needs two sides).
+export function planTeamLayout(playerCount, courts, teamSizePref, courtLayout = "full") {
+  const teamsPerCourt = courtLayout === "half" ? 1 : 2;
+  const desiredTeams = courts * teamsPerCourt;
   const sizesToTry = teamSizePref === "auto" ? [4, 3, 5, 6] : [teamSizePref];
+  const standardFits = (numTeams) =>
+    Number.isInteger(numTeams) && numTeams > 0 && numTeams <= desiredTeams && (teamsPerCourt === 1 || numTeams % 2 === 0);
 
   if (teamSizePref === "auto") {
     for (const size of sizesToTry) {
       const numTeams = playerCount / size;
-      if (Number.isInteger(numTeams) && numTeams > 0 && numTeams <= desiredTeams && numTeams % 2 === 0) {
-        return standardLayout(playerCount, size, courts);
-      }
+      if (standardFits(numTeams)) return standardLayout(playerCount, size, courts, teamsPerCourt);
     }
   } else {
     const numTeams = playerCount / teamSizePref;
-    if (Number.isInteger(numTeams) && numTeams > 0 && numTeams <= desiredTeams && numTeams % 2 === 0) {
-      return standardLayout(playerCount, teamSizePref, courts);
-    }
+    if (standardFits(numTeams)) return standardLayout(playerCount, teamSizePref, courts, teamsPerCourt);
   }
 
   // No perfect fit at any size. Build fallback options.
   const sizesForFallbacks = teamSizePref === "auto" ? [3, 4, 5, 6] : [teamSizePref];
   const strategies = [];
 
-  if (playerCount % 2 === 0 && playerCount <= 12) {
+  if (teamsPerCourt === 2 && playerCount % 2 === 0 && playerCount <= 12) {
     const half = playerCount / 2;
     strategies.push({
       key: "single",
@@ -57,25 +67,28 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
   const evenBase = Math.floor(playerCount / desiredTeams);
   const evenRemainder = playerCount % desiredTeams;
   if (evenBase >= 2 && evenBase + (evenRemainder > 0 ? 1 : 0) <= 6) {
+    const groupWord = teamsPerCourt === 1 ? "groups" : "teams";
     const sizesDesc =
-      evenRemainder > 0 ? `${evenRemainder} of ${desiredTeams} teams at ${evenBase + 1}, the rest at ${evenBase}` : `all ${desiredTeams} teams at ${evenBase}`;
+      evenRemainder > 0
+        ? `${evenRemainder} of ${desiredTeams} ${groupWord} at ${evenBase + 1}, the rest at ${evenBase}`
+        : `all ${desiredTeams} ${groupWord} at ${evenBase}`;
     strategies.push({
       key: "uneven",
-      label: `Uneven teams (${sizesDesc})`,
-      detail: "Every court full every round, nobody sits — team sizes differ by at most one.",
+      label: `Uneven ${groupWord} (${sizesDesc})`,
+      detail: `Every court full every round, nobody sits — ${groupWord.slice(0, -1)} sizes differ by at most one.`,
       courtsUsed: courts,
     });
   }
 
   // Byes: offered whenever there are more players than desiredTeams courts
-  // can seat at this size at once — e.g. 1 court seats desiredTeams(2) * 6
-  // = 12 players (6 v 6); a 14-player headcount on 1 court means 2 always
-  // sit, rotated fairly. generateSchedule's bye branch computes byesNeeded
-  // directly from playerCount, so it needs no exact-multiple relationship
-  // between playerCount and teamSize the way it briefly did — don't
-  // reintroduce a `leftover === 0` condition here, that's what silently
-  // left genuinely-oversized headcounts (like 14 on 1 court) with no bye
-  // option offered at all despite the algorithm handling them fine.
+  // can seat at this size at once — e.g. 1 full court seats desiredTeams(2)
+  // * 6 = 12 players (6 v 6); a 14-player headcount on 1 court means 2
+  // always sit, rotated fairly. generateSchedule's bye branch computes
+  // byesNeeded directly from playerCount, so it needs no exact-multiple
+  // relationship between playerCount and teamSize the way it briefly did —
+  // don't reintroduce a `leftover === 0` condition here, that's what
+  // silently left genuinely-oversized headcounts (like 14 on 1 court) with
+  // no bye option offered at all despite the algorithm handling them fine.
   // Only the single LARGEST size in sizesForFallbacks that still needs
   // benching is offered — a smaller size benches strictly more players for
   // no benefit (desiredTeams*smallerSize < desiredTeams*largerSize), so
@@ -83,10 +96,12 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
   const byeTeamSize = [...sizesForFallbacks].sort((a, b) => b - a).find((size) => playerCount > desiredTeams * size);
   if (byeTeamSize != null) {
     const byesNeeded = playerCount - desiredTeams * byeTeamSize;
+    const byeGroupWord = teamsPerCourt === 1 ? "group" : "team";
+    const playDesc = teamsPerCourt === 1 ? `groups of ${byeTeamSize}` : `${byeTeamSize} v ${byeTeamSize} per court`;
     strategies.push({
       key: "bye",
-      label: `${desiredTeams * byeTeamSize} play at ${byeTeamSize} v ${byeTeamSize} per court, ${byesNeeded} sit out on a rotation`,
-      detail: `${desiredTeams} team${desiredTeams > 1 ? "s" : ""} of ${byeTeamSize} play every round; who's out rotates fairly (never back-to-back when avoidable).`,
+      label: `${desiredTeams * byeTeamSize} play at ${playDesc}, ${byesNeeded} sit out on a rotation`,
+      detail: `${desiredTeams} ${byeGroupWord}${desiredTeams > 1 ? "s" : ""} of ${byeTeamSize} play every round; who's out rotates fairly (never back-to-back when avoidable).`,
       teamSize: byeTeamSize,
       leftover: 0,
       courtsUsed: courts,
@@ -96,14 +111,14 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
   return { fitsStandard: false, desiredTeams, teamSize: sizesForFallbacks[0], strategies };
 }
 
-function standardLayout(playerCount, teamSize, courts) {
+function standardLayout(playerCount, teamSize, courts, teamsPerCourt = 2) {
   const numTeams = playerCount / teamSize;
   return {
     fitsStandard: true,
-    desiredTeams: courts * 2,
+    desiredTeams: courts * teamsPerCourt,
     teamSize,
     numTeams,
-    courtsUsed: numTeams / 2,
+    courtsUsed: numTeams / teamsPerCourt,
     strategies: [],
   };
 }
@@ -255,6 +270,24 @@ function assignmentToGroups(assignment, numGroups) {
   return groups;
 }
 
+// Turns a flat list of groups into the `round.courts` shape, either pairing
+// them up (full court — two groups face off) or one group per court (half
+// court — a single drill group, no opponent; `teamB` stays empty so the
+// data shape is identical either way and the UI/print code just renders
+// nothing for an empty teamB instead of needing a whole separate shape).
+function buildCourts(groups, teamsPerCourt) {
+  const courtsArr = [];
+  const numCourts = groups.length / teamsPerCourt;
+  for (let c = 0; c < numCourts; c++) {
+    if (teamsPerCourt === 1) {
+      courtsArr.push({ court: c + 1, teamA: groups[c], teamB: [] });
+    } else {
+      courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
+    }
+  }
+  return courtsArr;
+}
+
 // ---- Bye-strategy helpers ----
 // The bye strategy needs a different shape of optimization than the other
 // three: WHICH players are even in the pool changes every round (whoever
@@ -338,7 +371,9 @@ function optimizeRoundGroups(pool, groupSize, pairCounts, rng) {
 // chosen strategy from planTeamLayout(). playerCount here is the number of
 // CHECKED-IN players (indices 0..playerCount-1); the caller maps indices
 // back to real roster entries for display.
-export function generateSchedule({ playerCount, teamSize, numRounds, courts, strategy, rng = Math.random }) {
+export function generateSchedule({ playerCount, teamSize, numRounds, courts, strategy, courtLayout = "full", rng = Math.random }) {
+  const teamsPerCourt = courtLayout === "half" ? 1 : 2;
+
   if (strategy === "single") {
     const { schedule, stats } = optimizePartition(playerCount, uniformSizes(playerCount, teamSize), numRounds, rng);
     const rounds = schedule.map((assignment) => ({
@@ -357,24 +392,21 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
     // a sub could be silently dropped from playing entirely some rounds,
     // and an odd team count benched the same fixed team-index every round
     // with no fairness/no-repeat tracking at all).
-    const desiredTeams = courts * 2;
+    const desiredTeams = courts * teamsPerCourt;
     const base = Math.floor(playerCount / desiredTeams);
     const remainder = playerCount % desiredTeams;
     const groupSizes = Array.from({ length: desiredTeams }, (_, g) => base + (g < remainder ? 1 : 0));
     const { schedule, stats } = optimizePartition(playerCount, groupSizes, numRounds, rng);
     const rounds = schedule.map((assignment) => {
       const groups = assignmentToGroups(assignment, desiredTeams);
-      const courtsArr = [];
-      for (let c = 0; c < desiredTeams / 2; c++) {
-        courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
-      }
+      const courtsArr = buildCourts(groups, teamsPerCourt);
       return { courts: courtsArr, idleCourts: [], byes: [] };
     });
     return { rounds, stats, strategy };
   }
 
   if (strategy === "bye") {
-    const desiredTeams = courts * 2;
+    const desiredTeams = courts * teamsPerCourt;
     const byesNeeded = playerCount - desiredTeams * teamSize;
     const byeCounts = new Array(playerCount).fill(0);
     // -2 (not -1) so round 0 never reads as "sat out the round before this one".
@@ -418,11 +450,7 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
         }
       });
 
-      const courtsArr = [];
-      for (let c = 0; c < desiredTeams / 2; c++) {
-        courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
-      }
-      rounds.push({ courts: courtsArr, idleCourts: [], byes });
+      rounds.push({ courts: buildCourts(groups, teamsPerCourt), idleCourts: [], byes });
     }
 
     const counts = Object.values(pairCounts);
@@ -450,11 +478,7 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
 
   const rounds = schedule.map((assignment) => {
     const groups = assignmentToGroups(assignment, numTeams);
-    const courtsArr = [];
-    for (let c = 0; c < numTeams / 2; c++) {
-      courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
-    }
-    return { courts: courtsArr, idleCourts: [], byes: [] };
+    return { courts: buildCourts(groups, teamsPerCourt), idleCourts: [], byes: [] };
   });
   return { rounds, stats, strategy: "standard" };
 }

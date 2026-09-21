@@ -132,6 +132,35 @@ still around). Lives in its own files rather than inside `App.jsx`:
     against a running pair-count table. Slightly less globally optimal
     than a joint solve, but the alternative (fixed pool) can't support
     per-round-varying byes at all.
+  - **"Court layout" (`config.courtLayout`, `"full"` | `"half"`) reuses
+    every strategy above unchanged via one parameter: `teamsPerCourt`**
+    (2 for full court — two groups face off; 1 for half court — one group
+    per court, no opponent, for cycling through drill combinations while
+    the rest wait/rotate on the bye). Added so the tool doubles as a drill
+    builder — same fairness math, just without a "match" on each court.
+    `desiredTeams = courts * teamsPerCourt` was already the generic
+    parameter every strategy (standard fit, `uneven`, `bye`) is built
+    around, so nothing in the search/annealing/bye-selection logic needed
+    to change — the only new code is `buildCourts(groups, teamsPerCourt)`,
+    which packages the flat list of groups into `round.courts[]` entries
+    either paired (`{teamA, teamB}`, full court) or solo (`{teamA,
+    teamB: []}`, half court). Every caller that builds courts
+    (`generateSchedule`'s standard/uneven/bye branches) goes through this
+    one helper now. `planTeamLayout`'s `standardFits` check requires
+    `numTeams % 2 === 0` only when `teamsPerCourt === 2` — half court has
+    no pairing requirement, any group count up to `desiredTeams` fits. The
+    `single`-court strategy (one big scrimmage, no split) only makes sense
+    when there are two sides to put on it, so it's excluded entirely when
+    `teamsPerCourt === 1`. Strategy wording (`uneven`'s and `bye`'s
+    `detail` text) says "groups"/"group" for half court and
+    "teams"/"team" for full court (`groupWord`/`byeGroupWord`), since
+    "team" implies an opponent that doesn't exist in drill mode.
+    `court.teamB.length === 0` is what both `TournamentBuilder.jsx`'s
+    on-screen round rendering and its print sheet check to decide whether
+    to draw a single group (no "vs", no tap-to-record-winner buttons —
+    there's no winner to record) or the normal two-team matchup; if you
+    add a third rendering site for `round.courts`, it needs the same
+    check or it'll render a dangling "vs" against an empty team.
 - `src/TournamentBuilder.jsx` — the UI: attendance checklist → court/time/
   team-size form → (if the headcount doesn't divide evenly) a strategy
   picker → the round-by-round schedule with tap-to-record winners and a

@@ -53,6 +53,7 @@ const initialState = {
     totalMinutes: 45,
     targetRoundLength: 7,
     teamSizePref: "auto",
+    courtLayout: "full", // "full" (two groups face off, current behavior) | "half" (one group per court — drill combinations, no opponent)
   },
   layout: null,
   playerOrder: [], // roster ids, index-stable for the life of this tournament
@@ -202,7 +203,7 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
       return;
     }
     const teamSizePref = config.teamSizePref === "auto" ? "auto" : Number(config.teamSizePref);
-    const computedLayout = planTeamLayout(attending.length, config.courts, teamSizePref);
+    const computedLayout = planTeamLayout(attending.length, config.courts, teamSizePref, config.courtLayout);
     const order = attending.map((p) => p.id);
     const letters = {};
     order.forEach((id, i) => {
@@ -233,6 +234,7 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
       numRounds: roundPlan.numRounds,
       courts: config.courts,
       strategy: strategyKey,
+      courtLayout: config.courtLayout,
     });
     setState((s) => ({
       ...s,
@@ -558,6 +560,37 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
         </div>
 
         <div style={cardStyle()}>
+          <div style={labelStyle()}>Court layout</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { key: "full", label: "Full court", detail: "Two groups face off, like a match" },
+              { key: "half", label: "Half court", detail: "One group per court — cycle drill combinations, no opponent" },
+            ].map((opt) => {
+              const active = config.courtLayout === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  onClick={() => patchConfig({ courtLayout: opt.key })}
+                  style={{
+                    flex: 1,
+                    padding: "10px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${active ? COLORS.orange : COLORS.line}`,
+                    background: active ? COLORS.accentSoft : "transparent",
+                    color: COLORS.chalk,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{opt.label}</div>
+                  <div style={{ fontSize: 11, color: COLORS.chalkDim, marginTop: 2 }}>{opt.detail}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={cardStyle()}>
           <div style={labelStyle()}>Total practice time (minutes)</div>
           <input
             type="number"
@@ -703,33 +736,50 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
               return (
                 <div key={c} style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 4, fontWeight: 700 }}>COURT {court.court}</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {[
-                      ["A", court.teamA],
-                      ["B", court.teamB],
-                    ].map(([side, team]) => {
-                      const isWinner = winner === side;
-                      return (
-                        <button
-                          key={side}
-                          onClick={() => recordWinner(r, c, side)}
-                          style={{
-                            flex: 1,
-                            textAlign: "left",
-                            padding: 10,
-                            borderRadius: 8,
-                            border: `1.5px solid ${isWinner ? COLORS.green : COLORS.line}`,
-                            background: isWinner ? COLORS.greenSoft : COLORS.bg,
-                            color: COLORS.chalk,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>{team.map((idx) => letterFor[playerOrder[idx]]).join(" ")}</div>
-                          {isWinner && <div style={{ fontSize: 10, color: COLORS.green, fontWeight: 700, marginTop: 2 }}>WINNER +1</div>}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {court.teamB.length === 0 ? (
+                    // Half-court (drill) round — one group, no opponent, nothing to declare a winner against.
+                    <div
+                      style={{
+                        padding: 10,
+                        borderRadius: 8,
+                        border: `1.5px solid ${COLORS.line}`,
+                        background: COLORS.bg,
+                        color: COLORS.chalk,
+                      }}
+                    >
+                      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>
+                        {court.teamA.map((idx) => letterFor[playerOrder[idx]]).join(" ")}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[
+                        ["A", court.teamA],
+                        ["B", court.teamB],
+                      ].map(([side, team]) => {
+                        const isWinner = winner === side;
+                        return (
+                          <button
+                            key={side}
+                            onClick={() => recordWinner(r, c, side)}
+                            style={{
+                              flex: 1,
+                              textAlign: "left",
+                              padding: 10,
+                              borderRadius: 8,
+                              border: `1.5px solid ${isWinner ? COLORS.green : COLORS.line}`,
+                              background: isWinner ? COLORS.greenSoft : COLORS.bg,
+                              color: COLORS.chalk,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>{team.map((idx) => letterFor[playerOrder[idx]]).join(" ")}</div>
+                            {isWinner && <div style={{ fontSize: 10, color: COLORS.green, fontWeight: 700, marginTop: 2 }}>WINNER +1</div>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -818,8 +868,12 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
                 <div key={c} style={{ fontSize: pxText(14), marginBottom: px(2) }}>
                   <span style={{ color: "#666" }}>Court {court.court}: </span>
                   <b>{court.teamA.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
-                  <span style={{ color: "#666" }}> vs </span>
-                  <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                  {court.teamB.length > 0 && (
+                    <>
+                      <span style={{ color: "#666" }}> vs </span>
+                      <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
+                    </>
+                  )}
                 </div>
               ))}
               {round.byes.length > 0 && (
