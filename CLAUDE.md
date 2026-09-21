@@ -234,6 +234,25 @@ non-obvious things that look like they could be "simplified" but are load-bearin
 - **`endMatch()` resets every lineup's rotation to 1** and returns to the
   Set-1 lineup — lineups are persistent templates reused match to match,
   not per-match data.
+- **`match.lineupSnapshots` is the only per-match record of who actually
+  played.** Because lineups are reused templates, a past match had no
+  history of its own: its stats carry a `lineupId` pointing at a template
+  that has since been edited, so opening a played match showed today's
+  lineup as though it were that match's. `snapshotLineupForMatch` (in
+  `AppInner`, called from `recordStat`) freezes the set's lineup onto the
+  match the first time a stat lands in that set — keyed by set number, first
+  write wins, never updated afterwards. It stores
+  `computeRawRotationSlots(lineup, 1)`, i.e. the starting six, not whatever
+  is on court at that moment, and the raw form for the usual reason (subs
+  are display-only and must never be committed as real lineup data).
+  `LineupScreen` renders `MatchLineupRecord` — read-only, with an "Edit
+  current lineups instead" escape hatch — whenever the active match is dated
+  in the past and has snapshots. Matches played before this existed have no
+  snapshots and fall back to the old behavior; there's no way to
+  reconstruct them.
+  Shape note: snapshots are a map keyed by set number, holding `slots` (a
+  map), `liberos` and `pairings` (arrays). No array ever directly contains
+  another array, which Firestore would reject.
 - **The Live screen has a Simple/Full toggle** (`vb-live-simple`, a
   per-device localStorage preference, not team data). Full is the original
   match-management surface; Simple hides rotation, subs, sub counters and

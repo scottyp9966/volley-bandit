@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.20a";
+const APP_VERSION = "2026.09.21a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -726,7 +726,152 @@ function TabBar({ tab, setTab }) {
 }
 
 // ---- Lineup screen: rotation dial court diagram, multi-lineup support ----
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem }) {
+// The lineup a past match was actually played with, read from the snapshot
+// frozen onto that match when its first stat was recorded. Read-only on
+// purpose: it's a record of what happened, not a template to edit. Module
+// scope so it can't reach into LineupScreen's state by accident.
+function MatchLineupRecord({ match, roster, onShowTemplates }) {
+  const snapshots = Object.values(match.lineupSnapshots || {}).sort(
+    (a, b) => (a.setNumber || 0) - (b.setNumber || 0)
+  );
+  const playerFor = (id) => roster.find((p) => p.id === id);
+  return (
+    <div style={{ padding: "16px 20px 20px", overflowY: "auto", flex: 1 }}>
+      <div
+        style={{
+          border: `1.5px solid ${COLORS.gold}`,
+          background: COLORS.goldSoft,
+          borderRadius: 10,
+          padding: "10px 12px",
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.chalk, marginBottom: 3 }}>
+          Lineup that played vs. {match.opponent}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
+          {match.date} · a record of this match, not editable. Your lineups are
+          templates you keep reusing, so this was frozen when the match's first
+          stat was recorded.
+        </div>
+        <button
+          onClick={onShowTemplates}
+          style={{
+            padding: "7px 12px",
+            borderRadius: 8,
+            border: `1.5px solid ${COLORS.line}`,
+            background: "none",
+            color: COLORS.chalk,
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          Edit current lineups instead
+        </button>
+      </div>
+
+      {snapshots.length === 0 && (
+        <div style={{ fontSize: 12, color: COLORS.chalkDim }}>
+          No lineup was recorded for this match — no stats were entered while it
+          was the active match.
+        </div>
+      )}
+
+      {snapshots.map((snap) => {
+        const serverSlot = snap.servesFirst === "us" ? "P1" : "P2";
+        return (
+          <div key={snap.setNumber} style={{ marginBottom: 22 }}>
+            <div
+              style={{
+                fontFamily: "'Oswald', sans-serif",
+                fontSize: 14,
+                textTransform: "uppercase",
+                color: COLORS.chalk,
+                marginBottom: 8,
+              }}
+            >
+              {snap.name || `Set ${snap.setNumber}`}
+            </div>
+            <div
+              style={{
+                fontSize: 9,
+                color: COLORS.chalkDim,
+                textAlign: "center",
+                letterSpacing: 1,
+                textTransform: "uppercase",
+                marginBottom: 6,
+              }}
+            >
+              — net —
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateAreas: `"p4 p3 p2" "p5 p6 p1"`,
+                gridTemplateColumns: "1fr 1fr 1fr",
+                gap: 8,
+                marginBottom: 10,
+              }}
+            >
+              {COURT_LAYOUT.map(({ slot, gridArea }) => {
+                const player = playerFor(snap.slots?.[slot]);
+                return (
+                  <div
+                    key={slot}
+                    style={{
+                      gridArea,
+                      position: "relative",
+                      padding: "10px 4px",
+                      borderRadius: 10,
+                      border: `1.5px solid ${slot === serverSlot ? COLORS.gold : COLORS.line}`,
+                      background: COLORS.bgRaised,
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ fontSize: 8, color: COLORS.chalkDim, textAlign: "left" }}>{slot}</div>
+                    <div
+                      style={{
+                        fontFamily: "'Oswald', sans-serif",
+                        fontSize: 20,
+                        fontWeight: 700,
+                        color: COLORS.chalk,
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      {player ? `#${player.num}` : "—"}
+                    </div>
+                    <div style={{ fontSize: 9, color: COLORS.chalkDim }}>
+                      {player ? displayName(player) : ""}
+                    </div>
+                    {slot === serverSlot && (
+                      <div style={{ fontSize: 8, fontWeight: 700, color: COLORS.gold, marginTop: 2 }}>
+                        1ST SERVER
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {(snap.liberos || []).length > 0 && (
+              <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
+                Libero
+                {snap.liberos.length === 1 ? "" : "s"}:{" "}
+                {snap.liberos
+                  .map((id) => {
+                    const p = playerFor(id);
+                    return p ? `#${p.num} ${displayName(p)}` : "—";
+                  })
+                  .join(" · ")}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem, matches, activeMatchId }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
@@ -746,6 +891,25 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   useEffect(() => {
     setViewingLineupId(activeLineupId);
   }, [activeLineupId]);
+
+  // If the active match is one already played, this tab shows the lineup that
+  // actually played it rather than today's templates — which is what it used
+  // to do, silently, since lineups are reused match to match and carry no
+  // history of their own. Escape hatch below for editing templates anyway.
+  // "Past" is the same date test the Schedule screen's goToMatch uses.
+  const [ignoreMatchRecord, setIgnoreMatchRecord] = useState(false);
+  useEffect(() => {
+    setIgnoreMatchRecord(false);
+  }, [activeMatchId]);
+  const activeMatch = (matches || []).find((m) => m.id === activeMatchId) || null;
+  const matchRecord =
+    activeMatch &&
+    activeMatch.date &&
+    activeMatch.date < new Date().toISOString().slice(0, 10) &&
+    activeMatch.lineupSnapshots &&
+    Object.keys(activeMatch.lineupSnapshots).length > 0
+      ? activeMatch
+      : null;
 
   const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0];
   const liberos = activeLineup.liberos || [null, null];
@@ -1001,6 +1165,16 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
     }
     setPlayerSheet(null);
   };
+
+  if (matchRecord && !ignoreMatchRecord) {
+    return (
+      <MatchLineupRecord
+        match={matchRecord}
+        roster={roster}
+        onShowTemplates={() => setIgnoreMatchRecord(true)}
+      />
+    );
+  }
 
   return (
     <div style={{ padding: "16px 20px 20px", overflowY: "auto", flex: 1 }}>
@@ -2668,6 +2842,7 @@ function LiveScreen({
   pointLog,
   setPointLog,
   onStartNextSet,
+  onSnapshotLineup,
   setTab,
   trackStatKeys,
 }) {
@@ -2721,6 +2896,9 @@ function LiveScreen({
 
   const recordStat = (statKey) => {
     if (!currentPlayerId) return;
+    // Freezes this set's starting lineup onto the match the first time a
+    // stat lands. A no-op on every later stat in the same set.
+    onSnapshotLineup?.(activeMatchId ?? null, setNumber, activeLineup);
     setLog((prev) => [
       ...prev,
       {
@@ -7825,6 +8003,45 @@ function AppInner() {
   const setTrackStatKeys = fieldSetter(setMainDoc, "trackStatKeys");
   const matches = mainDoc.matches;
   const setMatches = fieldSetter(setMainDoc, "matches");
+
+  // Freeze the lineup a set was played with onto the match record, the first
+  // time a stat is recorded in that set. Lineups are living templates reused
+  // match to match, so without this the only per-match trace is a stat's
+  // lineupId pointing at a template that has since been edited — go back to
+  // a past match and the app shows you today's lineup, not the one that
+  // actually played. Written once per set and never updated, so later edits
+  // to the template can't reach it.
+  //
+  // Stored as an object keyed by set number rather than an array, and the
+  // rotation-1 RAW slots rather than whatever is on court at the moment of
+  // the first stat — that's the starting six, which is what a lineup record
+  // means. (Raw, not computeRotationSlots: subs are layered on for display
+  // only and must never be committed as real lineup data.)
+  const snapshotLineupForMatch = (matchId, setNumber, lineup) => {
+    if (matchId == null || !lineup) return;
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id !== matchId) return m;
+        const existing = m.lineupSnapshots || {};
+        if (existing[setNumber]) return m; // first write wins
+        return {
+          ...m,
+          lineupSnapshots: {
+            ...existing,
+            [setNumber]: {
+              name: lineup.name,
+              setNumber,
+              slots: computeRawRotationSlots(lineup, 1),
+              liberos: (lineup.liberos || []).filter(Boolean),
+              pairings: lineup.pairings || [],
+              servesFirst: lineup.servesFirst || null,
+              capturedAt: Date.now(),
+            },
+          },
+        };
+      })
+    );
+  };
   const activeMatchId = mainDoc.activeMatchId;
   const setActiveMatchId = fieldSetter(setMainDoc, "activeMatchId");
   const statsView = mainDoc.statsView;
@@ -8584,6 +8801,8 @@ function AppInner() {
             setCaptainId={setCaptainId}
             roleSystem={roleSystem}
             setRoleSystem={setRoleSystem}
+            matches={matches}
+            activeMatchId={activeMatchId}
           />
         )}
         {tab === "live" && (
@@ -8609,6 +8828,7 @@ function AppInner() {
             pointLog={pointLog}
             setPointLog={setPointLog}
             onStartNextSet={startNextSet}
+            onSnapshotLineup={snapshotLineupForMatch}
             setTab={setTab}
             trackStatKeys={trackStatKeys}
           />
