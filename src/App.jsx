@@ -5,6 +5,9 @@ import { db } from "./firebase.js";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { registerSW } from "virtual:pwa-register";
+import TournamentBuilder from "./TournamentBuilder.jsx";
+import { Trophy } from "lucide-react";
+import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName } from "./shared.js";
 
 // NOTE: these are deliberately STATIC imports, even though jsPDF and
 // html2canvas are only used by Print and are a large share of the bundle.
@@ -51,66 +54,9 @@ const APP_VERSION = "2026.09.20a";
 // washed out. Light mode uses both darker hues and stronger alpha.
 // tintHex is the same idea as an 8-digit hex suffix, for the stat buttons
 // which tint from their own per-stat color rather than a fixed one.
-const DARK_COLORS = {
-  bg: "#1C2128",
-  bgRaised: "#242A33",
-  chalk: "#F5F3EE",
-  chalkDim: "#A8ADB5",
-  orange: "#FF6B35",
-  blue: "#3E7CA6",
-  green: "#4C9A63",
-  red: "#C1443C",
-  line: "#333B46",
-  gold: "#FFC857",
-  accentSoft: "rgba(255,107,53,0.15)",
-  greenSoft: "rgba(76,154,99,0.14)",
-  redSoft: "rgba(193,68,60,0.14)",
-  blueSoft: "rgba(62,124,166,0.14)",
-  goldSoft: "rgba(255,200,87,0.12)",
-  tintHex: "22",
-};
-const LIGHT_COLORS = {
-  bg: "#E8E8E6",
-  bgRaised: "#FFFFFF",
-  chalk: "#12261A",
-  chalkDim: "#42604C",
-  orange: "#155C2E", // primary accent — key name kept as "orange" everywhere it's referenced, value repurposed to green for this theme
-  blue: "#2B6285", // all three deepened from the dark theme's mid-tones: at 13% alpha
-  green: "#2E7D4F", // over white those read as pale pastels, which is what made
-  red: "#A63A32", // the Live screen's stat buttons look washed out
-  line: "#CBD1CA",
-  gold: "#8A6508", // deepened from the dark theme's pale gold for contrast on a light background
-  accentSoft: "rgba(21,92,46,0.24)",
-  greenSoft: "rgba(46,125,79,0.26)",
-  redSoft: "rgba(166,58,50,0.24)",
-  blueSoft: "rgba(43,98,133,0.24)",
-  goldSoft: "rgba(138,101,8,0.24)",
-  tintHex: "40",
-};
-let COLORS = { ...DARK_COLORS };
-
-
-// Persist state to localStorage so nothing is lost when the tab closes or
-// the phone loses signal — this is what makes the app actually offline-safe,
-// not just offline-tolerant during a single session.
-function usePersisted(key, initialValue) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored !== null ? JSON.parse(stored) : initialValue;
-    } catch {
-      return initialValue;
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      // storage full or unavailable — app keeps working in-memory for this session
-    }
-  }, [key, value]);
-  return [value, setValue];
-}
+// DARK_COLORS/LIGHT_COLORS/COLORS and usePersisted now live in shared.js so
+// TournamentBuilder.jsx can reuse them without a circular import with this
+// file.
 
 // The companion Player Eval app's deployed URL — used for the "Open Player
 // Eval" link in Settings, carrying the current team code as a `?code=` deep
@@ -238,15 +184,7 @@ function useTeamDoc(teamCode, docName, defaultValue) {
   return [value, update, loaded, error];
 }
 
-// Short display form used everywhere except the roster add/edit form itself —
-// "First L." rather than the full last name, to keep lists and slots compact.
-const displayName = (p) => {
-  if (!p) return "";
-  const last = (p.lastName || "").trim();
-  return last ? `${p.firstName} ${last.charAt(0).toUpperCase()}.` : p.firstName || "";
-};
-
-const fullName = (p) => (p ? `${p.firstName || ""} ${p.lastName || ""}`.trim() : "");
+// displayName/fullName now live in shared.js alongside COLORS/usePersisted.
 
 // Build and download a CSV file client-side — no library needed for this.
 function downloadCSV(filename, headerRow, rows) {
@@ -677,6 +615,7 @@ function TabBar({ tab, setTab }) {
     { key: "live", label: "Live", icon: Activity },
     { key: "box", label: "Stats", icon: ClipboardList },
     { key: "schedule", label: "Schedule", icon: Calendar },
+    { key: "tourney", label: "Tourney", icon: Trophy },
   ];
   return (
     <div
@@ -7942,6 +7881,7 @@ function AppInner() {
     live: { title: "Live Stats", sub: liveSubtitle },
     box: { title: "Stats", sub: "Box score, insights, trends & season" },
     schedule: { title: "Schedule", sub: "Upcoming and past matches" },
+    tourney: { title: "Tournament", sub: "King & Queen of the Court" },
   };
 
   // Only these four have a standard printable format; Live has no print action.
@@ -8639,6 +8579,7 @@ function AppInner() {
             setStatsView={setStatsView}
           />
         )}
+        {tab === "tourney" && <TournamentBuilder roster={roster} />}
         <TabBar tab={tab} setTab={setTab} />
       </PhoneFrame>
     </div>
