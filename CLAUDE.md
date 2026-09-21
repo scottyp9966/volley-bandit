@@ -91,15 +91,25 @@ still around). Lives in its own files rather than inside `App.jsx`:
     the search itself — only `randomPartition`'s initial assignment
     (slice a shuffled player list into the given sizes, in order) needed
     to change.
-  - **`planTeamLayout`'s fallback strategies span every candidate team
-    size** (3-6) when left on "auto", not just size 4. E.g. 18 players
-    doesn't divide evenly at size 4, but size 3 gives 6 exact teams — a
-    strictly cleaner bye rotation the coach would otherwise never see
-    offered. Only relevant when no size gives a perfect standard fit
-    (checked first, independent of this) or the `uneven` option above
-    isn't a good fit; that search still tries sizes in `[4, 3, 5, 6]`
-    preference order and returns immediately on the first hit, same as
-    before.
+  - **The `bye` fallback is offered whenever `playerCount > desiredTeams *
+    teamSize`** (desiredTeams = `courts * 2`) — NOT when `playerCount` is
+    an exact multiple of some team size, which was a real bug: it briefly
+    required `numFullTeams > desiredTeams && leftover === 0` (a leftover
+    constraint from the old, since-rewritten implementation that grouped
+    players into whole teams first), so a headcount like 14 players on 1
+    court — more than the 12 a single 6v6 court can seat, but not a clean
+    multiple of any tried size — got offered **no bye option at all**,
+    even though `generateSchedule`'s bye branch (see below) handles any
+    positive `byesNeeded = playerCount - desiredTeams * teamSize` just
+    fine and always has. The real-world framing that exposed this: "1
+    court seats max 12 (6 v 6), 2 courts max 24" — anything over that
+    per-court cap of 6-a-side needs bye rotation, evenly divisible or not.
+    Only the single **largest** size in `[3,4,5,6]` (or the coach's exact
+    pick, if not "auto") that still needs benching is offered — a smaller
+    size always benches strictly more players for the same court count
+    (`desiredTeams * smallerSize < desiredTeams * largerSize`), so it's
+    strictly worse, not a genuinely different choice, and offering it
+    alongside the larger-size option would just be clutter.
   - **The `bye` strategy picks WHO sits out before deciding any teams**,
     not the other way around. The original approach reshuffled all
     players into random teams first and then benched whichever team(s)

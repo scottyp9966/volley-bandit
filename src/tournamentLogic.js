@@ -67,20 +67,30 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
     });
   }
 
-  for (const teamSize of sizesForFallbacks) {
-    const numFullTeams = Math.floor(playerCount / teamSize);
-    const leftover = playerCount - numFullTeams * teamSize;
-    if (numFullTeams > desiredTeams && leftover === 0) {
-      strategies.push({
-        key: "bye",
-        label: `Team size ${teamSize}: ${numFullTeams} teams, rotating byes`,
-        detail: `Only ${desiredTeams} teams play each round; the rest sit out on a fair rotation (never back-to-back when avoidable).`,
-        teamSize,
-        numFullTeams,
-        leftover: 0,
-        courtsUsed: courts,
-      });
-    }
+  // Byes: offered whenever there are more players than desiredTeams courts
+  // can seat at this size at once — e.g. 1 court seats desiredTeams(2) * 6
+  // = 12 players (6 v 6); a 14-player headcount on 1 court means 2 always
+  // sit, rotated fairly. generateSchedule's bye branch computes byesNeeded
+  // directly from playerCount, so it needs no exact-multiple relationship
+  // between playerCount and teamSize the way it briefly did — don't
+  // reintroduce a `leftover === 0` condition here, that's what silently
+  // left genuinely-oversized headcounts (like 14 on 1 court) with no bye
+  // option offered at all despite the algorithm handling them fine.
+  // Only the single LARGEST size in sizesForFallbacks that still needs
+  // benching is offered — a smaller size benches strictly more players for
+  // no benefit (desiredTeams*smallerSize < desiredTeams*largerSize), so
+  // it's a strictly worse choice, not a genuinely different option.
+  const byeTeamSize = [...sizesForFallbacks].sort((a, b) => b - a).find((size) => playerCount > desiredTeams * size);
+  if (byeTeamSize != null) {
+    const byesNeeded = playerCount - desiredTeams * byeTeamSize;
+    strategies.push({
+      key: "bye",
+      label: `${desiredTeams * byeTeamSize} play at ${byeTeamSize} v ${byeTeamSize} per court, ${byesNeeded} sit out on a rotation`,
+      detail: `${desiredTeams} team${desiredTeams > 1 ? "s" : ""} of ${byeTeamSize} play every round; who's out rotates fairly (never back-to-back when avoidable).`,
+      teamSize: byeTeamSize,
+      leftover: 0,
+      courtsUsed: courts,
+    });
   }
 
   return { fitsStandard: false, desiredTeams, teamSize: sizesForFallbacks[0], strategies };
