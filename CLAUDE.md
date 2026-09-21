@@ -94,6 +94,35 @@ or on-screen... if this becomes interactive" — and it did become
 interactive, so print was skipped for now), saving past tournament results,
 and roster auto-sync of attendance state across sessions.
 
+**Kept intentionally decoupled — this may become its own app someday.**
+The user's actual use case splits in two: (1) a bit of competitive spice
+during a normal team practice (today's use — Volley Bandit already has the
+roster open), and (2) a standalone "King & Queen of the Court" event people
+sign up for individually, with no pre-existing team/roster at all. That
+second use is a genuinely different product (open signup, probably public,
+not tied to a Volley Bandit team code) — closer to Player Eval's
+separate-app precedent than to another tab. Decided to keep it as a tab
+for now rather than pay for a second Firestore app/deploy before anyone's
+asked for it, but the code is already split along the seam that split
+would need:
+- `tournamentLogic.js` has zero concept of "team" — it only takes a
+  player count and returns index-based groupings. This part ports to a
+  standalone app unchanged.
+- `TournamentBuilder.jsx`'s `roster` prop is just an array of
+  `{id, firstName, lastName, num}`-shaped objects; nothing about it
+  requires those to come from Volley Bandit's Firestore team roster.
+  The *only* place "existing team" is baked in is the attendance-checkbox
+  screen (the `step === "setup"` render branch) — a standalone signup app
+  would replace that one screen with an open "type your name to join" flow
+  and feed the same shape into everything downstream (letters, schedule
+  cards, tap-to-record, standings) untouched.
+- If/when this splits out: it'd need `shared.js`'s bits either copied over
+  or reimplemented (a separate app can't `import` from this repo's `src/`),
+  same as Player Eval would if it didn't have its own copies already.
+Don't let attendance-checkbox logic leak into the scheduling/display code
+when touching this — that leak is the one thing that would make a future
+split harder than it needs to be.
+
 ## Read this before touching print/PDF code
 
 The print feature (`handlePrint` in `App.jsx`) went through many rounds of
