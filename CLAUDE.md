@@ -245,11 +245,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   `computeRawRotationSlots(lineup, 1)`, i.e. the starting six, not whatever
   is on court at that moment, and the raw form for the usual reason (subs
   are display-only and must never be committed as real lineup data).
+  **`endMatch()` is what locks a match in**: it backfills a snapshot for any
+  set that has points but no stats (and the set in progress when the match
+  ended), derives `setScores` per set from `pointLog`, and stamps
+  `completedAt`. A snapshot taken during play always wins over the backfill.
   `LineupScreen` renders `MatchLineupRecord` — read-only, with an "Edit
-  current lineups instead" escape hatch — whenever the active match is dated
-  in the past and has snapshots. Matches played before this existed have no
-  snapshots and fall back to the old behavior; there's no way to
-  reconstruct them.
+  current lineups instead" escape hatch — whenever the active match has
+  `completedAt`. **Not** a date test: an earlier pass used "dated before
+  today", which was wrong in both directions (a match ended this evening
+  isn't before today and stayed unlocked; a passed date that was never
+  played locked for no reason). The date test survives only as a fallback
+  for matches that have snapshots but predate `completedAt`.
+  Matches played before any of this existed have neither and fall back to
+  the old behavior; there's no way to reconstruct them.
   Shape note: snapshots are a map keyed by set number, holding `slots` (a
   map), `liberos` and `pairings` (arrays). No array ever directly contains
   another array, which Firestore would reject.

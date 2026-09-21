@@ -36,7 +36,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.21a";
+const APP_VERSION = "2026.09.21b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -389,6 +389,22 @@ function computeRawRotationSlots(lineup, targetRotation) {
 // For display/preview only (the court diagram, Serve-Receive) — the raw
 // arrangement above with substitutions layered on top, showing who's
 // actually on court right now including any active sub.
+// One set's lineup, frozen for a match record: the STARTING six (rotation-1
+// raw slots — raw because substitutions are layered on for display only and
+// must never be committed as real lineup data), plus who was libero, the
+// pairings in force, and who served first.
+function buildLineupSnapshot(lineup, setNumber) {
+  return {
+    name: lineup.name,
+    setNumber,
+    slots: computeRawRotationSlots(lineup, 1),
+    liberos: (lineup.liberos || []).filter(Boolean),
+    pairings: lineup.pairings || [],
+    servesFirst: lineup.servesFirst || null,
+    capturedAt: Date.now(),
+  };
+}
+
 function computeRotationSlots(lineup, targetRotation) {
   return applySubPairings(computeRawRotationSlots(lineup, targetRotation), lineup.pairings);
 }
@@ -735,6 +751,11 @@ function MatchLineupRecord({ match, roster, onShowTemplates }) {
     (a, b) => (a.setNumber || 0) - (b.setNumber || 0)
   );
   const playerFor = (id) => roster.find((p) => p.id === id);
+  const setScores = match.setScores || {};
+  const setScoreLine = Object.keys(setScores)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((k) => `${setScores[k].us}–${setScores[k].opp}`)
+    .join(" · ");
   return (
     <div style={{ padding: "16px 20px 20px", overflowY: "auto", flex: 1 }}>
       <div
@@ -750,10 +771,18 @@ function MatchLineupRecord({ match, roster, onShowTemplates }) {
           Lineup that played vs. {match.opponent}
         </div>
         <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
-          {match.date} · a record of this match, not editable. Your lineups are
-          templates you keep reusing, so this was frozen when the match's first
-          stat was recorded.
+          {match.date} ·{" "}
+          {match.completedAt
+            ? "locked in when the match was ended"
+            : "a record of this match"}
+          . Not editable — your lineups are templates you keep reusing, so this
+          is the only trace of who actually played.
         </div>
+        {setScoreLine && (
+          <div style={{ fontSize: 12, color: COLORS.chalk, fontWeight: 700, marginBottom: 8 }}>
+            {setScoreLine}
+          </div>
+        )}
         <button
           onClick={onShowTemplates}
           style={{
@@ -791,6 +820,11 @@ function MatchLineupRecord({ match, roster, onShowTemplates }) {
               }}
             >
               {snap.name || `Set ${snap.setNumber}`}
+              {setScores[snap.setNumber] && (
+                <span style={{ color: COLORS.chalkDim, marginLeft: 8 }}>
+                  {setScores[snap.setNumber].us}–{setScores[snap.setNumber].opp}
+                </span>
+              )}
             </div>
             <div
               style={{
@@ -892,22 +926,29 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
     setViewingLineupId(activeLineupId);
   }, [activeLineupId]);
 
-  // If the active match is one already played, this tab shows the lineup that
+  // If the active match is a closed one, this tab shows the lineup that
   // actually played it rather than today's templates — which is what it used
   // to do, silently, since lineups are reused match to match and carry no
   // history of their own. Escape hatch below for editing templates anyway.
-  // "Past" is the same date test the Schedule screen's goToMatch uses.
+  //
+  // What makes a match closed is `completedAt`, set by End Match — not its
+  // date. An earlier pass used "dated before today", which got it wrong in
+  // both directions: a match ended this evening isn't "before today" and
+  // would still show live templates, while a match whose date has passed but
+  // was never played would lock for no reason. The date test survives only
+  // as a fallback for matches that have snapshots but predate End Match
+  // writing completedAt.
   const [ignoreMatchRecord, setIgnoreMatchRecord] = useState(false);
   useEffect(() => {
     setIgnoreMatchRecord(false);
   }, [activeMatchId]);
   const activeMatch = (matches || []).find((m) => m.id === activeMatchId) || null;
+  const hasSnapshots =
+    activeMatch && activeMatch.lineupSnapshots && Object.keys(activeMatch.lineupSnapshots).length > 0;
   const matchRecord =
     activeMatch &&
-    activeMatch.date &&
-    activeMatch.date < new Date().toISOString().slice(0, 10) &&
-    activeMatch.lineupSnapshots &&
-    Object.keys(activeMatch.lineupSnapshots).length > 0
+    (activeMatch.completedAt ||
+      (hasSnapshots && activeMatch.date && activeMatch.date < new Date().toISOString().slice(0, 10)))
       ? activeMatch
       : null;
 
@@ -4500,26 +4541,30 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             editMode={editMode}
           />
           {activeMatchId && (
-            <button
-              onClick={() => {
-                if (window.confirm("End this match? Resets the live scoreboard, sub counts, and every lineup's rotation back to 1 for whatever comes next. Stats already recorded stay exactly as they are.")) {
-                  onEndMatch();
-                }
-              }}
-              style={{
-                width: "100%",
-                marginTop: 14,
-                padding: "10px",
-                borderRadius: 8,
-                border: `1.5px solid ${COLORS.red}`,
-                background: COLORS.redSoft,
-                color: COLORS.chalk,
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              End Match
-            </button>
+            <>
+              <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 14, marginBottom: 4 }}>
+                Ending the match locks it in: each set's lineup and score are
+                frozen onto this match, and the live scoreboard, sub counts and
+                rotations reset for whatever comes next. Stats already recorded
+                stay exactly as they are.
+              </div>
+              <ConfirmButton
+                label="End Match"
+                confirmLabel="Tap again to end and lock in this match"
+                onConfirm={onEndMatch}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.red}`,
+                  background: COLORS.redSoft,
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+                armedStyle={{ color: COLORS.red }}
+              />
+            </>
           )}
         </>
       )}
@@ -8026,18 +8071,7 @@ function AppInner() {
         if (existing[setNumber]) return m; // first write wins
         return {
           ...m,
-          lineupSnapshots: {
-            ...existing,
-            [setNumber]: {
-              name: lineup.name,
-              setNumber,
-              slots: computeRawRotationSlots(lineup, 1),
-              liberos: (lineup.liberos || []).filter(Boolean),
-              pairings: lineup.pairings || [],
-              servesFirst: lineup.servesFirst || null,
-              capturedAt: Date.now(),
-            },
-          },
+          lineupSnapshots: { ...existing, [setNumber]: buildLineupSnapshot(lineup, setNumber) },
         };
       })
     );
@@ -8128,6 +8162,53 @@ function AppInner() {
   // logged against a match that's already finished. Stats already recorded
   // stay exactly where they are — this only resets live-tracking state.
   const endMatch = () => {
+    // Ending the match is what locks it in. Everything that made this match
+    // what it was gets frozen onto the match record here, because none of it
+    // survives otherwise: lineups are templates that keep being edited, and
+    // the live score and counters are all about to be reset for the next
+    // match. After this the match is a closed record — the Lineup tab shows
+    // what played rather than today's templates whenever it's active again.
+    //
+    // The per-set lineup is normally already captured by the first stat of
+    // each set (snapshotLineupForMatch). This backfills any set that has
+    // points but no stats, and the set that was in progress when the match
+    // ended, so a match run without stat entry still gets a record.
+    const endingMatchId = activeMatchId;
+    if (endingMatchId != null) {
+      const setsPlayed = new Set();
+      log.forEach((e) => {
+        if (e.matchId === endingMatchId) setsPlayed.add(e.setNumber ?? 1);
+      });
+      const setScores = {};
+      pointLog.forEach((e) => {
+        if (e.matchId !== endingMatchId) return;
+        const key = String(e.setNumber ?? 1);
+        setsPlayed.add(e.setNumber ?? 1);
+        if (!setScores[key]) setScores[key] = { us: 0, opp: 0 };
+        setScores[key][e.team] += 1;
+      });
+      const liveLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+      if (liveLineup) setsPlayed.add(liveLineup.setNumber || 1);
+
+      setMatches((prev) =>
+        prev.map((m) => {
+          if (m.id !== endingMatchId) return m;
+          const snaps = { ...(m.lineupSnapshots || {}) };
+          setsPlayed.forEach((sn) => {
+            if (snaps[sn]) return; // a snapshot taken during play always wins
+            const l = lineups.find((x) => (x.setNumber || 1) === sn);
+            if (l) snaps[sn] = buildLineupSnapshot(l, sn);
+          });
+          return {
+            ...m,
+            lineupSnapshots: snaps,
+            setScores,
+            completedAt: Date.now(),
+          };
+        })
+      );
+    }
+
     const setOneLineup = lineups.find((l) => l.setNumber === 1) || lineups[0];
     setScore({ us: 0, opp: 0 });
     setSubCount(0);
