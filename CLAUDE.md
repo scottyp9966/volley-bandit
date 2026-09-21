@@ -96,13 +96,35 @@ Deliberately **local-only** (`usePersisted` → `localStorage`, key
   flattening first either way.
 
 What's genuinely built vs. spec nice-to-haves still open: attendance
-checkboxes, all three fallback strategies (single match / rotating subs /
-bye rotation) with the coach choosing when it's ambiguous, and live
-tap-to-record winners with auto-tallied standings are all in. Not built:
-PDF/print export (the spec calls this optional — "Printable/exportable...
-or on-screen... if this becomes interactive" — and it did become
-interactive, so print was skipped for now), saving past tournament results,
-and roster auto-sync of attendance state across sessions.
+checkboxes (plus guests, see above), all three fallback strategies (single
+match / rotating subs / bye rotation) with the coach choosing when it's
+ambiguous, live tap-to-record winners with auto-tallied standings, a manual
++/- point adjustment per player for corrections/ties, and PDF export of the
+bracket are all in. Not built: saving past tournament results, and roster
+auto-sync of attendance state across sessions.
+
+- **PDF export** (`handlePrintBracket` in `TournamentBuilder.jsx`) is a
+  second, self-contained copy of the same jsPDF + html2canvas pattern
+  `handlePrint`/`PrintArea` in `App.jsx` use — see "Read this before
+  touching print/PDF code" below for why that pattern looks the way it
+  does (display:none-except-while-capturing root, one real PDF page per
+  repeating section, share-sheet-with-download-fallback delivery instead
+  of `window.print()`/`alert()`). It was built as its own copy rather than
+  plugged into the main `PrintArea`, since this component's data (the
+  generated schedule, letters, points) has nothing to do with the
+  roster/lineup/match print targets that component already handles, and
+  because Tournament Builder is deliberately kept decoupled from `App.jsx`
+  internals (see below). If the main print pattern changes, this needs the
+  same fix applied twice — there's no shared helper between them (yet).
+- **Standings has two ways to change**, and both write into the same
+  `points` computation: the tap-to-record winner buttons on each round
+  (the primary path — awards the whole winning team +1) and a manual +/-
+  stepper directly on each Standings row (`manualAdjustments`, a
+  `playerId -> delta` map layered on top of the round tally). The stepper
+  exists because a coach reading this one-handed during a match needs a
+  way to fix a mis-tap or award a tie/forfeit without re-deciding who won
+  an entire round. Both are additive — nothing about the round-winner
+  buttons resets or is reset by a manual adjustment.
 
 **Kept intentionally decoupled — this may become its own app someday.**
 The user's actual use case splits in two: (1) a bit of competitive spice

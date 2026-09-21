@@ -1,7 +1,21 @@
 import React, { useState, useMemo } from "react";
-import { ChevronLeft, Check, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, Check, RotateCcw, X, Printer } from "lucide-react";
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 import { COLORS, usePersisted, displayName } from "./shared.js";
 import { computeRoundPlan, planTeamLayout, generateSchedule } from "./tournamentLogic.js";
+
+// PDF export follows the same pattern as handlePrint/PrintArea in App.jsx
+// (see CLAUDE.md's "Read this before touching print/PDF code"): a
+// display:none-except-while-capturing root, html2canvas + jsPDF sliced to
+// page size, one PDF page per repeating section (here: one per round) so a
+// round never gets cut mid-table, and the share-sheet-with-download-fallback
+// delivery — window.print()/alert() are avoidably unreliable inside an
+// installed iOS PWA, so this deliberately doesn't use either. Kept
+// self-contained here rather than added to the main PrintArea/handlePrint,
+// since this component's data (schedule, letters, points) has nothing to do
+// with the roster/lineup/match print targets those already handle.
+const PRINT_ROOT_ID = "tourney-print-root";
 
 // "King & Queen of the Court" tournament generator — see
 // tournament-builder-spec.md this was built from. Deliberately local-only
@@ -31,6 +45,7 @@ const initialState = {
   letterFor: {}, // roster id -> display letter
   schedule: null, // { rounds, stats, strategy }
   winners: {}, // "r-c" -> "A" | "B"
+  manualAdjustments: {}, // playerId -> point delta, layered on top of the tap-to-record tally (corrections/ties)
   error: null,
 };
 
@@ -73,11 +88,32 @@ function primaryButtonStyle(disabled) {
   };
 }
 
+function pointStepperButtonStyle() {
+  return {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    border: `1px solid ${COLORS.line}`,
+    background: COLORS.bg,
+    color: COLORS.chalk,
+    fontWeight: 700,
+    fontSize: 14,
+    lineHeight: 1,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+}
+
 export default function TournamentBuilder({ roster }) {
   const [state, setState] = usePersisted("vb-tournament", initialState);
   const { step, config, layout, playerOrder, letterFor, schedule, winners, error } = state;
+  const manualAdjustments = state.manualAdjustments || {};
   const guests = config.guests || [];
   const [guestName, setGuestName] = useState("");
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState(null);
 
   const patch = (fields) => setState((s) => ({ ...s, ...fields }));
   const patchConfig = (fields) => setState((s) => ({ ...s, config: { ...s.config, ...fields } }));
@@ -181,20 +217,32 @@ export default function TournamentBuilder({ roster }) {
   const points = useMemo(() => {
     const tally = {};
     playerOrder.forEach((id) => (tally[id] = 0));
-    if (!schedule) return tally;
-    schedule.rounds.forEach((round, r) => {
-      round.courts.forEach((court, c) => {
-        const side = winners[`${r}-${c}`];
-        if (!side) return;
-        const winningTeam = side === "A" ? court.teamA : court.teamB;
-        winningTeam.forEach((idx) => {
-          const id = playerOrder[idx];
-          tally[id] = (tally[id] || 0) + 1;
+    if (schedule) {
+      schedule.rounds.forEach((round, r) => {
+        round.courts.forEach((court, c) => {
+          const side = winners[`${r}-${c}`];
+          if (!side) return;
+          const winningTeam = side === "A" ? court.teamA : court.teamB;
+          winningTeam.forEach((idx) => {
+            const id = playerOrder[idx];
+            tally[id] = (tally[id] || 0) + 1;
+          });
         });
       });
+    }
+    playerOrder.forEach((id) => {
+      tally[id] = (tally[id] || 0) + (manualAdjustments[id] || 0);
     });
     return tally;
-  }, [schedule, winners, playerOrder]);
+  }, [schedule, winners, playerOrder, manualAdjustments]);
+
+  // Standings update automatically from the tap-to-record winners above —
+  // this is a manual layer on top for corrections/ties/forfeits, since a
+  // coach reading this one-handed during a match needs a way to fix a
+  // mis-tap without re-deciding who won the whole round.
+  const adjustPoints = (id, delta) => {
+    patch({ manualAdjustments: { ...manualAdjustments, [id]: (manualAdjustments[id] || 0) + delta } });
+  };
 
   const standings = useMemo(
     () =>
@@ -204,6 +252,88 @@ export default function TournamentBuilder({ roster }) {
         .sort((a, b) => b.points - a.points || displayName(a.player).localeCompare(displayName(b.player))),
     [playerOrder, points, playerById]
   );
+
+  const handlePrintBracket = async () => {
+    if (printing || !schedule) return;
+    setPrinting(true);
+    setPrintError(null);
+    const root = document.getElementById(PRINT_ROOT_ID);
+    const forceCleanupTimer = setTimeout(() => {
+      root?.classList.remove("tourney-print-root-capturing");
+      setPrinting(false);
+    }, 20000);
+    try {
+      root.classList.add("tourney-print-root-capturing");
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const pdf = new jsPDF("p", "pt", "letter");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const MARGIN = 26;
+      const contentWidth = pageWidth - MARGIN * 2;
+      const contentHeight = pageHeight - MARGIN * 2;
+      let pageIndex = 0;
+
+      const captureElementToPdf = async (el) => {
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+        const scaleFactor = contentWidth / canvas.width;
+        const sliceHeightPx = contentHeight / scaleFactor;
+        let renderedPx = 0;
+        while (renderedPx < canvas.height) {
+          const thisSliceHeightPx = Math.min(sliceHeightPx, canvas.height - renderedPx);
+          const sliceCanvas = document.createElement("canvas");
+          sliceCanvas.width = canvas.width;
+          sliceCanvas.height = thisSliceHeightPx;
+          const ctx = sliceCanvas.getContext("2d");
+          ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+          const sliceData = sliceCanvas.toDataURL("image/jpeg", 0.85);
+          if (pageIndex > 0) pdf.addPage();
+          pdf.addImage(sliceData, "JPEG", MARGIN, MARGIN, contentWidth, thisSliceHeightPx * scaleFactor);
+          renderedPx += thisSliceHeightPx;
+          pageIndex++;
+        }
+      };
+
+      const groups = Array.from(root.querySelectorAll(".tourney-page-group"));
+      for (const group of groups) {
+        await captureElementToPdf(group);
+      }
+
+      const blob = pdf.output("blob");
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `tournament-bracket-${dateStr}.pdf`;
+      const file = new File([blob], filename, { type: "application/pdf" });
+
+      const downloadDirectly = () => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+        } catch (shareErr) {
+          if (shareErr.name !== "AbortError") downloadDirectly();
+        }
+      } else {
+        downloadDirectly();
+      }
+    } catch (err) {
+      // In-app error line rather than alert() — the exact iOS-standalone-PWA
+      // hazard CLAUDE.md flags for the main app's own PDF-failure alert().
+      setPrintError(`Couldn't generate the PDF: ${err?.message || err}`);
+    } finally {
+      clearTimeout(forceCleanupTimer);
+      root?.classList.remove("tourney-print-root-capturing");
+      setPrinting(false);
+    }
+  };
 
   if (step === "setup") {
     return (
@@ -448,13 +578,24 @@ export default function TournamentBuilder({ roster }) {
           {schedule.stats.distinctPairsCovered} of {schedule.stats.totalPossiblePairs} possible pairings happened at least
           once · no pair repeated more than {schedule.stats.maxRepeat}×
         </div>
-        <button
-          onClick={startOver}
-          style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12, flexShrink: 0, marginLeft: 8 }}
-        >
-          <RotateCcw size={13} /> New
-        </button>
+        <div style={{ display: "flex", gap: 14, flexShrink: 0, marginLeft: 8 }}>
+          <button
+            onClick={handlePrintBracket}
+            disabled={printing}
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: printing ? COLORS.chalkDim : COLORS.orange, cursor: printing ? "default" : "pointer", fontSize: 12, fontWeight: 700 }}
+          >
+            <Printer size={13} /> {printing ? "Printing…" : "Print"}
+          </button>
+          <button
+            onClick={startOver}
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: COLORS.chalkDim, cursor: "pointer", fontSize: 12 }}
+          >
+            <RotateCcw size={13} /> New
+          </button>
+        </div>
       </div>
+
+      {printError && <div style={{ color: COLORS.red, fontSize: 12, fontWeight: 600, padding: "0 2px" }}>{printError}</div>}
 
       <div style={cardStyle()}>
         <div style={labelStyle()}>Roster key</div>
@@ -530,15 +671,107 @@ export default function TournamentBuilder({ roster }) {
 
       <div style={cardStyle()}>
         <div style={labelStyle()}>Standings</div>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
+          Updates automatically as you tap winners above — use +/− here for corrections or ties.
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {standings.map((row, i) => (
-            <div key={row.player.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
+            <div key={row.player.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, padding: "4px 0" }}>
               <span>
                 {i + 1}. {displayName(row.player)}
+                {row.player.guest && <span style={{ color: COLORS.chalkDim, fontSize: 11 }}> (guest)</span>}
               </span>
-              <span style={{ fontWeight: 700 }}>{row.points}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={() => adjustPoints(row.player.id, -1)} style={pointStepperButtonStyle()} aria-label="Subtract a point">
+                  −
+                </button>
+                <span style={{ fontWeight: 700, minWidth: 18, textAlign: "center" }}>{row.points}</span>
+                <button onClick={() => adjustPoints(row.player.id, 1)} style={pointStepperButtonStyle()} aria-label="Add a point">
+                  +
+                </button>
+              </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <style>{`
+        #${PRINT_ROOT_ID} { display: none; }
+        #${PRINT_ROOT_ID}.tourney-print-root-capturing {
+          display: block;
+          position: fixed;
+          top: 0;
+          left: -9999px;
+          width: 816px;
+          background: #fff;
+          color: #000;
+          padding: 32px;
+          font-family: 'Inter', system-ui, sans-serif;
+        }
+      `}</style>
+      <div id={PRINT_ROOT_ID}>
+        <div className="tourney-page-group">
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 22, marginBottom: 4 }}>King &amp; Queen of the Court</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 18 }}>{new Date().toLocaleDateString()}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Roster Key</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 18px", fontSize: 13 }}>
+            {playerOrder.map((id) => {
+              const p = playerById[id];
+              if (!p) return null;
+              return (
+                <div key={id}>
+                  <b>{letterFor[id]}</b> — {displayName(p)}
+                  {p.guest ? " (guest)" : ""}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {schedule.rounds.map((round, r) => (
+          <div className="tourney-page-group" key={r}>
+            <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18, marginBottom: 12 }}>Round {r + 1}</div>
+            {round.courts.map((court, c) => (
+              <div key={c} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 4 }}>COURT {court.court}</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
+                  <tbody>
+                    <tr>
+                      {[
+                        ["A", court.teamA],
+                        ["B", court.teamB],
+                      ].map(([side, team]) => (
+                        <td key={side} style={{ border: "1px solid #ccc", padding: 10, width: "50%", fontWeight: 700 }}>
+                          {team.map((idx) => letterFor[playerOrder[idx]]).join(" ")}
+                          {winners[`${r}-${c}`] === side ? "  ✓ WINNER" : ""}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            {round.byes.length > 0 && (
+              <div style={{ fontSize: 12, color: "#666" }}>Sitting out: {round.byes.map((idx) => letterFor[playerOrder[idx]]).join(" ")}</div>
+            )}
+          </div>
+        ))}
+
+        <div className="tourney-page-group">
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18, marginBottom: 12 }}>Standings</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+            <tbody>
+              {standings.map((row, i) => (
+                <tr key={row.player.id}>
+                  <td style={{ border: "1px solid #ccc", padding: "7px 10px" }}>
+                    {i + 1}. {displayName(row.player)}
+                    {row.player.guest ? " (guest)" : ""}
+                  </td>
+                  <td style={{ border: "1px solid #ccc", padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{row.points}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
