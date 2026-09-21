@@ -11,7 +11,11 @@ know, the same way past sessions did for you.
 ## Stack
 
 - Vite + React, single file: `src/App.jsx` (~7,950 lines — everything lives
-  here, no component splitting yet)
+  here, no component splitting yet) plus two small extracted modules:
+  `src/shared.js` (theme tokens/`COLORS`, `usePersisted`, `displayName`/
+  `fullName` — pulled out of `App.jsx` solely so a second component file
+  could reuse them without a circular import) and `src/tournamentLogic.js`
+  (see Tournament Builder below).
 - Firebase Firestore for sync (team code → 3 docs: `main`, `logs`,
   `branding`), offline persistence via IndexedDB
 - `vite-plugin-pwa` for the offline app shell
@@ -39,6 +43,56 @@ but shares data with it:
   constants that wire up the cross-links in each app's header/Settings.
 - If you change the shape of `roster`, `lineups`, or `activeLineupId` here,
   Player Eval reads that same shape — check it doesn't break there too.
+
+## Tournament Builder ("Tourney" tab)
+
+A "King & Queen of the Court" generator: split checked-in players into
+random teams each round, minimizing repeat teammates, with a live point
+tally. Built from `tournament-builder-spec.md` (a spec drafted in a chat
+session and handed to Claude Code — see that file's own history if it's
+still around). Lives in its own files rather than inside `App.jsx`:
+
+- `src/tournamentLogic.js` — pure, framework-free scheduling math (round
+  count from practice time, team-size/court-fit planning with fallback
+  strategies, the GF(4) affine-plane perfect schedule for the 16-player/
+  team-size-4 special case, and simulated annealing for everything else).
+  No React, no Firestore — testable with a plain Node script, which is how
+  it was actually verified (see CLAUDE.md's "On testing" section on why
+  that matters more than it sounds like it should).
+- `src/TournamentBuilder.jsx` — the UI: attendance checklist → court/time/
+  team-size form → (if the headcount doesn't divide evenly) a strategy
+  picker → the round-by-round schedule with tap-to-record winners and a
+  standings table.
+- `src/shared.js` — `COLORS`, `usePersisted`, `displayName`/`fullName`
+  moved out of `App.jsx` so this new file could import them without
+  `App.jsx` importing `TournamentBuilder.jsx` right back (a circular
+  import). If you add a third module that needs these, put it here too
+  rather than reaching into `App.jsx` directly.
+
+Deliberately **local-only** (`usePersisted` → `localStorage`, key
+`vb-tournament`), not synced through the team's Firestore `main` doc:
+
+- It's a same-practice, same-device tool the coach runs live off one
+  phone — there's no cross-device sync need the way there is for
+  roster/lineups.
+- The schedule data is arrays-of-arrays of player indices (round → court →
+  team → player), which is exactly the shape that broke every write to
+  `main` once already (see "nested arrays" under Data model gotchas). Never
+  put this shape in Firestore without flattening it the way `ballots` had
+  to be.
+- If a future session wants this to sync (e.g. so an assistant coach's
+  phone sees the same bracket), it needs its own Firestore doc, not a
+  field bolted onto `main` — and the array-of-arrays shape still needs
+  flattening first either way.
+
+What's genuinely built vs. spec nice-to-haves still open: attendance
+checkboxes, all three fallback strategies (single match / rotating subs /
+bye rotation) with the coach choosing when it's ambiguous, and live
+tap-to-record winners with auto-tallied standings are all in. Not built:
+PDF/print export (the spec calls this optional — "Printable/exportable...
+or on-screen... if this becomes interactive" — and it did become
+interactive, so print was skipped for now), saving past tournament results,
+and roster auto-sync of attendance state across sessions.
 
 ## Read this before touching print/PDF code
 
