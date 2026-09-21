@@ -344,14 +344,15 @@ Worth knowing about even though they're not code issues:
   swaps the label, second tap fires, and it disarms itself after
   `CONFIRM_ARM_TIMEOUT` so a forgotten armed button can't go off on a stray
   tap later. The captain vote's "Reset Votes" and "Start a New Election"
-  use it; that sheet is handed around a locker room on the installed PWA,
-  which is the worst possible place for a dialog that can fail to render.
-  **Four native calls remain** and are the same hazard, listed here so they
-  don't have to be rediscovered: `End this match?` (Live screen), the
-  roster delete confirm, `Unlink this device from its current team?`
-  (Settings), and the PDF-failure `alert()` in `handlePrint` — that last
-  one needs an in-app error line rather than `ConfirmButton`, and sits in
-  the iOS print path where a dialog failing to render is most likely.
+  use it — that sheet is handed around a locker room on the installed PWA,
+  which is the worst possible place for a dialog that can fail to render —
+  and so does **End Match** (Stats → Box Score), which locks the match in.
+  **Three native calls remain** and are the same hazard, listed here so they
+  don't have to be rediscovered: the roster delete confirm, `Unlink this
+  device from its current team?` (Settings), and the PDF-failure `alert()`
+  in `handlePrint` — that last one needs an in-app error line rather than
+  `ConfirmButton`, and sits in the iOS print path where a dialog failing to
+  render is most likely.
 - **Don't code-split this app.** `jspdf`/`html2canvas` (Print-only, and
   roughly a third of the bundle) were briefly switched to dynamic
   `await import(...)` to shrink the initial load. That was reverted the
