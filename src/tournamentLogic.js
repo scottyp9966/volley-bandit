@@ -206,6 +206,19 @@ const uniformSizes = (numPlayers, groupSize) => Array(numPlayers / groupSize).fi
 export function optimizePartition(numPlayers, groupSizes, numRounds, rng = Math.random) {
   if (numRounds <= 0) return { schedule: [], stats: emptyStats(numPlayers, numRounds) };
 
+  // A single group (everyone on the one court/group there is — half-court
+  // mode with courts === 1 hits this on both the standard-fit and "uneven"
+  // paths) has no second group to swap a player into, so there's nothing to
+  // optimize: the same players are teammates every round regardless of
+  // order. Without this early return, the swap-target pick below
+  // (`while (p2 === p1 || schedule[r][p2] === schedule[r][p1])`) can never
+  // find a player in a different group and spins forever — this was a
+  // real, reproduced hang (see the matching guard in optimizeRoundGroups).
+  if (groupSizes.length <= 1) {
+    const schedule = Array.from({ length: numRounds }, () => new Array(numPlayers).fill(0));
+    return { schedule, stats: computeStats(schedule, numPlayers) };
+  }
+
   let best = null;
   let bestCost = Infinity;
   const restarts = 4;
@@ -323,6 +336,15 @@ function marginalRoundCost(groups, pairCounts) {
 
 function optimizeRoundGroups(pool, groupSize, pairCounts, rng) {
   const numGroups = pool.length / groupSize;
+
+  // A single group (half-court mode with only one court/group per round)
+  // has no second group to swap a player with, so there's nothing to
+  // optimize — every pool player is in the one group regardless of order.
+  // Without this early return, the swap-target pick below
+  // (`while (g2 === g1) g2 = ...`) can never find a second group index and
+  // spins forever, freezing the tab — this was a real, reproduced hang.
+  if (numGroups <= 1) return [pool.slice()];
+
   let best = null;
   let bestCost = Infinity;
   const perfectCost = numGroups * ((groupSize * (groupSize - 1)) / 2); // every pair brand new this round

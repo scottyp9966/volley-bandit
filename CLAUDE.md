@@ -161,6 +161,34 @@ still around). Lives in its own files rather than inside `App.jsx`:
     there's no winner to record) or the normal two-team matchup; if you
     add a third rendering site for `round.courts`, it needs the same
     check or it'll render a dangling "vs" against an empty team.
+  - **"Nothing in the search/annealing logic needed to change" above was
+    wrong — half court with `courts === 1` freezes the whole tab.** Real,
+    user-reported: tapping the (only) strategy option on the strategy
+    picker did nothing — no navigation, no error, just a dead tap. Root
+    cause was an infinite loop, not a click-handler bug: both
+    `optimizeRoundGroups` (the `bye` strategy's per-round group search)
+    and `optimizePartition` (every other strategy's joint search) pick a
+    *second* group to swap a player into via `while (g2 === g1) g2 =
+    Math.floor(rng() * numGroups)` — and when `numGroups`/`groupSizes.length`
+    is 1, there is no second group, so that loop can never find one and
+    spins forever. This is unreachable in full-court mode (`desiredTeams =
+    courts * 2` is always ≥ 2), but half court's `teamsPerCourt = 1` means
+    `courts === 1` alone — the single most natural half-court setup, one
+    court running a drill — produces `desiredTeams === 1`, hitting it on
+    the `standard`, `uneven`, *and* `bye` paths alike (confirmed by
+    reproducing the exact hang in a plain Node script — see CLAUDE.md's
+    "On testing" section on why a synchronous infinite loop needs a
+    `timeout` around the repro, not just staring at the code, and why a
+    `git diff` alone would've missed this since neither of the touched
+    functions' own code looked wrong in isolation). Fixed with an early
+    return in each: a single group has nothing to optimize between groups
+    (every player in the pool is teammates regardless of order/round), so
+    `optimizeRoundGroups` returns `[pool.slice()]` and `optimizePartition`
+    returns the trivial all-players-in-group-0 assignment for every round,
+    both skipping the swap search entirely rather than guarding the
+    `while` loop some other way. If you touch either function again, keep
+    the `numGroups <= 1` / `groupSizes.length <= 1` guard at the top —
+    it's not an optimization, it's what stops the tab from hanging.
 - `src/TournamentBuilder.jsx` — the UI: attendance checklist → court/time/
   team-size form → (if the headcount doesn't divide evenly) a strategy
   picker → the round-by-round schedule with tap-to-record winners and a
