@@ -717,55 +717,77 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
           position: fixed;
           top: 0;
           left: -9999px;
-          width: 780px;
+          width: 816px;
           background: #fff;
           color: #000;
-          padding: 24px 28px;
+          padding: 32px;
           font-family: 'Inter', system-ui, sans-serif;
         }
       `}</style>
-      {/* One dense reference sheet, not a paginated document — real names
-          inline per matchup (not just letters) since this is meant to be
-          read at a glance mid-practice, and no per-round page breaks so it
-          actually stays to one printed page. */}
+      {/* One reference sheet, not a paginated document (no per-round page
+          breaks — see the main app's PrintArea/handlePrint for why that
+          pattern exists elsewhere but is wrong here). Two parts: who plays
+          whom each round (real names, not just the on-screen A/B/C letters
+          — those are a fine shorthand for tapping winners live on a phone,
+          useless on paper), and a blank grid below it sized to fill the
+          rest of the page — this is deliberately NOT pre-filled from
+          `points`/`winners`; it's a paper scoresheet for the coach to mark
+          up by hand during play, not a printout of the live tally. */}
       <div id={PRINT_ROOT_ID}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 18 }}>King &amp; Queen of the Court</div>
-          <div style={{ fontSize: 11, color: "#666" }}>{new Date().toLocaleDateString()}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 26 }}>King &amp; Queen of the Court</div>
+          <div style={{ fontSize: 14, color: "#666" }}>{new Date().toLocaleDateString()}</div>
         </div>
 
         {schedule.rounds.map((round, r) => (
-          <div key={r} style={{ marginBottom: 6, breakInside: "avoid" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>Round {r + 1}</div>
+          <div key={r} style={{ marginBottom: 10, breakInside: "avoid" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 3 }}>Round {r + 1}</div>
             {round.courts.map((court, c) => (
-              <div key={c} style={{ fontSize: 11, marginBottom: 1 }}>
+              <div key={c} style={{ fontSize: 14, marginBottom: 2 }}>
                 <span style={{ color: "#666" }}>Court {court.court}: </span>
                 <b>{court.teamA.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
                 <span style={{ color: "#666" }}> vs </span>
                 <b>{court.teamB.map((idx) => displayName(playerAt(idx))).join(", ")}</b>
-                {winners[`${r}-${c}`] && (
-                  <span style={{ color: "#2E7D4F", fontWeight: 700 }}>
-                    {" "}
-                    — {winners[`${r}-${c}`] === "A" ? court.teamA.map((idx) => displayName(playerAt(idx))).join("/") : court.teamB.map((idx) => displayName(playerAt(idx))).join("/")} won
-                  </span>
-                )}
               </div>
             ))}
             {round.byes.length > 0 && (
-              <div style={{ fontSize: 10, color: "#666" }}>Sitting out: {round.byes.map((idx) => displayName(playerAt(idx))).join(", ")}</div>
+              <div style={{ fontSize: 13, color: "#666" }}>Sitting out: {round.byes.map((idx) => displayName(playerAt(idx))).join(", ")}</div>
             )}
           </div>
         ))}
 
-        <div style={{ fontSize: 12, fontWeight: 700, marginTop: 10, marginBottom: 4 }}>Standings</div>
-        <div style={{ columnCount: 2, columnGap: 24, fontSize: 11 }}>
-          {standings.map((row, i) => (
-            <div key={row.player.id} style={{ breakInside: "avoid" }}>
-              {i + 1}. {displayName(row.player)}
-              {row.player.guest ? " (guest)" : ""} — {row.points}
-            </div>
-          ))}
-        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, marginTop: 20, marginBottom: 8 }}>Results — fill in as you go</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
+          <thead>
+            <tr>
+              <th style={{ border: "1px solid #000", padding: "8px 10px", textAlign: "left", background: "#f0f0f0" }}>Player</th>
+              {schedule.rounds.map((_, r) => (
+                <th key={r} style={{ border: "1px solid #000", padding: "8px 6px", background: "#f0f0f0", minWidth: 40 }}>
+                  R{r + 1}
+                </th>
+              ))}
+              <th style={{ border: "1px solid #000", padding: "8px 10px", background: "#f0f0f0", minWidth: 56 }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...playerOrder]
+              .map((id) => playerById[id])
+              .filter(Boolean)
+              .sort((a, b) => displayName(a).localeCompare(displayName(b)))
+              .map((p) => (
+                <tr key={p.id}>
+                  <td style={{ border: "1px solid #000", padding: "10px 10px", fontWeight: 600 }}>
+                    {displayName(p)}
+                    {p.guest ? " (guest)" : ""}
+                  </td>
+                  {schedule.rounds.map((_, r) => (
+                    <td key={r} style={{ border: "1px solid #000", height: 34 }} />
+                  ))}
+                  <td style={{ border: "1px solid #000" }} />
+                </tr>
+              ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

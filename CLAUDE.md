@@ -109,18 +109,34 @@ auto-sync of attendance state across sessions.
   touching print/PDF code" below for why that pattern looks the way it
   does) — but **deliberately does NOT copy the one-page-per-repeating-
   section behavior** that pattern also uses. This sheet is meant to be a
-  single at-a-glance reference card a coach can hold during practice, not
-  a paginated document — the first version forced one PDF page per round
-  (plus separate pages for a roster-key legend and standings), which for a
+  single reference card a coach can hold during practice, not a paginated
+  document — the first version forced one PDF page per round (plus
+  separate pages for a roster-key legend and standings), which for a
   5-round tournament produced 7 mostly-blank pages. Fixed: one continuous
   `html2canvas` capture of the whole sheet (no `.tourney-page-group`
-  splitting), a dense layout (small type, tight spacing, `columnCount: 2`
-  standings), and **real player names inline in every matchup** instead of
+  splitting), and **real player names inline in every matchup** instead of
   just the on-screen A/B/C letters — the letters are a fine shorthand for
   tapping winners live on a phone, but useless on a printed sheet meant to
   be read by someone who wasn't standing there. It naturally still
   overflows onto a second page if the round/player count is large enough;
-  nothing forces it to stay at one beyond the layout being kept dense.
+  nothing forces it to stay at one.
+  - **The results section is a blank grid, not the computed standings** —
+    a `<table>` with one row per player (alphabetical, not letter/roster
+    order — easier to find a name on paper), one column per round, and a
+    Total column, every cell empty. This is deliberate: it's a paper
+    scoresheet for the coach to mark up by hand during play, a
+    replacement for (not a printout of) the live `points`/`winners`
+    tally — don't wire it up to pre-fill from that state without checking
+    that's actually what's being asked for, since the whole point was to
+    get *away* from the on-screen tally for this one sheet.
+  - Sized to use the full page deliberately: root width matches the main
+    app's own print-root convention (816px/32px padding, not an arbitrary
+    smaller box), and font sizes were bumped substantially (16-26px
+    headings, 14-15px body/grid, up from an initial dense-for-its-own-sake
+    10-11px pass) after direct user feedback that the first version left
+    most of the page blank and was hard to read. If you touch this sheet
+    again, verify visually (render the actual PDF, don't just trust the
+    JSX) rather than assuming smaller type = safer.
   It was built as its own copy rather than plugged into the main
   `PrintArea`, since this component's data (the generated schedule,
   points) has nothing to do with the roster/lineup/match print targets
