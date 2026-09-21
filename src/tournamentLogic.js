@@ -31,9 +31,13 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
     }
   }
 
-  // No perfect fit — build fallback options at a chosen team size (the
-  // coach's explicit choice, or 4 as the default when left on auto).
-  const teamSize = teamSizePref === "auto" ? 4 : teamSizePref;
+  // No perfect fit at any size. Build fallback options across every
+  // candidate team size when left on auto (not just one default size) —
+  // e.g. 18 players doesn't split evenly at size 4, but size 3 gives 6
+  // exact teams (a clean bye rotation, no partial-team subs needed), which
+  // the coach would otherwise never be offered. When the coach picked an
+  // explicit size, only that size's options are shown.
+  const sizesForFallbacks = teamSizePref === "auto" ? [3, 4, 5, 6] : [teamSizePref];
   const strategies = [];
 
   if (playerCount % 2 === 0 && playerCount <= 12) {
@@ -47,33 +51,37 @@ export function planTeamLayout(playerCount, courts, teamSizePref) {
     });
   }
 
-  const numFullTeams = Math.floor(playerCount / teamSize);
-  const leftover = playerCount - numFullTeams * teamSize;
-  if (numFullTeams >= 2 && leftover > 0) {
-    strategies.push({
-      key: "subs",
-      label: `${numFullTeams} teams of ${teamSize}, ${leftover} rotating sub${leftover > 1 ? "s" : ""}`,
-      detail: `Leftover player${leftover > 1 ? "s" : ""} join a different team each round.`,
-      teamSize,
-      numFullTeams,
-      leftover,
-      courtsUsed: Math.min(Math.floor(numFullTeams / 2), courts),
-    });
+  for (const teamSize of sizesForFallbacks) {
+    const numFullTeams = Math.floor(playerCount / teamSize);
+    const leftover = playerCount - numFullTeams * teamSize;
+
+    // A given team size is either an exact multiple of playerCount (bye
+    // candidate) or isn't (subs candidate) — never both — so this is just
+    // "which one applies at this size," not a preference between them.
+    if (numFullTeams > desiredTeams && leftover === 0) {
+      strategies.push({
+        key: "bye",
+        label: `Team size ${teamSize}: ${numFullTeams} teams, rotating byes`,
+        detail: `Only ${desiredTeams} teams play each round; the rest sit out on a fair rotation (never back-to-back when avoidable).`,
+        teamSize,
+        numFullTeams,
+        leftover: 0,
+        courtsUsed: courts,
+      });
+    } else if (numFullTeams >= 2 && leftover > 0) {
+      strategies.push({
+        key: "subs",
+        label: `Team size ${teamSize}: ${numFullTeams} teams, ${leftover} rotating sub${leftover > 1 ? "s" : ""}`,
+        detail: `Leftover player${leftover > 1 ? "s" : ""} join a different team each round.`,
+        teamSize,
+        numFullTeams,
+        leftover,
+        courtsUsed: Math.min(Math.floor(numFullTeams / 2), courts),
+      });
+    }
   }
 
-  if (numFullTeams > desiredTeams && leftover === 0) {
-    strategies.push({
-      key: "bye",
-      label: `${numFullTeams} teams of ${teamSize}, rotating byes`,
-      detail: `Only ${desiredTeams} teams play each round; the rest sit out on a fair rotation.`,
-      teamSize,
-      numFullTeams,
-      leftover: 0,
-      courtsUsed: courts,
-    });
-  }
-
-  return { fitsStandard: false, desiredTeams, teamSize, strategies };
+  return { fitsStandard: false, desiredTeams, teamSize: sizesForFallbacks[0], strategies };
 }
 
 function standardLayout(playerCount, teamSize, courts) {
@@ -224,6 +232,85 @@ function assignmentToGroups(assignment, numGroups) {
   return groups;
 }
 
+// ---- Bye-strategy helpers ----
+// The bye strategy needs a different shape of optimization than the other
+// three: WHICH players are even in the pool changes every round (whoever
+// isn't sitting out), so it can't run one joint multi-round SA over a
+// fixed player set the way optimizePartition does. Picking byes from a
+// round's already-reshuffled groups (the original approach) turned out to
+// be unable to reliably avoid back-to-back sits once the bye fraction got
+// large — with e.g. 8 of 24 players benched a round, next round's groups
+// are close to random, so the odds every one of them happens to dodge all
+// 8 previously-benched players are low. Fixed by picking WHO sits out
+// first (a hard, fairness + no-back-to-back-preferring choice over
+// individual players), then only partitioning whoever's left playing.
+
+// Cost added by using each intra-group pair in `groups` for the first time
+// this round, given how many times each pair already appeared in earlier
+// rounds (`pairCounts`). Sum-of-squares algebra: c² → (c+1)² adds 2c+1;
+// summing that per pair approximates the same objective
+// optimizePartition's joint SA minimizes, just greedily one round at a
+// time (unavoidable here since the pool itself isn't fixed across rounds).
+function marginalRoundCost(groups, pairCounts) {
+  let cost = 0;
+  for (const members of groups) {
+    for (let i = 0; i < members.length; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        const a = Math.min(members[i], members[j]);
+        const b = Math.max(members[i], members[j]);
+        cost += 2 * (pairCounts[`${a}-${b}`] || 0) + 1;
+      }
+    }
+  }
+  return cost;
+}
+
+function optimizeRoundGroups(pool, groupSize, pairCounts, rng) {
+  const numGroups = pool.length / groupSize;
+  let best = null;
+  let bestCost = Infinity;
+  const perfectCost = numGroups * ((groupSize * (groupSize - 1)) / 2); // every pair brand new this round
+
+  for (let restart = 0; restart < 3; restart++) {
+    const shuffled = pool.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    let groups = Array.from({ length: numGroups }, (_, g) => shuffled.slice(g * groupSize, (g + 1) * groupSize));
+    let cost = marginalRoundCost(groups, pairCounts);
+    let temp = 4;
+    const cooling = 0.99;
+
+    for (let iter = 0; iter < 600; iter++) {
+      const g1 = Math.floor(rng() * numGroups);
+      let g2 = Math.floor(rng() * numGroups);
+      while (g2 === g1) g2 = Math.floor(rng() * numGroups);
+      const i1 = Math.floor(rng() * groupSize);
+      const i2 = Math.floor(rng() * groupSize);
+      const trial = groups.map((g) => g.slice());
+      const tmp = trial[g1][i1];
+      trial[g1][i1] = trial[g2][i2];
+      trial[g2][i2] = tmp;
+      const trialCost = marginalRoundCost(trial, pairCounts);
+      const delta = trialCost - cost;
+      if (delta <= 0 || rng() < Math.exp(-delta / temp)) {
+        groups = trial;
+        cost = trialCost;
+      }
+      temp *= cooling;
+    }
+
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = groups;
+    }
+    if (bestCost === perfectCost) break;
+  }
+
+  return best;
+}
+
 // Top-level entry point: builds the full round-by-round plan given the
 // chosen strategy from planTeamLayout(). playerCount here is the number of
 // CHECKED-IN players (indices 0..playerCount-1); the caller maps indices
@@ -273,32 +360,63 @@ export function generateSchedule({ playerCount, teamSize, numRounds, courts, str
   }
 
   if (strategy === "bye") {
-    const numFullTeams = Math.floor(playerCount / teamSize);
     const desiredTeams = courts * 2;
-    const { schedule, stats } = optimizePartition(playerCount, teamSize, numRounds, rng);
+    const byesNeeded = playerCount - desiredTeams * teamSize;
     const byeCounts = new Array(playerCount).fill(0);
+    // -2 (not -1) so round 0 never reads as "sat out the round before this one".
+    const lastByeRound = new Array(playerCount).fill(-2);
+    const allPlayers = Array.from({ length: playerCount }, (_, i) => i);
+    const pairCounts = {};
+    const rounds = [];
 
-    const rounds = schedule.map((assignment) => {
-      const groups = assignmentToGroups(assignment, numFullTeams);
-      const teamsToBye = numFullTeams - desiredTeams;
-      // Sit out the groups whose members have banked the fewest byes so far,
-      // so everyone's bye count converges to equal over the tournament.
-      const order = groups
-        .map((members, teamIdx) => ({ teamIdx, avgByes: members.reduce((s, p) => s + byeCounts[p], 0) / members.length }))
-        .sort((a, b) => a.avgByes - b.avgByes);
-      const byeTeamIdx = new Set(order.slice(0, teamsToBye).map((o) => o.teamIdx));
-      const playingTeams = groups.filter((_, i) => !byeTeamIdx.has(i));
-      const byes = groups.filter((_, i) => byeTeamIdx.has(i)).flat();
+    for (let r = 0; r < numRounds; r++) {
+      // Decide WHO sits out before deciding any teams: fewest byes so far,
+      // strictly preferring anyone who didn't sit out last round, random
+      // tiebreak so ties don't always resolve the same way round after
+      // round. Doing this before team assignment (rather than reshuffling
+      // teams first and picking byes after) is what actually guarantees no
+      // back-to-back sit whenever it's mathematically possible — picking
+      // from already-random teams can't, once byes are a large enough
+      // share of the roster that "a team with zero recently-benched
+      // players" stops reliably existing.
+      const order = allPlayers
+        .map((p) => ({ p, tiebreak: rng(), backToBack: lastByeRound[p] === r - 1, byeCount: byeCounts[p] }))
+        .sort((a, b) =>
+          a.backToBack !== b.backToBack ? (a.backToBack ? 1 : -1) : a.byeCount !== b.byeCount ? a.byeCount - b.byeCount : a.tiebreak - b.tiebreak
+        );
+      const byes = order.slice(0, byesNeeded).map((o) => o.p);
+      const byeSet = new Set(byes);
       byes.forEach((p) => {
         byeCounts[p] += 1;
+        lastByeRound[p] = r;
+      });
+
+      const pool = allPlayers.filter((p) => !byeSet.has(p));
+      const groups = optimizeRoundGroups(pool, teamSize, pairCounts, rng);
+      groups.forEach((members) => {
+        for (let i = 0; i < members.length; i++) {
+          for (let j = i + 1; j < members.length; j++) {
+            const a = Math.min(members[i], members[j]);
+            const b = Math.max(members[i], members[j]);
+            const key = `${a}-${b}`;
+            pairCounts[key] = (pairCounts[key] || 0) + 1;
+          }
+        }
       });
 
       const courtsArr = [];
-      for (let c = 0; c < playingTeams.length / 2; c++) {
-        courtsArr.push({ court: c + 1, teamA: playingTeams[c * 2], teamB: playingTeams[c * 2 + 1] });
+      for (let c = 0; c < desiredTeams / 2; c++) {
+        courtsArr.push({ court: c + 1, teamA: groups[c * 2], teamB: groups[c * 2 + 1] });
       }
-      return { courts: courtsArr, idleCourts: [], byes };
-    });
+      rounds.push({ courts: courtsArr, idleCourts: [], byes });
+    }
+
+    const counts = Object.values(pairCounts);
+    const stats = {
+      distinctPairsCovered: counts.length,
+      totalPossiblePairs: (playerCount * (playerCount - 1)) / 2,
+      maxRepeat: counts.length ? Math.max(...counts) : 0,
+    };
     return { rounds, stats, strategy };
   }
 

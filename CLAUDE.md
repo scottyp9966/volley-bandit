@@ -59,6 +59,36 @@ still around). Lives in its own files rather than inside `App.jsx`:
   No React, no Firestore — testable with a plain Node script, which is how
   it was actually verified (see CLAUDE.md's "On testing" section on why
   that matters more than it sounds like it should).
+  - **`planTeamLayout`'s fallback strategies now span every candidate team
+    size** (3-6) when left on "auto", not just size 4. E.g. 18 players
+    doesn't divide evenly at size 4 (4 teams + 2 subs), but size 3 gives 6
+    exact teams — a strictly cleaner bye rotation the coach would
+    otherwise never see offered. Only relevant when no size gives a
+    perfect standard fit; that search still tries sizes in `[4, 3, 5, 6]`
+    preference order and returns immediately on the first hit, same as
+    before.
+  - **The `bye` strategy picks WHO sits out before deciding any teams**,
+    not the other way around. The original approach reshuffled all
+    players into random teams first and then benched whichever team(s)
+    had banked the fewest byes — which turned out unable to reliably
+    avoid benching the same player two rounds in a row once byes were a
+    large enough fraction of the roster (e.g. 8 of 24 players out per
+    round): next round's random teams are ~83% likely to contain at least
+    one of last round's benched players in any given group, so a
+    "clean" team often didn't exist to pick from. Fixed by choosing the
+    bye set directly from individual players each round (fewest byes so
+    far, strictly preferring anyone who didn't sit last round, random
+    tiebreak) via `optimizeRoundGroups`/`marginalRoundCost`, and only
+    partitioning whoever's left playing into teams — this makes
+    zero-back-to-back-byes achievable whenever the bye fraction allows it
+    at all (verified: 0 violations at 20 and 24 players over 8-10 rounds,
+    where the old approach produced dozens). This also means the bye
+    strategy no longer runs one joint multi-round `optimizePartition` up
+    front — it can't, since which players are even in the pool changes
+    every round — and instead minimizes repeat teammates round-by-round
+    against a running pair-count table. Slightly less globally optimal
+    than a joint solve, but the alternative (fixed pool) can't support
+    per-round-varying byes at all.
 - `src/TournamentBuilder.jsx` — the UI: attendance checklist → court/time/
   team-size form → (if the headcount doesn't divide evenly) a strategy
   picker → the round-by-round schedule with tap-to-record winners and a
@@ -117,9 +147,7 @@ auto-sync of attendance state across sessions.
   splitting), and **real player names inline in every matchup** instead of
   just the on-screen A/B/C letters — the letters are a fine shorthand for
   tapping winners live on a phone, but useless on a printed sheet meant to
-  be read by someone who wasn't standing there. It naturally still
-  overflows onto a second page if the round/player count is large enough;
-  nothing forces it to stay at one.
+  be read by someone who wasn't standing there.
   - **The results section is a blank grid, not the computed standings** —
     a `<table>` with one row per player (alphabetical, not letter/roster
     order — easier to find a name on paper), one column per round, and a
@@ -129,14 +157,22 @@ auto-sync of attendance state across sessions.
     tally — don't wire it up to pre-fill from that state without checking
     that's actually what's being asked for, since the whole point was to
     get *away* from the on-screen tally for this one sheet.
-  - Sized to use the full page deliberately: root width matches the main
-    app's own print-root convention (816px/32px padding, not an arbitrary
-    smaller box), and font sizes were bumped substantially (16-26px
-    headings, 14-15px body/grid, up from an initial dense-for-its-own-sake
-    10-11px pass) after direct user feedback that the first version left
-    most of the page blank and was hard to read. If you touch this sheet
-    again, verify visually (render the actual PDF, don't just trust the
-    JSX) rather than assuming smaller type = safer.
+  - **Auto-shrinks to fit one page** (`printScale`/the `px()` helper in
+    `TournamentBuilder.jsx`): every size in the printable sheet is
+    `px(n) = n * printScale` rather than a literal number.
+    `handlePrintBracket` renders at `printScale: 1` first, measures
+    `root.scrollHeight` against how tall one full letter page's worth of
+    content is at the root's fixed width, and — only if it's taller —
+    lowers `printScale` (floor `0.55`, so it never shrinks past
+    legibility) and re-renders once before capturing. A small tournament
+    renders at full size and fills the page; a large one (many
+    players/rounds — verified with 31 players/5 rounds/5 courts) shrinks
+    to still fit one page instead of spilling onto a second. This
+    replaced an earlier fixed-size dense layout that either wasted the
+    page (small tournaments) or overflowed it (large ones) — if you touch
+    this sheet again, verify visually (render the actual PDF at both a
+    small and a large player count, don't just trust the JSX) rather than
+    picking one fixed size and assuming it covers every tournament.
   It was built as its own copy rather than plugged into the main
   `PrintArea`, since this component's data (the generated schedule,
   points) has nothing to do with the roster/lineup/match print targets
