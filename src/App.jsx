@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.21b";
+const APP_VERSION = "2026.09.22a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4211,8 +4211,32 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
   const section = statsView?.section || "boxscore";
   const insightsMatchId = statsView?.insightsMatchId ?? null;
   const [editMode, setEditMode] = useState(false);
+  const [boxPickerOpen, setBoxPickerOpen] = useState(false);
 
   const setSection = (s) => setStatsView((prev) => ({ ...(prev || {}), section: s }));
+  // Which match the BOX SCORE is showing. It used to be hardwired to
+  // activeMatchId, which made a just-finished match unreachable: End Match
+  // clears activeMatchId (deliberately — new stats must not land on a closed
+  // match), so the box score fell back to entries with no match at all and
+  // read "No stats recorded yet" while the stats you'd just taken sat there
+  // fine. Insights always had a picker; the box score now has the same one.
+  // Explicit pick wins, then the active match, then the most recent match
+  // that actually has stats — which is the one you just ended.
+  const boxMatchPick = statsView?.boxMatchId;
+  const boxMatchId =
+    boxMatchPick !== undefined && boxMatchPick !== null
+      ? boxMatchPick
+      : activeMatchId != null
+      ? activeMatchId
+      : (() => {
+          const withStats = matches
+            .filter((m) => log.some((e) => e.matchId === m.id))
+            .sort((a, b) => (a.date < b.date ? 1 : -1));
+          return withStats.length ? withStats[0].id : null;
+        })();
+  const selectBoxMatch = (matchId) =>
+    setStatsView((prev) => ({ ...(prev || {}), section: "boxscore", boxMatchId: matchId }));
+
   const selectInsightsMatch = (matchId) => setStatsView((prev) => ({ ...(prev || {}), section: "insights", insightsMatchId: matchId }));
   const backToInsightsList = () => setStatsView((prev) => ({ ...(prev || {}), insightsMatchId: null }));
 
@@ -4220,9 +4244,17 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 
   // --- Box Score: current match only, kept simple — the plain per-player table ---
   const activeMatch = activeMatchId != null ? matches.find((m) => m.id === activeMatchId) : null;
+  const boxMatch = boxMatchId != null ? matches.find((m) => m.id === boxMatchId) : null;
+  // Every match worth offering in the box score's picker: anything with
+  // stats, plus whichever is active even before it has any.
+  const boxMatchList = useMemo(() => {
+    const withData = new Set(log.map((e) => e.matchId).filter((id) => id != null));
+    if (activeMatchId != null) withData.add(activeMatchId);
+    return matches.filter((m) => withData.has(m.id)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [matches, log, activeMatchId]);
   const boxLog = useMemo(
-    () => log.filter((e) => (e.matchId ?? null) === (activeMatchId ?? null)),
-    [log, activeMatchId]
+    () => log.filter((e) => (e.matchId ?? null) === (boxMatchId ?? null)),
+    [log, boxMatchId]
   );
   const boxRows = useMemo(() => groupByPlayer(boxLog), [boxLog, roster]);
 
@@ -4446,10 +4478,30 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 
       {section === "boxscore" && (
         <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
-              {activeMatch ? `vs. ${activeMatch.opponent}${activeMatch.date ? ` · ${activeMatch.date}` : ""}` : "Current match"}
-            </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+            <button
+              onClick={() => setBoxPickerOpen((v) => !v)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                background: "none",
+                border: "none",
+                padding: 0,
+                color: COLORS.chalkDim,
+                fontSize: 11,
+                textAlign: "left",
+                flex: 1,
+              }}
+            >
+              {boxMatch
+                ? `vs. ${boxMatch.opponent}${boxMatch.date ? ` · ${boxMatch.date}` : ""}`
+                : "Pick a match"}
+              <ChevronsRight
+                size={12}
+                style={{ transform: boxPickerOpen ? "rotate(-90deg)" : "rotate(90deg)", flexShrink: 0 }}
+              />
+            </button>
             <button
               onClick={() => setEditMode((v) => !v)}
               style={{
@@ -4468,6 +4520,48 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
               <Pencil size={11} /> {editMode ? "Done Editing" : "Edit"}
             </button>
           </div>
+          {boxPickerOpen && (
+            <div style={{ marginBottom: 12 }}>
+              {boxMatchList.length === 0 && (
+                <div style={{ fontSize: 12, color: COLORS.chalkDim }}>No matches with stats yet.</div>
+              )}
+              {boxMatchList.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    selectBoxMatch(m.id);
+                    setBoxPickerOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    background: m.id === boxMatchId ? COLORS.accentSoft : COLORS.bgRaised,
+                    border: `1px solid ${m.id === boxMatchId ? COLORS.orange : COLORS.line}`,
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    marginBottom: 6,
+                    color: COLORS.chalk,
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ color: COLORS.chalkDim, fontSize: 10 }}>{m.date || "No date"}</span>
+                  <div style={{ fontWeight: 600 }}>
+                    vs. {m.opponent}
+                    {m.id === activeMatchId && (
+                      <span style={{ color: COLORS.gold, fontSize: 9, fontWeight: 700, marginLeft: 6 }}>
+                        ACTIVE
+                      </span>
+                    )}
+                    {m.completedAt && (
+                      <span style={{ color: COLORS.chalkDim, fontSize: 9, fontWeight: 700, marginLeft: 6 }}>
+                        FINAL
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
           {editMode && (
             <div style={{ fontSize: 10, color: COLORS.chalkDim, marginBottom: 10 }}>
               Tap a stat to remove one instance of it for that player.
@@ -4479,7 +4573,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             editable
             editMode={editMode}
           />
-          {activeMatchId && (
+          {activeMatchId && boxMatchId === activeMatchId && (
             <>
               <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 14, marginBottom: 4 }}>
                 Ending the match locks it in: each set's lineup and score are
@@ -5856,7 +5950,13 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
   const playerFor = (id) => roster.find((p) => p.id === id);
 
   const boxSection = statsView?.section || "boxscore";
-  const boxLog = log.filter((e) => (e.matchId ?? null) === (activeMatchId ?? null));
+  // Follows the box score's own match picker, not activeMatchId — otherwise
+  // printing a finished match's sheet silently prints the live one instead.
+  const boxPrintMatchId =
+    statsView?.boxMatchId !== undefined && statsView?.boxMatchId !== null
+      ? statsView.boxMatchId
+      : activeMatchId;
+  const boxLog = log.filter((e) => (e.matchId ?? null) === (boxPrintMatchId ?? null));
 
   const boxRows = (() => {
     const byPlayer = {};
@@ -7930,7 +8030,7 @@ function AppInner() {
     trackStatKeys: STAT_BUTTONS.map((s) => s.key), // which stat buttons show on the Live screen — defaults to all
     matches: [],
     activeMatchId: null,
-    statsView: { section: "boxscore", insightsMatchId: null },
+    statsView: { section: "boxscore", insightsMatchId: null, boxMatchId: null },
     trendSubject: "team",
     teamName: "",
     coachName: "",

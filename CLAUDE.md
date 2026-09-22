@@ -578,6 +578,17 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   Shape note: snapshots are a map keyed by set number, holding `slots` (a
   map), `liberos` and `pairings` (arrays). No array ever directly contains
   another array, which Firestore would reject.
+- **The box score has its own match picker (`statsView.boxMatchId`), not
+  `activeMatchId`.** It used to filter on `activeMatchId` directly, which
+  made a just-finished match unreachable: `endMatch()` clears
+  `activeMatchId` on purpose (new stats must never land on a closed match),
+  so the box score fell through to entries with no match at all and read
+  "No stats recorded yet" while the stats sat there intact. Resolution order
+  is explicit pick → active match → most recent match with stats. `PrintArea`
+  reads the same `statsView.boxMatchId`, or printing a finished match's
+  sheet silently prints the live one. The End Match button only renders when
+  the box score is actually showing the active match, so it can't end one
+  match while you're looking at another.
 - **The Live screen has a Simple/Full toggle** (`vb-live-simple`, a
   per-device localStorage preference, not team data). Full is the original
   match-management surface; Simple hides rotation, subs, sub counters and
