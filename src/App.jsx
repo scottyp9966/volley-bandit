@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.23b";
+const APP_VERSION = "2026.09.23c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5455,7 +5455,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
 }
 
 // ---- Schedule screen: manual add + edit + paste import ----
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView }) {
+function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -5484,6 +5484,12 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
     setForm({ date: "", opponent: "", location: "", homeAway: "Home" });
     setMatchSheet(null);
   };
+
+  // Does this match carry anything that dies with it? Stats survive in the
+  // logs doc, but they stop being reachable per-match, and the frozen
+  // lineup/score record is stored on the match itself.
+  const hasRecord = (m) =>
+    !!(m.completedAt || m.lineupSnapshots || (matchIdsWithStats && matchIdsWithStats.has(m.id)));
 
   const deleteMatch = (id) => {
     setMatches((prev) => prev.filter((m) => m.id !== id));
@@ -5657,12 +5663,29 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               >
                 <Pencil size={14} />
               </button>
-              <button
-                onClick={() => deleteMatch(m.id)}
-                style={{ background: "none", border: "none", color: COLORS.chalkDim }}
-              >
-                <Trash2 size={15} />
-              </button>
+              {/* Deleting a played match is not recoverable: the stats
+                  themselves live in the logs doc and survive, but this
+                  match's lineupSnapshots/setScores/completedAt live on the
+                  match object and go with it, and the surviving stats drop
+                  out of every per-match view (box score picker, Insights,
+                  Trends) since those all list from `matches`. It used to
+                  delete on a single tap with no confirmation whatsoever. */}
+              <ConfirmButton
+                label={<Trash2 size={15} />}
+                confirmLabel={
+                  <span style={{ fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {hasRecord(m) ? "Delete record?" : "Delete?"}
+                  </span>
+                }
+                onConfirm={() => deleteMatch(m.id)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: COLORS.chalkDim,
+                  padding: "4px 2px",
+                }}
+                armedStyle={{ color: COLORS.red }}
+              />
             </div>
           </div>
         );
@@ -8209,6 +8232,13 @@ function AppInner() {
   const setRoleSystem = fieldSetter(setMainDoc, "roleSystem");
 
   const log = logsDoc.log;
+
+  // Which matches have stats recorded against them — used by the Schedule
+  // screen to warn before deleting one that carries a real record.
+  const matchIdsWithStats = useMemo(
+    () => new Set((log || []).map((e) => e.matchId).filter((id) => id != null)),
+    [log]
+  );
   const setLog = fieldSetter(setLogsDoc, "log");
   const pointLog = logsDoc.pointLog;
   const setPointLog = fieldSetter(setLogsDoc, "pointLog");
@@ -9062,6 +9092,7 @@ function AppInner() {
           <ScheduleScreen
             matches={matches}
             setMatches={setMatches}
+            matchIdsWithStats={matchIdsWithStats}
             activeMatchId={activeMatchId}
             setActiveMatchId={setActiveMatchId}
             setTab={setTab}

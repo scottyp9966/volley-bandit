@@ -601,6 +601,21 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   Shape note: snapshots are a map keyed by set number, holding `slots` (a
   map), `liberos` and `pairings` (arrays). No array ever directly contains
   another array, which Firestore would reject.
+- **Deleting a match from the Schedule does NOT delete its stats, but does
+  lose its record.** Stat entries live in the `logs` doc keyed by `matchId`;
+  `deleteMatch` only filters `main.matches`, so the numbers survive and
+  Season to Date (which reads the whole `log` with no match filter) keeps
+  counting them. What dies with the match is everything stored *on* the
+  match object — `lineupSnapshots`, `setScores`, `completedAt` — and the
+  surviving stats become unreachable per-match, since the box score picker,
+  the Insights list and Trends all build their lists from `matches`. That
+  made a mis-tap expensive, and the trash icon had **no confirmation at
+  all** — one tap, gone. It's a `ConfirmButton` now, reading "Delete
+  record?" rather than "Delete?" when the match carries stats or a
+  completed record (`hasRecord`, fed by `matchIdsWithStats` from `AppInner`).
+  Re-orphaned stats are still not reachable through any UI — if that ever
+  needs solving, it wants a "stats with no match" bucket in the box score
+  picker, not a change to deletion.
 - **The box score has its own match picker (`statsView.boxMatchId`), not
   `activeMatchId`.** It used to filter on `activeMatchId` directly, which
   made a just-finished match unreachable: `endMatch()` clears
