@@ -613,9 +613,18 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   all** — one tap, gone. It's a `ConfirmButton` now, reading "Delete
   record?" rather than "Delete?" when the match carries stats or a
   completed record (`hasRecord`, fed by `matchIdsWithStats` from `AppInner`).
-  Re-orphaned stats are still not reachable through any UI — if that ever
-  needs solving, it wants a "stats with no match" bucket in the box score
-  picker, not a change to deletion.
+  **Deleting one is recoverable**, and it happened for real, so it's built:
+  `orphanedMatches` (in `AppInner`) finds every `matchId` in `log`/`pointLog`
+  with no match on the schedule, and `recoverOrphanedMatch` rebuilds that
+  match **reusing the same id**, which is what relinks the stats, the point
+  log and every per-match view at once. The date is inferred from the
+  earliest entry's `id` (stat ids are `Date.now() + Math.random()`, so
+  `Math.floor(id)` is when it was recorded, i.e. the evening it was played),
+  and `setScores` is recomputed from `pointLog`. `lineupSnapshots` genuinely
+  cannot be rebuilt — it lived on the match object — so the record comes
+  back without them rather than with invented ones. Surfaced both in
+  Settings → Recover Deleted Matches and as a banner on the Schedule screen,
+  since that's where the deletion happens and where a coach looks first.
 - **The box score has its own match picker (`statsView.boxMatchId`), not
   `activeMatchId`.** It used to filter on `activeMatchId` directly, which
   made a just-finished match unreachable: `endMatch()` clears
@@ -745,6 +754,17 @@ Worth knowing about even though they're not code issues:
   `player-eval/src/App.jsx` catches this entire class in seconds and was
   clean as of build 2026.09.17c — worth re-running after any large
   paste-in of code from another session.
+  **`no-undef` does NOT catch the other half of this class: a temporal dead
+  zone.** `AppInner` is one enormous function body of `const` declarations,
+  so a `useMemo` that reads a `const` declared further down throws "Cannot
+  access 'X' before initialization" on every render and takes the whole app
+  to the `ErrorBoundary` at load. It is valid, lint-clean, builds fine, and
+  is invisible in a diff — both times it happened the memo looked perfectly
+  correct in isolation. Two separate instances in one session
+  (`matchIdsWithStats` above `log`, `orphanedMatches` above `pointLog`).
+  When adding a derived value to `AppInner`, put it *below* every `const` it
+  reads, and load the app once before believing it works — `npm run build`
+  will not tell you.
 - **There is an `ErrorBoundary`** wrapping the whole app (bottom of
   `App.jsx`, same in `player-eval/`). It catches render crashes *and*
   window-level `error`/`unhandledrejection` events, and replaces the
