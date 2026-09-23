@@ -2,7 +2,7 @@ import React, { useState, useMemo, forwardRef, useImperativeHandle, useEffect } 
 import { ChevronLeft, Check, RotateCcw, X, Pencil } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import { COLORS, usePersisted, displayName } from "./shared.js";
+import { COLORS, usePersisted, displayName, todayISO } from "./shared.js";
 import { computeRoundPlan, planTeamLayout, generateSchedule } from "./tournamentLogic.js";
 
 // PDF export follows the same pattern as handlePrint/PrintArea in App.jsx
@@ -379,7 +379,7 @@ const TournamentBuilder = forwardRef(function TournamentBuilder({ roster, onPrin
       }
 
       const blob = pdf.output("blob");
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const dateStr = todayISO();
       const filename = `tournament-bracket-${dateStr}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
 

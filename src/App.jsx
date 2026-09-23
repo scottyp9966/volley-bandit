@@ -7,7 +7,7 @@ import html2canvas from "html2canvas";
 import { registerSW } from "virtual:pwa-register";
 import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
-import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName } from "./shared.js";
+import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO } from "./shared.js";
 
 // NOTE: these are deliberately STATIC imports, even though jsPDF and
 // html2canvas are only used by Print and are a large share of the bundle.
@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.23a";
+const APP_VERSION = "2026.09.23b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -887,7 +887,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const matchRecord =
     activeMatch &&
     (activeMatch.completedAt ||
-      (hasSnapshots && activeMatch.date && activeMatch.date < new Date().toISOString().slice(0, 10)))
+      (hasSnapshots && activeMatch.date && activeMatch.date < todayISO()))
       ? activeMatch
       : null;
 
@@ -5493,7 +5493,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
   // Tap a match to jump straight to the right place: an upcoming match sets
   // it active and opens Lineup for prep; a past match opens its Insights.
   const goToMatch = (m) => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayISO();
     const isPast = m.date && m.date < todayStr;
     if (isPast) {
       setStatsView({ section: "insights", insightsMatchId: m.id });
@@ -8222,7 +8222,7 @@ function AppInner() {
   // recovery path if a team code ever got lost or something went wrong,
   // since there's no other way to pull this back out of Firestore.
   const exportAllData = () => {
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = todayISO();
     downloadJSON(`volley-bandit-backup-${teamCode}-${dateStr}.json`, {
       teamCode,
       exportedAt: new Date().toISOString(),
@@ -8475,7 +8475,7 @@ function AppInner() {
       }
 
       const blob = pdf.output("blob");
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const dateStr = todayISO();
       const filename = `volley-bandit-${explicitTarget || tab}-${dateStr}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
 

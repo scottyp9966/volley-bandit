@@ -78,3 +78,23 @@ export const displayName = (p) => {
 };
 
 export const fullName = (p) => (p ? `${p.firstName || ""} ${p.lastName || ""}`.trim() : "");
+
+// Today's calendar date as YYYY-MM-DD in the DEVICE's timezone.
+//
+// `new Date().toISOString().slice(0, 10)` looks like it does this and does
+// not: toISOString is UTC. West of UTC — which is where this app is used —
+// it rolls over to tomorrow at 8pm local (UTC-4) or 7pm (UTC-5). That
+// produced a real report: a box score saved on the evening of the 22nd
+// downloaded as ...-2026-09-23.pdf. Filenames were the visible half; the
+// comparisons were the harmful half, since a match's `date` is a local
+// calendar date the coach typed, so comparing it against a UTC "today"
+// made tonight's match look already played from 8pm onwards.
+//
+// Use this anywhere a CALENDAR DATE is meant. Keep `toISOString()` for an
+// actual instant (`exportedAt`, a crash's `at`) — those are timestamps,
+// and UTC is correct for them.
+export const todayISO = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};

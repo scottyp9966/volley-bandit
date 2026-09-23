@@ -550,6 +550,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   fire them all again. It reads the last history entry from current state
   and pops it in a separate, pure updater now. Worth knowing the smell:
   a `set…` call inside another `set…`'s callback is always this bug.
+- **Use `todayISO()` (in `shared.js`) for a calendar date, never
+  `new Date().toISOString().slice(0, 10)`.** `toISOString` is UTC. West of
+  UTC — where this app is actually used — it rolls over to tomorrow at 8pm
+  local (UTC-4) or 7pm (UTC-5), which is prime match-and-print time. A real
+  report: a box score saved on the evening of the 22nd downloaded named
+  `...-2026-09-23.pdf`. Filenames were the visible half; the comparisons
+  were the harmful half, because a match's `date` is a local calendar date
+  the coach typed into the form, so comparing it against a UTC "today" made
+  tonight's match read as already played from 8pm onwards — `goToMatch`
+  then opened Insights instead of lineup prep for a match about to start.
+  Four call sites in `App.jsx` plus the Tournament Builder's PDF filename
+  all had it. Keep `toISOString()` for an actual instant (`exportedAt`, a
+  crash's `at`) — those are timestamps and UTC is right for them.
 - **`activeLineupId` can go stale.** It's only ever updated by
   `startNextSet()`/`endMatch()` on the Live screen — deleting a lineup on
   the Lineup screen didn't used to check whether it was the active one, so
