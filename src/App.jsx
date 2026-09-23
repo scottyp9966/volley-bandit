@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.22a";
+const APP_VERSION = "2026.09.23a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2997,22 +2997,28 @@ function LiveScreen({
     );
   };
 
+  // Every restore below used to live INSIDE the setMatchHistory updater.
+  // React runs an updater during the render phase and requires it to be
+  // pure, so each of those calls was a setState fired mid-render — React
+  // warns "Cannot update a component (AppInner) while rendering a different
+  // component (LiveScreen)" — and an updater React chooses to re-run would
+  // fire every one of them again. Reading the last entry from the current
+  // state and popping it separately keeps the updater pure. One tap per
+  // gesture, so the render-captured value is the right one to read.
   const undoMatchAction = () => {
-    setMatchHistory((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      setActiveSlots(last.slots);
-      setSubCount(last.subCount);
-      setLiberoSubCount(last.liberoSubCount);
-      setSubEntries(last.subEntries || []);
-      setActiveRotation(last.currentRotation || 1);
-      if (last.pairings) {
-        setLineups((prev2) => prev2.map((l) => (l.id === activeLineup.id ? { ...l, pairings: last.pairings } : l)));
-      }
-      if (last.injuredPlayerIds) setInjuredPlayerIds(last.injuredPlayerIds);
-      setSubSuggestions([]); // pending suggestions were computed against state that no longer applies
-      return prev.slice(0, -1);
-    });
+    const last = matchHistory[matchHistory.length - 1];
+    if (!last) return;
+    setMatchHistory((prev) => prev.slice(0, -1));
+    setActiveSlots(last.slots);
+    setSubCount(last.subCount);
+    setLiberoSubCount(last.liberoSubCount);
+    setSubEntries(last.subEntries || []);
+    setActiveRotation(last.currentRotation || 1);
+    if (last.pairings) {
+      setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, pairings: last.pairings } : l)));
+    }
+    if (last.injuredPlayerIds) setInjuredPlayerIds(last.injuredPlayerIds);
+    setSubSuggestions([]); // pending suggestions were computed against state that no longer applies
   };
 
   // Free substitution — any bench player in for any on-court player, for any
@@ -7738,6 +7744,10 @@ function SettingsSheet({
   exportAllData,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
+  // Read once when Settings opens — the log only changes on a crash, which
+  // takes the whole app down anyway, so there's nothing to keep in sync.
+  const [crashes, setCrashes] = useState(() => readCrashLog());
+  const [copiedCrashes, setCopiedCrashes] = useState(false);
   const checkboxRow = (checked, onToggle, label) => (
     <button
       onClick={onToggle}
@@ -7938,6 +7948,72 @@ function SettingsSheet({
           border: `1px solid ${COLORS.blue}`,
           background: COLORS.blueSoft,
         })}
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
+          Recent Errors
+        </div>
+        {crashes.length === 0 ? (
+          <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
+            None recorded on this device. If the app ever shows its error screen, what
+            went wrong is saved here — you can hit Reload at the time and come back for
+            the details afterwards.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
+              Saved on this device only, newest first. Copy these when reporting a problem.
+            </div>
+            {crashes.map((c, i) => (
+              <div
+                key={i}
+                style={{
+                  border: `1px solid ${COLORS.line}`,
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 6,
+                  background: COLORS.bg,
+                }}
+              >
+                <div style={{ fontSize: 10, color: COLORS.chalkDim }}>
+                  {String(c.at || "").replace("T", " ").slice(0, 19)} · build {c.build}
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.chalk, wordBreak: "break-word" }}>
+                  {c.message}
+                </div>
+              </div>
+            ))}
+            {actionBtn(
+              () => {
+                const text = crashes
+                  .map((c) =>
+                    [
+                      `When: ${c.at}`,
+                      `Build: ${c.build}`,
+                      `Error: ${c.message}`,
+                      c.stack ? `Stack:\n${c.stack}` : "",
+                      c.component ? `Component:\n${c.component}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join("\n")
+                  )
+                  .join("\n\n----\n\n");
+                try {
+                  navigator.clipboard.writeText(text);
+                  setCopiedCrashes(true);
+                  setTimeout(() => setCopiedCrashes(false), 1500);
+                } catch {
+                  setCopiedCrashes(false);
+                }
+              },
+              copiedCrashes ? "Copied" : "Copy Error Details",
+              { border: `1px solid ${COLORS.blue}`, background: COLORS.blueSoft }
+            )}
+            {actionBtn(() => {
+              clearCrashLog();
+              setCrashes([]);
+            }, "Clear Error Log")}
+          </>
+        )}
+
         <div style={{ textAlign: "center", fontSize: 10, color: COLORS.chalkDim, marginTop: 10 }}>
           Volley Bandit · Build {APP_VERSION}
         </div>
@@ -9034,6 +9110,50 @@ async function clearCachesAndReload() {
 // recovery button above. Non-render failures (a rejected promise, a script
 // that failed to load) are caught by the window-level listeners below and
 // routed to the same place.
+// Crashes are written to localStorage as they happen, so the error text
+// survives the reload that the crash screen invites you to press.
+// Previously it existed only on that screen: a coach mid-match taps Reload
+// (rightly — it gets them back to the bench), and the only copy of what
+// went wrong is gone. This happened for real, twice in one match, and left
+// nothing to diagnose from. Settings → Recent Errors reads it back later.
+//
+// Deliberately dependency-free and wrapped in try/catch at every step: this
+// runs on the path where the app is ALREADY broken, and must never be the
+// thing that throws. localStorage can be unavailable or full.
+const CRASH_LOG_KEY = "vb-crash-log";
+const CRASH_LOG_MAX = 5;
+function readCrashLog() {
+  try {
+    const raw = window.localStorage.getItem(CRASH_LOG_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function recordCrash(error, info) {
+  try {
+    const entry = {
+      at: new Date().toISOString(),
+      build: APP_VERSION,
+      message: String(error?.message || error || "Unknown error").slice(0, 500),
+      stack: String(error?.stack || "").slice(0, 2000),
+      component: String(info?.componentStack || "").slice(0, 2000),
+    };
+    const next = [entry, ...readCrashLog()].slice(0, CRASH_LOG_MAX);
+    window.localStorage.setItem(CRASH_LOG_KEY, JSON.stringify(next));
+  } catch {
+    // A crash we can't record is still a crash we survived — never rethrow.
+  }
+}
+function clearCrashLog() {
+  try {
+    window.localStorage.removeItem(CRASH_LOG_KEY);
+  } catch {
+    /* nothing to do */
+  }
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -9046,15 +9166,20 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     this.setState({ error, info });
+    recordCrash(error, info);
     console.error("Caught by ErrorBoundary:", error, info);
   }
 
   componentDidMount() {
     this.onRejection = (e) => {
-      this.setState((s) => (s.error ? s : { error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)), info: null }));
+      const err = e.reason instanceof Error ? e.reason : new Error(String(e.reason));
+      recordCrash(err, null);
+      this.setState((s) => (s.error ? s : { error: err, info: null }));
     };
     this.onError = (e) => {
-      this.setState((s) => (s.error ? s : { error: e.error instanceof Error ? e.error : new Error(e.message || "Script error"), info: null }));
+      const err = e.error instanceof Error ? e.error : new Error(e.message || "Script error");
+      recordCrash(err, null);
+      this.setState((s) => (s.error ? s : { error: err, info: null }));
     };
     window.addEventListener("unhandledrejection", this.onRejection);
     window.addEventListener("error", this.onError);

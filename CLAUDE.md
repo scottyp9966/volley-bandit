@@ -540,6 +540,16 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   than dropping an earlier pick — a player passing the device should never
   have a choice vanish without tapping it off. The results view counts
   ballots and votes separately, since they're no longer the same number.
+- **Never call another component's setter inside a `setState` updater.**
+  `undoMatchAction` restored the score, counters, rotation, pairings and
+  injured list from inside `setMatchHistory((prev) => ...)`. React runs
+  updaters during the render phase and requires them to be pure, so every
+  one of those was a setState fired mid-render (React's warning names it:
+  "Cannot update a component (`AppInner`) while rendering a different
+  component (`LiveScreen`)"), and an updater React chooses to re-run would
+  fire them all again. It reads the last history entry from current state
+  and pops it in a separate, pure updater now. Worth knowing the smell:
+  a `set…` call inside another `set…`'s callback is always this bug.
 - **`activeLineupId` can go stale.** It's only ever updated by
   `startNextSet()`/`endMatch()` on the Live screen — deleting a lineup on
   the Lineup screen didn't used to check whether it was the active one, so
@@ -717,6 +727,14 @@ Worth knowing about even though they're not code issues:
   no console to open — a blank screen previously gave the coach nothing
   to report and no way back in. Keep it, and keep it dependency-free
   enough that it can't itself be the thing that crashes.
+  **Crashes are also written to `localStorage` (`vb-crash-log`, last 5) by
+  `recordCrash`**, and read back in Settings → Recent Errors with a Copy
+  button. That exists because the error text used to live *only* on the
+  crash screen: a coach mid-match hits Reload — rightly, it gets them back
+  to the bench — and the only record of what went wrong is gone. That
+  happened for real, twice in one match, leaving nothing to diagnose.
+  `recordCrash` is dependency-free and try/caught at every step: it runs
+  when the app is already broken and must never be the thing that throws.
 - The user has hit real iOS-vs-other-browser inconsistencies (Chrome for
   iOS doesn't support the same file-sharing API Safari does, for example).
   The print flow has fallbacks for this; be careful not to remove them
