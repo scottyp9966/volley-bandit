@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.23c";
+const APP_VERSION = "2026.09.23d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -5455,7 +5455,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
 }
 
 // ---- Schedule screen: manual add + edit + paste import ----
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats }) {
+function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, onOpenSettings }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -5601,6 +5601,32 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
           </button>
         )}
       </div>
+
+      {/* Surfaced here, not just in Settings, because this is the screen where
+          a match gets deleted — the coach who loses one looks here first. */}
+      {orphanedMatches && orphanedMatches.length > 0 && (
+        <button
+          onClick={onOpenSettings}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            border: `1px solid ${COLORS.gold}`,
+            background: COLORS.goldSoft,
+            borderRadius: 10,
+            padding: "9px 11px",
+            marginBottom: 10,
+            color: COLORS.chalk,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700 }}>
+            {orphanedMatches.length} deleted match
+            {orphanedMatches.length === 1 ? "" : "es"} still {orphanedMatches.length === 1 ? "has" : "have"} stats
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
+            Nothing was lost — tap to restore in Settings → Recover Deleted Matches.
+          </div>
+        </button>
+      )}
 
       {sorted.length === 0 && (
         <div style={{ color: COLORS.chalkDim, fontSize: 13, textAlign: "center", marginTop: 40 }}>
@@ -7765,6 +7791,8 @@ function SettingsSheet({
   setTeamCode,
   setUnlockedWith,
   exportAllData,
+  orphanedMatches,
+  recoverOrphanedMatch,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
   // Read once when Settings opens — the log only changes on a crash, which
@@ -7971,6 +7999,48 @@ function SettingsSheet({
           border: `1px solid ${COLORS.blue}`,
           background: COLORS.blueSoft,
         })}
+        {orphanedMatches && orphanedMatches.length > 0 && (
+          <>
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
+              Recover Deleted Matches
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
+              These stats are still here, but the match they belong to was
+              deleted from the schedule, so nothing can show them by match.
+              Restoring rebuilds the match and relinks everything — then rename
+              it on the Schedule screen. Set scores come back; the lineup that
+              played can't be rebuilt.
+            </div>
+            {orphanedMatches.map((o) => (
+              <div
+                key={o.matchId}
+                style={{
+                  border: `1px solid ${COLORS.gold}`,
+                  borderRadius: 8,
+                  padding: "9px 10px",
+                  marginBottom: 8,
+                  background: COLORS.goldSoft,
+                }}
+              >
+                <div style={{ fontSize: 12, color: COLORS.chalk, fontWeight: 700 }}>
+                  {Number.isFinite(o.firstAt)
+                    ? new Date(o.firstAt).toLocaleDateString()
+                    : "Unknown date"}
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
+                  {o.stats} stat{o.stats === 1 ? "" : "s"}
+                  {o.points ? ` · ${o.points} point${o.points === 1 ? "" : "s"}` : ""}
+                  {o.sets.length ? ` · set${o.sets.length === 1 ? "" : "s"} ${o.sets.join(", ")}` : ""}
+                </div>
+                {actionBtn(() => recoverOrphanedMatch(o), "Restore This Match", {
+                  border: `1px solid ${COLORS.green}`,
+                  background: COLORS.greenSoft,
+                })}
+              </div>
+            ))}
+          </>
+        )}
+
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
           Recent Errors
         </div>
@@ -8239,9 +8309,72 @@ function AppInner() {
     () => new Set((log || []).map((e) => e.matchId).filter((id) => id != null)),
     [log]
   );
+
   const setLog = fieldSetter(setLogsDoc, "log");
   const pointLog = logsDoc.pointLog;
   const setPointLog = fieldSetter(setLogsDoc, "pointLog");
+
+  // Stats whose match no longer exists on the schedule — i.e. the match was
+  // deleted out from under them. The entries themselves were never touched
+  // (they live in the logs doc, not on the match), they just stopped being
+  // reachable, since every per-match view lists from `matches`.
+  //
+  // They're recoverable because nothing about them was lost: each entry
+  // still carries the deleted match's `matchId`, and a stat entry's `id` is
+  // `Date.now() + Math.random()`, so the earliest one dates the match to the
+  // evening it was actually played. Recreating a match with that SAME id
+  // relinks the stats, the point log and everything downstream at once.
+  const orphanedMatches = useMemo(() => {
+    const known = new Set((matches || []).map((m) => m.id));
+    const byId = new Map();
+    const note = (matchId, entryId, kind, setNumber) => {
+      if (matchId == null || known.has(matchId)) return;
+      if (!byId.has(matchId))
+        byId.set(matchId, { matchId, stats: 0, points: 0, firstAt: Infinity, sets: new Set() });
+      const o = byId.get(matchId);
+      o[kind] += 1;
+      if (setNumber != null) o.sets.add(setNumber);
+      // entry ids are epoch-ms + a random fraction; floor is the timestamp
+      const at = Math.floor(entryId);
+      if (at > 1000000000000 && at < o.firstAt) o.firstAt = at;
+    };
+    (log || []).forEach((e) => note(e.matchId, e.id, "stats", e.setNumber));
+    (pointLog || []).forEach((e) => note(e.matchId, e.id, "points", e.setNumber));
+    return [...byId.values()]
+      .map((o) => ({ ...o, sets: [...o.sets].sort((a, b) => a - b) }))
+      .sort((a, b) => b.firstAt - a.firstAt);
+  }, [log, pointLog, matches]);
+
+  // Rebuild a deleted match from what its stats still know. The id is reused
+  // deliberately — that's what relinks everything. setScores is recomputed
+  // from the point log; the lineup snapshots genuinely cannot be rebuilt
+  // (they lived on the match object), so the record comes back without them
+  // rather than with invented ones.
+  const recoverOrphanedMatch = (orphan) => {
+    const setScores = {};
+    (pointLog || []).forEach((e) => {
+      if (e.matchId !== orphan.matchId) return;
+      const key = String(e.setNumber ?? 1);
+      if (!setScores[key]) setScores[key] = { us: 0, opp: 0 };
+      setScores[key][e.team] += 1;
+    });
+    const d = new Date(Number.isFinite(orphan.firstAt) ? orphan.firstAt : Date.now());
+    const pad = (n) => String(n).padStart(2, "0");
+    const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    setMatches((prev) => [
+      ...prev,
+      {
+        id: orphan.matchId,
+        date,
+        opponent: "Recovered match",
+        location: "",
+        homeAway: "Home",
+        ...(Object.keys(setScores).length ? { setScores } : {}),
+        recoveredAt: Date.now(),
+      },
+    ]);
+  };
+
 
   const teamLogo = brandingDoc.teamLogo;
   const updateTeamLogo = (dataUrl) => setBrandingDoc((prev) => ({ ...prev, teamLogo: dataUrl }));
@@ -9007,6 +9140,8 @@ function AppInner() {
             setTeamCode={setTeamCode}
             setUnlockedWith={setUnlockedWith}
             exportAllData={exportAllData}
+            orphanedMatches={orphanedMatches}
+            recoverOrphanedMatch={recoverOrphanedMatch}
           />
         )}
         {tab === "roster" && (
@@ -9093,6 +9228,8 @@ function AppInner() {
             matches={matches}
             setMatches={setMatches}
             matchIdsWithStats={matchIdsWithStats}
+            orphanedMatches={orphanedMatches}
+            onOpenSettings={() => setShowSettings(true)}
             activeMatchId={activeMatchId}
             setActiveMatchId={setActiveMatchId}
             setTab={setTab}
