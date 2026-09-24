@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.23d";
+const APP_VERSION = "2026.09.24a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -8533,6 +8533,15 @@ function AppInner() {
   // uses. Falls back to a plain file download on browsers that don't support
   // sharing files (most desktop browsers).
   const [printing, setPrinting] = useState(false);
+  // Why the last print failed, shown in-app. This used to be an alert(),
+  // which is the one native dialog CLAUDE.md still listed as outstanding
+  // and the worst-placed of them: inside an installed standalone PWA on
+  // iOS, alert() can fail to render while still blocking the page's JS
+  // thread, which is indistinguishable from the app freezing — and it sat
+  // on the failure path of the feature most likely to fail on a phone with
+  // no signal. Reported as state instead, so a failure can never wedge the
+  // app; worst case the coach sees a line they can dismiss.
+  const [printError, setPrintError] = useState("");
   const [printChoiceOpen, setPrintChoiceOpen] = useState(false);
   const [boxPrintChoiceOpen, setBoxPrintChoiceOpen] = useState(false);
   const [printTarget, setPrintTarget] = useState(null); // null = use the current tab's default target
@@ -8547,6 +8556,7 @@ function AppInner() {
   const handlePrint = async (explicitTarget) => {
     if (printing) return;
     setPrinting(true);
+    setPrintError("");
     // Fixes a real bug: reading printTarget from React state here was
     // grabbing a stale, leftover value from before this call, since
     // setPrintTarget(...) called right before handlePrint() doesn't take
@@ -8674,7 +8684,13 @@ function AppInner() {
       // Safari's console isn't reachable without a Mac plugged in via cable,
       // so this is the only practical way to see what actually went wrong.
       console.warn("PDF export failed:", err);
-      alert(`Couldn't generate the PDF: ${err?.message || err}`);
+      setPrintError(err?.message || String(err));
+      // Also record it where Settings can read it back later — a print that
+      // fails courtside is exactly the report that never survives the walk
+      // back to the bench.
+      recordCrash(err instanceof Error ? err : new Error(String(err)), {
+        componentStack: `handlePrint(${explicitTarget || tab})`,
+      });
     } finally {
       clearTimeout(forceCleanupTimer); // normal completion — the safety net above isn't needed
       root.classList.remove("print-root-capturing"); // always hide it again, success or failure
@@ -8819,6 +8835,35 @@ function AppInner() {
         overflow: "hidden",
       }}
     >
+      {printError && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 60,
+            background: COLORS.redSoft,
+            borderBottom: `1.5px solid ${COLORS.red}`,
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          <div style={{ flex: 1, fontSize: 12, color: COLORS.chalk, lineHeight: 1.4 }}>
+            <b>Couldn't make the PDF.</b> Nothing else is affected — your stats and
+            lineups are untouched. {printError}
+          </div>
+          <button
+            onClick={() => setPrintError("")}
+            style={{ background: "none", border: "none", color: COLORS.chalkDim, flexShrink: 0 }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
         html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }

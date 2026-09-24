@@ -722,12 +722,17 @@ Worth knowing about even though they're not code issues:
   use it — that sheet is handed around a locker room on the installed PWA,
   which is the worst possible place for a dialog that can fail to render —
   and so does **End Match** (Stats → Box Score), which locks the match in.
-  **Three native calls remain** and are the same hazard, listed here so they
-  don't have to be rediscovered: the roster delete confirm, `Unlink this
-  device from its current team?` (Settings), and the PDF-failure `alert()`
-  in `handlePrint` — that last one needs an in-app error line rather than
-  `ConfirmButton`, and sits in the iOS print path where a dialog failing to
-  render is most likely.
+  The **PDF-failure `alert()` in `handlePrint` is gone too** — it needed an
+  in-app error line rather than a `ConfirmButton`, and it was the
+  worst-placed of the lot: it sat on the failure path of the feature most
+  likely to fail on a phone, so a failed print could wedge the whole app.
+  It's `printError` state now, rendered as a dismissible banner at the top
+  of `AppInner`, and the error is also written to the crash log with
+  `handlePrint(<target>)` as its component, so a print that fails courtside
+  survives the walk back to the bench.
+  **Two native calls remain**, both `window.confirm`, both far from any
+  live-match path: the roster delete confirm and `Unlink this device from
+  its current team?` (Settings).
 - **Don't code-split this app.** `jspdf`/`html2canvas` (Print-only, and
   roughly a third of the bundle) were briefly switched to dynamic
   `await import(...)` to shrink the initial load. That was reverted the
@@ -793,6 +798,18 @@ Worth knowing about even though they're not code issues:
   merge` reports unrelated histories or a rejected non-fast-forward push,
   don't force through it blindly — check whether `origin/main` actually
   has newer real work (it has, before) before deciding which side wins.
+
+- **Google Fonts are loaded from the network and nothing caches them.**
+  The service worker's `globPatterns` only covers the build output, so
+  `fonts.googleapis.com`/`fonts.gstatic.com` are uncached: offline, the app
+  renders in fallback system fonts. This was investigated as a suspect for
+  "the screen freezes with no service" and **disproved** — with both font
+  hosts stalled indefinitely (Playwright route that never resolves, which is
+  what no signal actually does, unlike a fast failure), a print still
+  completed in 0.9s versus 0.8s with fonts served instantly. So it's a
+  cosmetic gap, not a hang. If you want the app fully self-contained
+  offline, it wants `workbox.runtimeCaching` for those two hosts
+  (CacheFirst, long expiry) — but don't sell it as a fix for a freeze.
 
 ## On testing
 
