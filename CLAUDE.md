@@ -625,6 +625,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   back without them rather than with invented ones. Surfaced both in
   Settings → Recover Deleted Matches and as a banner on the Schedule screen,
   since that's where the deletion happens and where a coach looks first.
+- **`EMPTY_LINEUP` (module scope) is the fallback when `lineups` is empty.**
+  Every screen resolved its lineup as `lineups.find(...) || lineups[0]`,
+  which is `undefined` for an empty array, and the next line reads
+  `.setNumber` off it — a render crash on the Live screen, caught by the
+  `ErrorBoundary`. `deleteLineup` refuses to remove the last lineup so the
+  app can't normally produce this, but it can arrive from outside: the
+  snapshot handler merges `{ ...defaultValue, ...snap.data() }`, and a
+  stored `lineups: []` **overrides** the default rather than falling back
+  to it. Found by fuzzing the real team doc with mutated shapes (deleted
+  player still referenced by a stat, missing lineup id, empty slots, empty
+  roster, ghost pairings, ghost snapshots, odd point log) — that sweep is
+  worth repeating after data-shape changes; only the empty-lineups case
+  crashed, and it now renders an empty court instead.
 - **The box score has its own match picker (`statsView.boxMatchId`), not
   `activeMatchId`.** It used to filter on `activeMatchId` directly, which
   made a just-finished match unreachable: `endMatch()` clears

@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.24a";
+const APP_VERSION = "2026.09.25a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -450,6 +450,29 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
 // is always mounted, and its own early return only skipped the call while
 // the log was empty). Keep it module-scope; don't move it back inside a
 // component.
+// A lineup-shaped placeholder for the one case that otherwise takes the
+// whole app down: `lineups` arriving empty. Every screen resolves its
+// lineup as `lineups.find(...) || lineups[0]`, which is `undefined` for an
+// empty array, and the very next line reads `.setNumber` off it — a crash
+// at render, caught by the ErrorBoundary, on the Live screen mid-match.
+//
+// `deleteLineup` refuses to remove the last lineup, so the app can't
+// normally produce this. It can still arrive from outside: the Firestore
+// snapshot handler merges `{ ...defaultValue, ...snap.data() }`, and a
+// stored `lineups: []` overrides the default rather than falling back to
+// it. Whatever the route, a coach mid-match should get a screen telling
+// them to make a lineup, not a crash.
+const EMPTY_LINEUP = {
+  id: 0,
+  name: "Set 1",
+  setNumber: 1,
+  currentRotation: 1,
+  slots: {},
+  liberos: [],
+  pairings: [],
+  servesFirst: "us",
+};
+
 function groupStatsByPlayer(entries, roster) {
   const byPlayer = {};
   for (const e of entries) {
@@ -891,7 +914,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       ? activeMatch
       : null;
 
-  const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0];
+  const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0] || EMPTY_LINEUP;
   const liberos = activeLineup.liberos || [null, null];
 
   // Starts already matching the lineup's real rotation (a lazy initializer,
@@ -2845,7 +2868,7 @@ function LiveScreen({
   // code with one in each mode.
   const [simpleMode, setSimpleMode] = usePersisted("vb-live-simple", false);
   const [simplePlayerId, setSimplePlayerId] = useState(null);
-  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0] || EMPTY_LINEUP;
   const setNumber = activeLineup.setNumber || 1;
   const slots = activeLineup.slots;
   const pairings = activeLineup.pairings || [];
@@ -6001,7 +6024,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
-  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+  const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0] || EMPTY_LINEUP;
   const playerFor = (id) => roster.find((p) => p.id === id);
 
   const boxSection = statsView?.section || "boxscore";
@@ -8408,7 +8431,7 @@ function AppInner() {
   // duplicates the current one rather than dead-ending a coach who only
   // wanted the score cleared — same players, rotation 1, renamed for the set.
   const startNextSet = ({ autoCreate = false } = {}) => {
-    const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0];
+    const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0] || EMPTY_LINEUP;
     const nextSetNumber = (activeLineup.setNumber || 1) + 1;
     let nextLineup = lineups.find((l) => l.setNumber === nextSetNumber);
     if (!nextLineup && !autoCreate) {
@@ -8494,7 +8517,7 @@ function AppInner() {
     setSubEntries([]);
     setInjuredPlayerIds([]);
     setLineups((prev) => prev.map((l) => ({ ...l, currentRotation: 1 })));
-    setActiveLineupId(setOneLineup.id);
+    if (setOneLineup) setActiveLineupId(setOneLineup.id); // no lineups at all: nothing to point at
     setActiveMatchId(null);
   };
 
@@ -9427,7 +9450,9 @@ class ErrorBoundary extends React.Component {
         <div style={{ fontSize: 12, color: "#9AA0A6", marginBottom: 14, lineHeight: 1.5 }}>
           Your team data is safe — it lives in the cloud, not on this device. This is the
           app itself failing to draw. The details below are what to send along when
-          reporting it.
+          reporting it. <b style={{ color: "#E8EAED" }}>This error has been saved to this
+          device</b> — hit Reload and get back to your match; you can copy it afterwards
+          from Settings → Recent Errors.
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
           <button
