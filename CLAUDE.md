@@ -413,13 +413,61 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   them all together — so a changed field is exactly one whose reference
   moved. Writing a field that didn't need it is harmless; never sending
   untouched fields is the whole point.
-  **What this does NOT fix: concurrent edits to the SAME field.** Two
-  devices both recording stats still both write `log`, and the later write
-  wins. That needs per-entry documents or `arrayUnion`; until then live
-  stat entry belongs on one device. If you touch this, the Firestore stub
+  **What this does NOT fix: concurrent edits to the SAME field** — which
+  is why the two logs stopped being fields at all; see the next bullet.
+  If you touch this, the Firestore stub
   now models merge semantics properly (`merge:false` replaces) and records
   every write's payload on `window.__writes` — the old stub merged either
   way, which is precisely what hid this bug.
+- **The stat log and the point log are Firestore COLLECTIONS — one document
+  per entry — not arrays in the `logs` document** (`useTeamCollection`,
+  next to `useTeamDoc`). Paths: `teams/{code}/stats/{entryId}` and
+  `teams/{code}/points/{entryId}`, keyed by the entry's existing
+  `Date.now() + Math.random()` id, which is also kept as a field.
+  The field-level merge above stops two devices clobbering each other's
+  *different* fields; it cannot help when both write the *same* field, and
+  two devices recording the same match both write `log` in full, so the
+  later one wins outright and everything the other recorded in between is
+  gone. A document per entry has no conflict to resolve: a stat tapped on
+  the tablet and a stat tapped on the phone are different documents, so
+  both land in any order, online or flushed from offline, and a delete is a
+  real document delete rather than "here is my whole array minus one" —
+  so it can't resurrect entries the other device added or re-delete ones it
+  removed. Verified in the harness: 40 entries from the other device
+  survive a stat recorded here (the old shape dropped all 40), a score tap
+  writes `main{score}` plus exactly one point document, and undo, the box
+  score's edit mode and deleting a player with stats each delete exactly
+  the documents they should.
+  Things to keep if you touch this:
+  - **Every screen still calls `setLog(prev => ...)` / `setPointLog(...)`.**
+    `makeEntrySetter` in `AppInner` takes that same updater, diffs the
+    result against the current entries by id, and turns it into per-document
+    writes and deletes. Deliberate: the call sites already express exactly
+    what changed, and none of them had to learn about collections. It is
+    also strictly safer than the array write it replaces — two setters
+    firing in one tick from the same `prev` used to mean the second
+    overwrote the first, and now each only touches its own entry.
+  - **Reads are a union of the legacy arrays and the collection**
+    (`mergeEntries`), deduped by id, so the app is correct *during* the
+    migration, not only after it. Removals prune the legacy side too
+    (`pruneLegacy`), or a delete would be undone by the union.
+  - **The migration is idempotent and clears the legacy arrays only once
+    the writes land.** Two devices migrating at once write the same
+    document ids with the same contents, so there's nothing to coordinate;
+    if the writes fail (no signal) nothing is cleared and it retries on the
+    next load.
+  - **Export/Restore had to change with it.** `exportAllData` writes
+    `logs: { log, pointLog }` built from the merged arrays rather than
+    `logsDoc`, which is empty post-migration — the backup keeps the same
+    shape so old and new backups restore identically. `restoreFromBackup`
+    goes through `replaceAll`, which deletes documents the backup doesn't
+    contain; a plain write would have merged the backup into whatever was
+    already there, which is not what that button promises.
+  - Bulk work (migration, restore, deleting a player's season) goes through
+    `writeBatch` in chunks of `WRITE_BATCH_LIMIT` (450) — Firestore caps a
+    batch at 500 operations.
+  - The Firestore rule in README.md is `/{document=**}`, which already
+    covers subcollections. Nothing to change there.
 - **Export has a matching Restore** (`restoreFromBackup`, Settings). A
   backup nobody can reinstate isn't a backup, and for a long time the
   export was a file you could read but never restore. It writes whichever
@@ -884,6 +932,20 @@ sandboxed dev-server/headless-browser session may still be unable to reach
 Firestore directly (network policy) — in that case, verify pure logic with
 a standalone Node script against the same data shapes, and be explicit
 with the user about what was and wasn't actually verified end-to-end.
+
+The harness stub is now one shared core (`harness/firestore-stub-core.js`)
+that each `firestore-stub-*.js` seeds with a different team document, and
+it models collections as well as documents — including **latency
+compensation**, where a local write fires the collection listener straight
+away. That last part isn't a detail: it's what makes a tapped stat appear
+instantly with no network, and a stub that only echoed server state would
+have shown the whole feature as broken. `window.__stubColls` is the
+collection store and `window.__stubPush(name, entries)` stands in for "the
+other device wrote these", snapshot included. One more harness note worth
+not rediscovering: a `vite.harness.*.js` config has to sit in the repo
+root, not in the scratchpad — Vite resolves `vite` and the React plugin
+relative to the config file, so a config outside the project can't load
+them.
 
 The sharper version of that warning: a *stub* standing in for Firestore
 only catches what it models. A session built one to test in the browser

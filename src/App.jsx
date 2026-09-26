@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon, Repeat } from "lucide-react";
-import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
+import { doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase.js";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.26b";
+const APP_VERSION = "2026.09.26c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -212,6 +212,147 @@ function useTeamDoc(teamCode, docName, defaultValue) {
   };
 
   return [value, update, loaded, error];
+}
+
+// Firestore caps a single batched write at 500 operations, so anything
+// bulk (the one-time migration below, a restore, deleting a player who has
+// a season of stats) is committed in chunks of this size.
+const WRITE_BATCH_LIMIT = 450;
+
+// Syncs a COLLECTION — one Firestore document per entry — rather than one
+// document holding an array of them. This is what the stat log and the
+// point log use.
+//
+// They used to be two arrays (`log`, `pointLog`) inside the `logs`
+// document, and that shape cannot survive two devices recording at once.
+// Writing one array is a whole-field write: a tablet and a phone both
+// recording the same match each send their own complete copy of `log`, and
+// the later one wins outright — every stat the other device recorded in
+// between is gone. The field-level merge in `useTeamDoc` above fixed
+// devices clobbering each OTHER'S fields; it can't fix two devices writing
+// the SAME field, which is exactly what live stat entry is.
+//
+// One document per entry has no such conflict: a stat recorded on the
+// tablet and a stat recorded on the phone are different documents, so both
+// land, in any order, online or queued from offline. A delete is a real
+// document delete rather than "here is my idea of the whole array minus
+// one", so it can't resurrect entries another device added or re-delete
+// entries another device removed.
+//
+// Entries keep their existing numeric `id` (`Date.now() + Math.random()`)
+// as both a field and the document id, which is what makes the migration
+// idempotent — two devices migrating the same legacy array simply write
+// the same documents twice.
+function useTeamCollection(teamCode, collName) {
+  const [entries, setEntries] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+
+  useEffect(() => {
+    if (!teamCode) {
+      setEntries([]);
+      setLoaded(false);
+      return;
+    }
+    setLoaded(false);
+    const unsub = onSnapshot(
+      collection(db, "teams", teamCode, collName),
+      (snap) => {
+        const next = [];
+        snap.forEach((d) => next.push(d.data()));
+        // Ids are timestamps, so this is chronological — the order every
+        // reader (the undo tray, the box score, Insights) assumes.
+        next.sort((a, b) => (a?.id ?? 0) - (b?.id ?? 0));
+        setEntries(next);
+        setLoaded(true);
+        setError(null);
+      },
+      (err) => {
+        console.warn(`Sync error on ${collName}:`, err);
+        setLoaded(true);
+        setError(`Couldn't load ${collName} — check your connection.`);
+      }
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamCode, collName]);
+
+  const entryRef = (id) => doc(db, "teams", teamCode, collName, String(id));
+
+  // Every op resolves to true/false rather than rejecting, so a caller can
+  // branch on success (the migration does) without leaving an unhandled
+  // rejection behind for callers that don't care.
+  const settle = (promise) =>
+    promise.then(
+      () => {
+        setError(null);
+        return true;
+      },
+      (err) => {
+        console.warn(`Save error on ${collName}:`, err);
+        setError(`Couldn't save your last change to ${collName} — check your connection.`);
+        return false;
+      }
+    );
+
+  const runBatches = (items, apply) => {
+    if (!teamCode || items.length === 0) return Promise.resolve(true);
+    const chunks = [];
+    for (let i = 0; i < items.length; i += WRITE_BATCH_LIMIT) chunks.push(items.slice(i, i + WRITE_BATCH_LIMIT));
+    return settle(
+      Promise.all(
+        chunks.map((chunk) => {
+          const batch = writeBatch(db);
+          chunk.forEach((item) => apply(batch, item));
+          return batch.commit();
+        })
+      )
+    );
+  };
+
+  const ops = {
+    put(entry) {
+      if (!teamCode || entry?.id == null) return Promise.resolve(false);
+      return settle(setDoc(entryRef(entry.id), entry));
+    },
+    putMany(list) {
+      const valid = (list || []).filter((e) => e?.id != null);
+      return runBatches(valid, (batch, entry) => batch.set(entryRef(entry.id), entry));
+    },
+    remove(id) {
+      if (!teamCode || id == null) return Promise.resolve(false);
+      return settle(deleteDoc(entryRef(id)));
+    },
+    removeMany(ids) {
+      const valid = (ids || []).filter((id) => id != null);
+      return runBatches(valid, (batch, id) => batch.delete(entryRef(id)));
+    },
+    // Used by Restore From Backup, which deliberately replaces rather than
+    // merges — see restoreFromBackup. Everything currently here goes,
+    // including entries this device hasn't got round to rendering.
+    replaceAll(list) {
+      const keep = new Set((list || []).map((e) => String(e?.id)));
+      const stale = entriesRef.current.map((e) => e.id).filter((id) => !keep.has(String(id)));
+      return ops.removeMany(stale).then(() => ops.putMany(list));
+    },
+  };
+
+  return [entries, ops, loaded, error];
+}
+
+// Unions the legacy in-document array half of a log with its collection
+// half. Deduped by id with the collection winning, since that's the side
+// that gets edited once an entry has been migrated, and sorted by id
+// (a timestamp) so the result is chronological either way.
+function mergeEntries(legacy, fromCollection) {
+  const legacyArr = Array.isArray(legacy) ? legacy : [];
+  if (legacyArr.length === 0) return fromCollection;
+  const byId = new Map();
+  for (const e of legacyArr) if (e?.id != null) byId.set(String(e.id), e);
+  for (const e of fromCollection) if (e?.id != null) byId.set(String(e.id), e);
+  return [...byId.values()].sort((a, b) => (a?.id ?? 0) - (b?.id ?? 0));
 }
 
 // displayName/fullName now live in shared.js alongside COLORS/usePersisted.
@@ -8339,7 +8480,13 @@ function AppInner() {
   const [mainDoc, setMainDoc, mainLoaded, mainError] = useTeamDoc(teamCode, "main", MAIN_DEFAULT);
   const [logsDoc, setLogsDoc, logsLoaded, logsError] = useTeamDoc(teamCode, "logs", LOGS_DEFAULT);
   const [brandingDoc, setBrandingDoc, brandingLoaded, brandingError] = useTeamDoc(teamCode, "branding", BRANDING_DEFAULT);
-  const syncError = mainError || logsError || brandingError;
+  // The two logs are collections now, one document per entry, so two
+  // devices can record the same match at the same time — see
+  // useTeamCollection. The `logs` document above still exists and is still
+  // read: it holds whatever hasn't been migrated out of it yet.
+  const [statEntries, statOps, statsLoaded, statsError] = useTeamCollection(teamCode, "stats");
+  const [pointEntries, pointOps, pointsLoaded, pointsError] = useTeamCollection(teamCode, "points");
+  const syncError = mainError || logsError || brandingError || statsError || pointsError;
 
   // Small helper: makes `const setX = fieldSetter(setMainDoc, "x")` behave
   // exactly like the old per-field useState setters — including functional
@@ -8426,7 +8573,12 @@ function AppInner() {
   const roleSystem = mainDoc.roleSystem || { system: "5-1" };
   const setRoleSystem = fieldSetter(setMainDoc, "roleSystem");
 
-  const log = logsDoc.log;
+  // Reads are the union of what's still in the legacy `logs` document and
+  // what's in the collection, deduped by id, so the app is correct at every
+  // point during (and before) the migration below rather than only after
+  // it. Once the migration completes the legacy side is empty and this is
+  // just the collection.
+  const log = useMemo(() => mergeEntries(logsDoc.log, statEntries), [logsDoc.log, statEntries]);
 
   // Which matches have stats recorded against them — used by the Schedule
   // screen to warn before deleting one that carries a real record.
@@ -8435,9 +8587,73 @@ function AppInner() {
     [log]
   );
 
-  const setLog = fieldSetter(setLogsDoc, "log");
-  const pointLog = logsDoc.pointLog;
-  const setPointLog = fieldSetter(setLogsDoc, "pointLog");
+  const pointLog = useMemo(() => mergeEntries(logsDoc.pointLog, pointEntries), [logsDoc.pointLog, pointEntries]);
+
+  // Drops entries from the legacy array half of a log. Only relevant in the
+  // window before the migration finishes; returning `prev` unchanged when
+  // nothing matched means useTeamDoc's reference diff sends no write at all.
+  const pruneLegacy = (field, keep) =>
+    setLogsDoc((prev) => {
+      const arr = prev[field] || [];
+      const next = arr.filter(keep);
+      return next.length === arr.length ? prev : { ...prev, [field]: next };
+    });
+
+  // Every screen still calls `setLog(prev => ...)` / `setPointLog(...)` the
+  // way it did when these were plain arrays in a document. That interface
+  // is kept deliberately: the call sites express what changed perfectly
+  // well (append one entry, filter one out), and translating the result
+  // into per-document writes here means none of them had to learn about
+  // collections. The diff is by id — entries the updater added get written
+  // as documents, entries it dropped get deleted, and an entry whose object
+  // reference moved gets rewritten.
+  //
+  // Note this is strictly SAFER than the array write it replaces, not just
+  // equivalent: two of these firing in the same tick from the same `prev`
+  // used to mean the second overwrote the first, because each rebuilt the
+  // whole array. Now each one only touches its own entry's document.
+  const makeEntrySetter = (current, ops, legacyField) => (updater) => {
+    const prev = current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    if (next === prev) return;
+    const prevById = new Map(prev.map((e) => [String(e.id), e]));
+    const nextById = new Map(next.map((e) => [String(e.id), e]));
+    const written = next.filter((e) => e?.id != null && prevById.get(String(e.id)) !== e);
+    const removedIds = prev.filter((e) => !nextById.has(String(e.id))).map((e) => e.id);
+    if (written.length === 1) ops.put(written[0]);
+    else if (written.length > 1) ops.putMany(written);
+    if (removedIds.length === 1) ops.remove(removedIds[0]);
+    else if (removedIds.length > 1) ops.removeMany(removedIds);
+    if (removedIds.length > 0) {
+      const gone = new Set(removedIds.map((id) => String(id)));
+      pruneLegacy(legacyField, (e) => !gone.has(String(e.id)));
+    }
+  };
+
+  const setLog = makeEntrySetter(log, statOps, "log");
+  const setPointLog = makeEntrySetter(pointLog, pointOps, "pointLog");
+
+  // One-time, idempotent move of the legacy arrays into the collections.
+  // Runs on whichever device opens the app first; a second device running
+  // it concurrently writes the same document ids with the same contents,
+  // so there's nothing to coordinate. The legacy arrays are only cleared
+  // once the writes have actually landed — if they fail (no signal), the
+  // union read above keeps the app fully correct and the migration is
+  // simply retried on the next load.
+  const migrationRef = useRef(false);
+  useEffect(() => {
+    if (!teamCode || !logsLoaded || !statsLoaded || !pointsLoaded) return;
+    const legacyStats = logsDoc.log || [];
+    const legacyPoints = logsDoc.pointLog || [];
+    if (legacyStats.length === 0 && legacyPoints.length === 0) return;
+    if (migrationRef.current) return;
+    migrationRef.current = true;
+    Promise.all([statOps.putMany(legacyStats), pointOps.putMany(legacyPoints)]).then(([statsOk, pointsOk]) => {
+      if (statsOk && pointsOk) setLogsDoc((prev) => ({ ...prev, log: [], pointLog: [] }));
+      else migrationRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamCode, logsLoaded, statsLoaded, pointsLoaded, logsDoc.log, logsDoc.pointLog]);
 
   // Stats whose match no longer exists on the schedule — i.e. the match was
   // deleted out from under them. The entries themselves were never touched
@@ -8504,7 +8720,7 @@ function AppInner() {
   const teamLogo = brandingDoc.teamLogo;
   const updateTeamLogo = (dataUrl) => setBrandingDoc((prev) => ({ ...prev, teamLogo: dataUrl }));
 
-  const dataLoaded = mainLoaded && logsLoaded && brandingLoaded;
+  const dataLoaded = mainLoaded && logsLoaded && brandingLoaded && statsLoaded && pointsLoaded;
 
   // A full backup of everything this team's data actually is — the one
   // recovery path if a team code ever got lost or something went wrong,
@@ -8515,7 +8731,11 @@ function AppInner() {
       teamCode,
       exportedAt: new Date().toISOString(),
       main: mainDoc,
-      logs: logsDoc,
+      // Not `logsDoc` — the entries live in their own collections now, and
+      // that document is empty once the migration has run. A backup has to
+      // carry the real thing, and it stays in the same `{ log, pointLog }`
+      // shape so older backups and newer ones restore identically.
+      logs: { log, pointLog },
       branding: brandingDoc,
     });
   };
@@ -8555,7 +8775,12 @@ function AppInner() {
         );
       }
       if (parsed.logs && typeof parsed.logs === "object") {
-        setLogsDoc(parsed.logs);
+        // Replaces both collections outright — including deleting entries
+        // the backup doesn't have — and empties the legacy arrays so the
+        // restored file is the whole truth, not merged into what was here.
+        statOps.replaceAll(parsed.logs.log || []);
+        pointOps.replaceAll(parsed.logs.pointLog || []);
+        setLogsDoc({ log: [], pointLog: [] });
         parts.push(`${(parsed.logs.log || []).length} stat entries`);
       }
       if (parsed.branding && typeof parsed.branding === "object") {
