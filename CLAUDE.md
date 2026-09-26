@@ -396,6 +396,37 @@ non-obvious things that look like they could be "simplified" but are load-bearin
 
 ## Data model gotchas
 
+- **`useTeamDoc.update` writes only the fields a change actually touched,
+  with `merge: true` — never the whole document.** It used to be
+  `setDoc(ref, next, { merge: false })`, which replaces the entire document
+  with whatever that one device holds. With two devices on a team code that
+  is last-writer-wins across *everything*: a phone on stale state that
+  changes the score — or that flushes a write queued while it was offline —
+  overwrites the roster, lineups, matches and the whole stat log another
+  device recorded an hour earlier. **This is not theoretical; it happened.**
+  A match entered live on a tablet went missing, and the harness reproduces
+  it exactly: 40 stats and a match on the server, one score tap on a stale
+  device, and the server is left with 2 stats and the match gone.
+  The diff is by reference equality, which is correct here because
+  `fieldSetter` rebuilds the wrapper (`{ ...prev, [field]: v }`) and leaves
+  every other field pointing at the same object, and a snapshot rebuilds
+  them all together — so a changed field is exactly one whose reference
+  moved. Writing a field that didn't need it is harmless; never sending
+  untouched fields is the whole point.
+  **What this does NOT fix: concurrent edits to the SAME field.** Two
+  devices both recording stats still both write `log`, and the later write
+  wins. That needs per-entry documents or `arrayUnion`; until then live
+  stat entry belongs on one device. If you touch this, the Firestore stub
+  now models merge semantics properly (`merge:false` replaces) and records
+  every write's payload on `window.__writes` — the old stub merged either
+  way, which is precisely what hid this bug.
+- **Export has a matching Restore** (`restoreFromBackup`, Settings). A
+  backup nobody can reinstate isn't a backup, and for a long time the
+  export was a file you could read but never restore. It writes whichever
+  of the three docs the file contains, so an older backup missing
+  `branding` leaves branding alone rather than blanking it, and it replaces
+  rather than merges — half a restored roster inside a live one is worse
+  than either state alone. Two-tap confirm, and it reports what it read.
 - **Set number lives on the lineup, not as a separate global counter**
   (`lineup.setNumber`). This was a deliberate fix — there used to be two
   numbers that could drift out of sync (which lineup tab was active vs.

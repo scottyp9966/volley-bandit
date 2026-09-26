@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.25a";
+const APP_VERSION = "2026.09.26a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -166,19 +166,49 @@ function useTeamDoc(teamCode, docName, defaultValue) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamCode, docName]);
 
+  // Writes ONLY the top-level fields this change actually touched, merged
+  // into the server's document — not the whole document.
+  //
+  // This used to be `setDoc(ref, next, { merge: false })`, which replaces
+  // the entire document with whatever that one device happens to hold. With
+  // two devices on the same team code that is last-writer-wins across
+  // *everything*: a phone sitting on stale state that changes the score —
+  // or that flushes a write queued while it was offline — overwrites the
+  // roster, the lineups, the matches and the whole stat log that a tablet
+  // recorded an hour earlier. That is a real data-loss shape, not a
+  // theoretical one, and it's why a match entered on one device could go
+  // missing.
+  //
+  // Reference equality is the right diff here: state updates go through
+  // `fieldSetter`, which rebuilds the wrapper (`{ ...prev, [field]: v }`)
+  // and leaves every other field pointing at the same object, and a
+  // snapshot rebuilds all of them together. So a changed field is exactly a
+  // field whose reference moved. Worst case a field is written that didn't
+  // need to be, which is harmless; the point is that fields nobody touched
+  // are never sent at all, so they can't be clobbered.
+  //
+  // This does NOT make concurrent edits to the SAME field safe — two
+  // devices both recording stats still both write `log`, and the later
+  // write wins. Fixing that properly needs per-entry documents or
+  // arrayUnion; until then, live stat entry belongs on one device.
   const update = (updater) => {
-    const next = typeof updater === "function" ? updater(valueRef.current) : updater;
+    const prev = valueRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
     valueRef.current = next;
     setValue(next);
-    if (teamCode) {
-      const ref = doc(db, "teams", teamCode, "data", docName);
-      setDoc(ref, next, { merge: false })
-        .then(() => setError(null))
-        .catch((err) => {
-          console.warn(`Save error on ${docName}:`, err);
-          setError(`Couldn't save your last change to ${docName} — check your connection.`);
-        });
+    if (!teamCode) return;
+    const changed = {};
+    for (const key of Object.keys(next)) {
+      if (!Object.is(next[key], prev?.[key])) changed[key] = next[key];
     }
+    if (Object.keys(changed).length === 0) return;
+    const ref = doc(db, "teams", teamCode, "data", docName);
+    setDoc(ref, changed, { merge: true })
+      .then(() => setError(null))
+      .catch((err) => {
+        console.warn(`Save error on ${docName}:`, err);
+        setError(`Couldn't save your last change to ${docName} — check your connection.`);
+      });
   };
 
   return [value, update, loaded, error];
@@ -7814,12 +7844,15 @@ function SettingsSheet({
   setTeamCode,
   setUnlockedWith,
   exportAllData,
+  restoreFromBackup,
+  restoreReport,
   orphanedMatches,
   recoverOrphanedMatch,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
   // Read once when Settings opens — the log only changes on a crash, which
   // takes the whole app down anyway, so there's nothing to keep in sync.
+  const restoreFileRef = useRef(null);
   const [crashes, setCrashes] = useState(() => readCrashLog());
   const [copiedCrashes, setCopiedCrashes] = useState(false);
   const checkboxRow = (checked, onToggle, label) => (
@@ -8022,6 +8055,44 @@ function SettingsSheet({
           border: `1px solid ${COLORS.blue}`,
           background: COLORS.blueSoft,
         })}
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "2px 0 8px" }}>
+          Restoring replaces this team's roster, lineups, matches and stats with
+          whatever is in the file. Use it to undo a bad sync or bring a device back
+          to a known-good state.
+        </div>
+        <ConfirmButton
+          label="Restore From Backup…"
+          confirmLabel="Tap again, then pick the backup file"
+          onConfirm={() => restoreFileRef.current?.click()}
+          style={{
+            width: "100%",
+            marginBottom: 8,
+            padding: "10px",
+            borderRadius: 8,
+            border: `1px solid ${COLORS.red}`,
+            background: "none",
+            color: COLORS.chalk,
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+          armedStyle={{ background: COLORS.redSoft, color: COLORS.red }}
+        />
+        <input
+          ref={restoreFileRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = ""; // let the same file be picked twice
+            restoreFromBackup?.(f);
+          }}
+        />
+        {restoreReport && (
+          <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.greenSoft, border: `1px solid ${COLORS.green}`, borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+            {restoreReport}
+          </div>
+        )}
         {orphanedMatches && orphanedMatches.length > 0 && (
           <>
             <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
@@ -8416,6 +8487,55 @@ function AppInner() {
       logs: logsDoc,
       branding: brandingDoc,
     });
+  };
+
+  // The other half of Export. A backup nobody can restore isn't a backup,
+  // and until now there was no way back in — the export was a file you
+  // could read but never reinstate. It writes whichever of the three docs
+  // the file actually contains, so an older backup missing `branding`
+  // simply leaves branding alone rather than blanking it.
+  //
+  // Deliberately replaces rather than merges: restoring half a roster into
+  // a live one would be worse than either state on its own. That's also why
+  // it sits behind a two-tap confirm and reports exactly what it read
+  // before doing anything.
+  const [restoreReport, setRestoreReport] = useState("");
+  const restoreFromBackup = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => setRestoreReport("Couldn't read that file.");
+    reader.onload = () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(String(reader.result));
+      } catch {
+        setRestoreReport("That file isn't a Volley Bandit backup — it wouldn't parse.");
+        return;
+      }
+      if (!parsed || typeof parsed !== "object" || (!parsed.main && !parsed.logs && !parsed.branding)) {
+        setRestoreReport("That file doesn't look like a Volley Bandit backup.");
+        return;
+      }
+      const parts = [];
+      if (parsed.main && typeof parsed.main === "object") {
+        setMainDoc(parsed.main);
+        parts.push(
+          `${(parsed.main.roster || []).length} players, ${(parsed.main.lineups || []).length} lineups, ${(parsed.main.matches || []).length} matches`
+        );
+      }
+      if (parsed.logs && typeof parsed.logs === "object") {
+        setLogsDoc(parsed.logs);
+        parts.push(`${(parsed.logs.log || []).length} stat entries`);
+      }
+      if (parsed.branding && typeof parsed.branding === "object") {
+        setBrandingDoc(parsed.branding);
+        parts.push("branding");
+      }
+      setRestoreReport(
+        `Restored from ${parsed.exportedAt ? parsed.exportedAt.slice(0, 10) : "backup"}: ${parts.join(" · ")}.`
+      );
+    };
+    reader.readAsText(file);
   };
 
   // Advances to the next set: resets the scoreboard, the sub counters and
@@ -9208,6 +9328,8 @@ function AppInner() {
             setTeamCode={setTeamCode}
             setUnlockedWith={setUnlockedWith}
             exportAllData={exportAllData}
+            restoreFromBackup={restoreFromBackup}
+            restoreReport={restoreReport}
             orphanedMatches={orphanedMatches}
             recoverOrphanedMatch={recoverOrphanedMatch}
           />
