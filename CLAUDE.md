@@ -832,6 +832,22 @@ Worth knowing about even though they're not code issues:
   happened for real, twice in one match, leaving nothing to diagnose.
   `recordCrash` is dependency-free and try/caught at every step: it runs
   when the app is already broken and must never be the thing that throws.
+  **A window-level `error`/`unhandledrejection` is recorded but does NOT
+  take the app down — only a real React render crash
+  (`componentDidCatch`) shows the crash screen.** This distinction is the
+  whole answer to "it crashed on me mid-match, I hit reload and it was
+  fine." The crash log, once it existed, showed five entries all reading
+  `Script https://volley-bandit.vercel.app/sw.js load failed`, spaced about
+  32 minutes apart: `useSWUpdate`'s 30-minute `registration.update()`
+  rejecting on gym wifi. Nothing was broken — a background housekeeping
+  fetch failed, the rejection went unhandled, the boundary treated it as
+  fatal, and a coach lost their live match screen. Reload "fixed" it
+  because there was nothing to fix. `useSWUpdate` now catches at every
+  level (`update()`, `onRegisterError`, `registerSW` itself, `applyUpdate`)
+  — a failed update check is normal offline and must never surface — and
+  the boundary only nukes the UI when the UI is genuinely broken. Keep both
+  halves: catching at the source stops the noise, and the boundary's
+  restraint stops the next unhandled rejection from doing the same thing.
 - The user has hit real iOS-vs-other-browser inconsistencies (Chrome for
   iOS doesn't support the same file-sharing API Safari does, for example).
   The print flow has fallbacks for this; be careful not to remove them

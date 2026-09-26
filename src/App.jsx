@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.26a";
+const APP_VERSION = "2026.09.26b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -8223,19 +8223,50 @@ function useSWUpdate() {
   const updateRef = useRef(null);
 
   useEffect(() => {
-    updateRef.current = registerSW({
-      onRegisteredSW(swUrl, registration) {
-        if (registration) {
-          setInterval(() => registration.update(), 30 * 60 * 1000);
-        }
-      },
-      onNeedRefresh() {
-        setNeedsRefresh(true);
-      },
-    });
+    // Every one of these failure paths has to be swallowed. A service
+    // worker update check is pure background housekeeping: it fetching
+    // sw.js over a weak connection and failing means nothing to a coach
+    // mid-match, and there is nothing for them to do about it.
+    //
+    // This is not hypothetical — it is the whole explanation for "the app
+    // crashed on me again mid-match." `registration.update()` rejected on
+    // gym wifi with no catch, so it became an unhandledrejection, and the
+    // ErrorBoundary's window listener treated that as fatal and replaced
+    // the live match screen with the crash page. Five entries in one
+    // coach's crash log, all reading "Script .../sw.js load failed", spaced
+    // ~32 minutes apart — the interval below, firing and failing.
+    try {
+      updateRef.current = registerSW({
+        onRegisteredSW(swUrl, registration) {
+          if (!registration) return;
+          setInterval(() => {
+            // Rejects whenever the network is unavailable or flaky. Normal.
+            Promise.resolve(registration.update()).catch(() => {});
+          }, 30 * 60 * 1000);
+        },
+        onNeedRefresh() {
+          setNeedsRefresh(true);
+        },
+        onRegisterError() {
+          // Couldn't register at all — the app still runs, just without
+          // offline caching until the next load on a better connection.
+        },
+      });
+    } catch {
+      // registerSW itself threw (no service worker support, private mode).
+    }
   }, []);
 
-  const applyUpdate = () => updateRef.current?.(true);
+  // applyUpdate reloads via the service worker; if that rejects there's
+  // nothing useful to tell anyone, and it must not bubble out as a crash.
+
+  const applyUpdate = () => {
+    try {
+      Promise.resolve(updateRef.current?.(true)).catch(() => window.location.reload());
+    } catch {
+      window.location.reload();
+    }
+  };
   const dismiss = () => setNeedsRefresh(false);
   return { needsRefresh, applyUpdate, dismiss };
 }
@@ -9529,15 +9560,26 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidMount() {
+    // A window-level error or promise rejection is RECORDED but does not
+    // take the app down. Only a real React render crash (componentDidCatch)
+    // does, because that's the only case where the UI is genuinely broken.
+    //
+    // This used to replace the whole app for either one, and that was the
+    // bug behind "it crashed mid-match, I hit reload and it was fine": a
+    // background service-worker update check failing on gym wifi became an
+    // unhandledrejection, and a coach lost their live match screen over a
+    // network hiccup that affected nothing they were doing. Reload "fixed"
+    // it because there was never anything wrong to fix.
+    //
+    // The crash log still gets every one of them, so nothing is lost for
+    // diagnosis — that's how this was found in the first place.
     this.onRejection = (e) => {
       const err = e.reason instanceof Error ? e.reason : new Error(String(e.reason));
-      recordCrash(err, null);
-      this.setState((s) => (s.error ? s : { error: err, info: null }));
+      recordCrash(err, { componentStack: "window:unhandledrejection" });
     };
     this.onError = (e) => {
       const err = e.error instanceof Error ? e.error : new Error(e.message || "Script error");
-      recordCrash(err, null);
-      this.setState((s) => (s.error ? s : { error: err, info: null }));
+      recordCrash(err, { componentStack: "window:error" });
     };
     window.addEventListener("unhandledrejection", this.onRejection);
     window.addEventListener("error", this.onError);
