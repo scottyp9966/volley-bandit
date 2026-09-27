@@ -497,6 +497,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     the printed lineup sheet shows `51/32` in the roster key (so the
     scorer can match either jersey) and the bare `32` in her court slot
     and Lib 1 row for a set where she's designated.
+  - **The Lineup tab shows both numbers and both positions.** Two local
+    helpers next to `jersey` in `LineupScreen`: `positionsOf(p)` joins
+    `position` and `position2` (`"L · DS"`), and `altJersey(p)` returns the
+    number she ISN'T wearing this set, rendered small and dim after the one
+    she is (`#32/51`). Applied to the court slot cards, the LIBEROS row, the
+    pairing rows, the player picker and the Add Pairing dropdowns — this is
+    the screen where a coach matches the app against the actual floor, so
+    both jerseys and both positions have to be readable without opening a
+    player card.
+    The LIBEROS row had to become **stacked full-width rows rather than two
+    side-by-side buttons** to fit: at half width the L1 chip, both jerseys,
+    the name and both positions wrapped the name onto a second line.
+    Checked on a 390px screenshot, not just in the DOM text.
   - Form fields (`playerForm.num`), the duplicate-number warning, and the
     roster sort all still read `num` directly. Those are about identity and
     data entry, not about what she's wearing — don't route them through

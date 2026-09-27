@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.27a";
+const APP_VERSION = "2026.09.27b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -1126,6 +1126,20 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const liberos = activeLineup.liberos || [null, null];
   // Which jersey she is actually wearing in this set — see jerseyFor.
   const jersey = (p) => jerseyFor(p, liberos);
+  // Both positions, not just the primary. A player with two is exactly the
+  // one this screen needs you to recognize at a glance — a libero who also
+  // plays DS, a middle who swings outside — and showing only the first hides
+  // the reason she's in the slot she's in.
+  const positionsOf = (p) => [p?.position, p?.position2].filter(Boolean).join(" · ");
+  // The number she ISN'T wearing this set, shown small beside the one she is,
+  // so a coach reading the court against the actual floor can match either
+  // jersey without opening her player card.
+  const altJersey = (p) => {
+    if (!p?.liberoNum) return null;
+    const worn = String(jersey(p));
+    const other = worn === String(p.liberoNum) ? String(p.num) : String(p.liberoNum);
+    return other === worn ? null : other;
+  };
 
   // Starts already matching the lineup's real rotation (a lazy initializer,
   // computed once at mount from data already available) rather than
@@ -1782,11 +1796,16 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     }}
                   >
                     #{jersey(player)}
+                    {altJersey(player) && (
+                      <span style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim }}>
+                        /{altJersey(player)}
+                      </span>
+                    )}
                   </span>
                   <span style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 2 }}>
                     {displayName(player)}
                   </span>
-                  {player.position && (
+                  {positionsOf(player) && (
                     <span
                       style={{
                         fontSize: 8,
@@ -1798,7 +1817,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         marginTop: 2,
                       }}
                     >
-                      {player.position}
+                      {positionsOf(player)}
                     </span>
                   )}
                 </>
@@ -1850,7 +1869,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
       >
         Liberos <span style={{ color: COLORS.chalkDim, fontWeight: 500, textTransform: "none" }}>(up to 2)</span>
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
         {[0, 1].map((idx) => {
           const pid = liberos[idx];
           const player = pid ? playerFor(pid) : null;
@@ -1860,13 +1879,13 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               onClick={() => setPicking({ type: "libero", slot: idx })}
               style={{
                 flex: 1,
-                minHeight: 56,
+                minHeight: 46,
                 background: player ? COLORS.blueSoft : COLORS.bgRaised,
                 border: `2px solid ${player ? COLORS.blue : COLORS.line}`,
                 borderRadius: 10,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
+                justifyContent: "flex-start",
                 gap: 8,
                 color: COLORS.chalk,
                 padding: "6px 10px",
@@ -1888,8 +1907,27 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600 }}>
                     #{jersey(player)}
+                    {altJersey(player) && (
+                      <span style={{ fontSize: 10, fontWeight: 400, color: COLORS.chalkDim }}>
+                        /{altJersey(player)}
+                      </span>
+                    )}
                   </span>{" "}
-                  <span style={{ color: COLORS.chalkDim }}>{displayName(player)}</span>
+                  <span style={{ color: COLORS.chalkDim, whiteSpace: "nowrap" }}>{displayName(player)}</span>
+                  {positionsOf(player) && (
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: COLORS.chalkDim,
+                        border: `1px solid ${COLORS.line}`,
+                        borderRadius: 4,
+                        padding: "1px 4px",
+                      }}
+                    >
+                      {positionsOf(player)}
+                    </span>
+                  )}
                   {player.id === captainId && (
                     <span
                       style={{
@@ -2024,11 +2062,11 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     </button>
                   )}
                   <span style={{ color: COLORS.chalk }}>
-                    Front: <b>#{jersey(front)} {displayName(front)}</b>
+                    Front: <b>#{jersey(front)}{altJersey(front) ? `/${altJersey(front)}` : ""} {displayName(front)}</b>
                   </span>
                   <span style={{ color: COLORS.chalkDim }}>↔</span>
                   <span style={{ color: COLORS.chalk }}>
-                    Back: <b>#{jersey(back)} {displayName(back)}</b>
+                    Back: <b>#{jersey(back)}{altJersey(back) ? `/${altJersey(back)}` : ""} {displayName(back)}</b>
                   </span>
                   <button
                     onClick={() => deletePairing(pr.id)}
@@ -2597,7 +2635,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               <option value="">Select player…</option>
               {roster.map((p) => (
                 <option key={p.id} value={p.id}>
-                  #{jersey(p)} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
+                  #{jersey(p)}{altJersey(p) ? `/${altJersey(p)}` : ""} {displayName(p)}{positionsOf(p) ? ` (${positionsOf(p)})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
                 </option>
               ))}
             </select>
@@ -2626,7 +2664,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               <option value="">Select player…</option>
               {roster.map((p) => (
                 <option key={p.id} value={p.id}>
-                  #{jersey(p)} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
+                  #{jersey(p)}{altJersey(p) ? `/${altJersey(p)}` : ""} {displayName(p)}{positionsOf(p) ? ` (${positionsOf(p)})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
                 </option>
               ))}
             </select>
@@ -2997,14 +3035,19 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         fontFamily: "'Oswald', sans-serif",
                         fontWeight: 600,
                         color: COLORS.orange,
-                        width: 32,
+                        width: 48,
                       }}
                     >
                       #{jersey(p)}
+                      {altJersey(p) && (
+                        <span style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim }}>
+                          /{altJersey(p)}
+                        </span>
+                      )}
                     </span>
                     <span style={{ flex: 1 }}>
                       {displayName(p)}
-                      {p.position && (
+                      {positionsOf(p) && (
                         <span
                           style={{
                             fontSize: 9,
@@ -3016,7 +3059,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                             marginLeft: 6,
                           }}
                         >
-                          {p.position}
+                          {positionsOf(p)}
                         </span>
                       )}
                     </span>
