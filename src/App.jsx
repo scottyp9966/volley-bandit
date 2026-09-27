@@ -7,7 +7,7 @@ import html2canvas from "html2canvas";
 import { registerSW } from "virtual:pwa-register";
 import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
-import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO } from "./shared.js";
+import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
 
 // NOTE: these are deliberately STATIC imports, even though jsPDF and
 // html2canvas are only used by Print and are a large share of the bundle.
@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.26c";
+const APP_VERSION = "2026.09.27a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -353,6 +353,43 @@ function mergeEntries(legacy, fromCollection) {
   for (const e of legacyArr) if (e?.id != null) byId.set(String(e.id), e);
   for (const e of fromCollection) if (e?.id != null) byId.set(String(e.id), e);
   return [...byId.values()].sort((a, b) => (a?.id ?? 0) - (b?.id ?? 0));
+}
+
+// Rewrites every reference to `dropId` into `keepId` inside one lineup-shaped
+// object — used for real lineups and for a match's frozen lineupSnapshots,
+// which hold the same three fields.
+//
+// The awkward cases are the ones that only exist because the two ids used to
+// be two different people: both of them on court at once (impossible for one
+// player, so the dropped one's slot is vacated rather than doubling the keeper
+// up), both listed as liberos, and a pairing BETWEEN them — which was the
+// coach pairing someone with herself in different jerseys, and is simply
+// deleted.
+function remapLineupPlayer(lineup, dropId, keepId) {
+  if (!lineup) return lineup;
+  const slots = { ...(lineup.slots || {}) };
+  const keepAlreadyOnCourt = Object.values(slots).some((v) => v === keepId);
+  for (const [slot, v] of Object.entries(slots)) {
+    if (v === dropId) slots[slot] = keepAlreadyOnCourt ? null : keepId;
+  }
+  const liberos = (lineup.liberos || [null, null]).map((v) => (v === dropId ? keepId : v));
+  // one player can't hold both libero slots
+  if (liberos[0] === keepId && liberos[1] === keepId) liberos[1] = null;
+  const seen = new Set();
+  const pairings = (lineup.pairings || [])
+    .map((pr) => ({
+      ...pr,
+      frontId: pr.frontId === dropId ? keepId : pr.frontId,
+      backId: pr.backId === dropId ? keepId : pr.backId,
+    }))
+    .filter((pr) => pr.frontId !== pr.backId)
+    .filter((pr) => {
+      const key = `${pr.frontId}-${pr.backId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return { ...lineup, slots, liberos, pairings };
 }
 
 // displayName/fullName now live in shared.js alongside COLORS/usePersisted.
@@ -1042,7 +1079,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
-  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "", position2: "" });
+  const [playerForm, setPlayerForm] = useState({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
   const [addingPairing, setAddingPairing] = useState(false);
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
@@ -1087,6 +1124,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
 
   const activeLineup = lineups.find((l) => l.id === viewingLineupId) || lineups[0] || EMPTY_LINEUP;
   const liberos = activeLineup.liberos || [null, null];
+  // Which jersey she is actually wearing in this set — see jerseyFor.
+  const jersey = (p) => jerseyFor(p, liberos);
 
   // Starts already matching the lineup's real rotation (a lazy initializer,
   // computed once at mount from data already available) rather than
@@ -1297,12 +1336,12 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const servesFirst = activeLineup.servesFirst || "us";
 
   const openAddPlayer = () => {
-    setPlayerForm({ num: "", firstName: "", lastName: "", position: "", position2: "" });
+    setPlayerForm({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
     setPlayerSheet({ mode: "add" });
   };
 
   const openEditPlayer = (p) => {
-    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
+    setPlayerForm({ num: String(p.num), liberoNum: p.liberoNum ? String(p.liberoNum) : "", firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
     setPlayerSheet({ mode: "edit", id: p.id });
   };
 
@@ -1319,6 +1358,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 lastName: playerForm.lastName.trim(),
                 position: playerForm.position,
                 position2: playerForm.position2 || "",
+                liberoNum: playerForm.liberoNum.trim(),
               }
             : p
         )
@@ -1334,6 +1374,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           lastName: playerForm.lastName.trim(),
           position: playerForm.position,
           position2: playerForm.position2 || "",
+          liberoNum: playerForm.liberoNum.trim(),
         },
       ]);
     }
@@ -1740,7 +1781,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                       lineHeight: 1,
                     }}
                   >
-                    #{player.num}
+                    #{jersey(player)}
                   </span>
                   <span style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 2 }}>
                     {displayName(player)}
@@ -1791,8 +1832,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             }}
           >
             {activePairing.liberoServes
-              ? `Libero (#${liberoPlayer?.num} ${displayName(liberoPlayer)}) serves this rotation.`
-              : `Libero is on court here but not cleared to serve — sub #${frontPlayer?.num} ${displayName(frontPlayer)} in to serve.`}
+              ? `Libero (#${jersey(liberoPlayer)} ${displayName(liberoPlayer)}) serves this rotation.`
+              : `Libero is on court here but not cleared to serve — sub #${jersey(frontPlayer)} ${displayName(frontPlayer)} in to serve.`}
           </div>
         );
       })()}
@@ -1846,7 +1887,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               {player ? (
                 <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600 }}>
-                    #{player.num}
+                    #{jersey(player)}
                   </span>{" "}
                   <span style={{ color: COLORS.chalkDim }}>{displayName(player)}</span>
                   {player.id === captainId && (
@@ -1983,11 +2024,11 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     </button>
                   )}
                   <span style={{ color: COLORS.chalk }}>
-                    Front: <b>#{front?.num} {displayName(front)}</b>
+                    Front: <b>#{jersey(front)} {displayName(front)}</b>
                   </span>
                   <span style={{ color: COLORS.chalkDim }}>↔</span>
                   <span style={{ color: COLORS.chalk }}>
-                    Back: <b>#{back?.num} {displayName(back)}</b>
+                    Back: <b>#{jersey(back)} {displayName(back)}</b>
                   </span>
                   <button
                     onClick={() => deletePairing(pr.id)}
@@ -2102,7 +2143,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   padding: "2px 0",
                 }}
               >
-                #{p.num} {displayName(p)}
+                #{jersey(p)} {displayName(p)}
                 {p.position && (
                   <span
                     style={{
@@ -2450,7 +2491,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                       {m.player ? (
                         <>
                           <span style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, fontWeight: 600, lineHeight: 1 }}>
-                            #{m.player.num}
+                            #{jersey(m.player)}
                           </span>
                           <span style={{ fontSize: 7, color: COLORS.chalkDim, marginTop: 1 }}>
                             {displayName(m.player)}
@@ -2556,7 +2597,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               <option value="">Select player…</option>
               {roster.map((p) => (
                 <option key={p.id} value={p.id}>
-                  #{p.num} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
+                  #{jersey(p)} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
                 </option>
               ))}
             </select>
@@ -2585,7 +2626,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               <option value="">Select player…</option>
               {roster.map((p) => (
                 <option key={p.id} value={p.id}>
-                  #{p.num} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
+                  #{jersey(p)} {displayName(p)}{p.position ? ` (${p.position})` : ""}{liberos.includes(p.id) ? " · Libero" : ""} — {assignedIds.has(p.id) ? "On Court" : "Bench"}
                 </option>
               ))}
             </select>
@@ -2803,6 +2844,33 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 </option>
               ))}
             </select>
+            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+              Libero Jersey # (optional)
+            </label>
+            <input
+              placeholder="e.g. 32"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={3}
+              value={playerForm.liberoNum}
+              onChange={(e) => setPlayerForm((s) => ({ ...s, liberoNum: e.target.value.replace(/[^0-9]/g, "") }))}
+              style={{
+                width: 80,
+                padding: "9px 10px",
+                marginTop: 4,
+                background: COLORS.bg,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            />
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "6px 0 14px" }}>
+              Only if she wears a different jersey as libero. She stays one player —
+              in a set where she's in the LIBEROS row she shows as this number, otherwise
+              as #{playerForm.num || "—"}. Don't add her to the roster twice.
+            </div>
             <button
               onClick={savePlayer}
               disabled={!playerForm.firstName.trim()}
@@ -2932,7 +3000,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         width: 32,
                       }}
                     >
-                      #{p.num}
+                      #{jersey(p)}
                     </span>
                     <span style={{ flex: 1 }}>
                       {displayName(p)}
@@ -3043,6 +3111,10 @@ function LiveScreen({
   const setNumber = activeLineup.setNumber || 1;
   const slots = activeLineup.slots;
   const pairings = activeLineup.pairings || [];
+  // Which jersey each player is actually wearing this set — a libero who
+  // also plays DS has a different number in each role. See jerseyFor.
+  const liberoIdsForJersey = (activeLineup.liberos || []).filter(Boolean);
+  const jersey = (p) => jerseyFor(p, liberoIdsForJersey);
   const playerFor = (id) => roster.find((p) => p.id === id);
   // The one thing the two modes disagree on: who a stat gets recorded
   // against. Everything downstream (the stat buttons, the "Recording for"
@@ -3249,7 +3321,7 @@ function LiveScreen({
     const liberoIds = (activeLineup.liberos || []).filter(Boolean);
     const incomingIsLibero = liberoIds.includes(incomingId);
     const outgoingIsLibero = liberoIds.includes(outgoingId);
-    pushHistory(`Sub: #${playerFor(outgoingId)?.num} out, #${playerFor(incomingId)?.num} in`);
+    pushHistory(`Sub: #${jersey(playerFor(outgoingId))} out, #${jersey(playerFor(incomingId))} in`);
     setActiveSlots((cur) => ({ ...cur, [subSheet.slot]: incomingId }));
     setLineups((prev) =>
       prev.map((l) => {
@@ -3591,10 +3663,10 @@ function LiveScreen({
                       run together mid-sentence with the other player's. */}
                   <div style={{ color: COLORS.chalk, flex: 1, lineHeight: 1.5 }}>
                     <div>
-                      Sub in: <b>#{inP?.num} {displayName(inP)}</b>
+                      Sub in: <b>#{jersey(inP)} {displayName(inP)}</b>
                     </div>
                     <div>
-                      For: <b>#{out?.num} {displayName(out)}</b> ({sug.slot})
+                      For: <b>#{jersey(out)} {displayName(out)}</b> ({sug.slot})
                     </div>
                     {overLimit && <div style={{ color: COLORS.red, fontWeight: 700 }}>Over sub limit</div>}
                   </div>
@@ -3698,7 +3770,7 @@ function LiveScreen({
                 {slot}
               </span>
               <span style={{ flex: 1, textAlign: "center", fontFamily: "'Oswald', sans-serif", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>
-                {p ? `#${p.num}` : "—"}
+                {p ? `#${jersey(p)}` : "—"}
               </span>
               <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-end", textAlign: "right" }}>
                 {p && (
@@ -3773,8 +3845,8 @@ function LiveScreen({
             }}
           >
             {activePairing.liberoServes
-              ? `Libero (#${liberoPlayer?.num} ${displayName(liberoPlayer)}) is serving this rotation.`
-              : `Libero is on court but not cleared to serve here — sub #${frontPlayer?.num} ${displayName(frontPlayer)} in to serve.`}
+              ? `Libero (#${jersey(liberoPlayer)} ${displayName(liberoPlayer)}) is serving this rotation.`
+              : `Libero is on court but not cleared to serve here — sub #${jersey(frontPlayer)} ${displayName(frontPlayer)} in to serve.`}
           </div>
         );
       })()}
@@ -3852,7 +3924,7 @@ function LiveScreen({
                     color: on ? COLORS.orange : COLORS.chalk,
                   }}
                 >
-                  {p.num}
+                  {jersey(p)}
                 </span>
                 <span style={{ fontSize: 9, color: COLORS.chalkDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
                   {displayName(p)}
@@ -3874,7 +3946,7 @@ function LiveScreen({
         Recording for{" "}
         <span style={{ color: COLORS.chalk, fontWeight: 700 }}>
           {currentPlayer
-            ? `#${currentPlayer.num} ${displayName(currentPlayer)}${currentPlayer.position ? ` (${currentPlayer.position})` : ""}`
+            ? `#${jersey(currentPlayer)} ${displayName(currentPlayer)}${currentPlayer.position ? ` (${currentPlayer.position})` : ""}`
             : "no one assigned"}
         </span>
       </div>
@@ -3959,7 +4031,7 @@ function LiveScreen({
                   fontSize: 11,
                 }}
               >
-                <span style={{ color: COLORS.chalkDim }}>#{p?.num}</span>
+                <span style={{ color: COLORS.chalkDim }}>#{jersey(p)}</span>
                 {STAT_LABELS[e.stat]}
                 <X size={12} color={COLORS.red} />
               </button>
@@ -4028,7 +4100,7 @@ function LiveScreen({
                 Substitute
               </div>
               <div style={{ fontSize: 12, color: COLORS.chalkDim, marginBottom: 14 }}>
-                Out: #{outgoing?.num} {displayName(outgoing)} ·{" "}
+                Out: #{jersey(outgoing)} {displayName(outgoing)} ·{" "}
                 {isLiberoSwap
                   ? "counts as a libero swap, not a substitution"
                   : markInjured
@@ -4036,7 +4108,7 @@ function LiveScreen({
                   : "counts as one of your " + SUB_LIMIT + " subs"}
                 {outgoingCounterpart && (
                   <div style={{ marginTop: 3 }}>
-                    Tied to #{outgoingCounterpart.num} {displayName(outgoingCounterpart)} this set
+                    Tied to #{jersey(outgoingCounterpart)} {displayName(outgoingCounterpart)} this set
                   </div>
                 )}
               </div>
@@ -4080,7 +4152,7 @@ function LiveScreen({
                   >
                     <span style={{ textAlign: "left" }}>
                       <span>
-                        #{p.num} {displayName(p)} {p.position ? `(${p.position})` : ""}
+                        #{jersey(p)} {displayName(p)} {p.position ? `(${p.position})` : ""}
                       </span>
                       {counterpart && (
                         <span
@@ -4092,8 +4164,8 @@ function LiveScreen({
                           }}
                         >
                           {sameSpot
-                            ? `back in for #${counterpart.num}`
-                            : `tied to #${counterpart.num} this set — different spot in the order`}
+                            ? `back in for #${jersey(counterpart)}`
+                            : `tied to #${jersey(counterpart)} this set — different spot in the order`}
                         </span>
                       )}
                     </span>
@@ -4142,7 +4214,7 @@ function LiveScreen({
                 >
                   {markInjured && <Check size={11} color={COLORS.chalk} />}
                 </span>
-                Mark #{outgoing?.num} {displayName(outgoing)} as injured (doesn't count against the sub limit, and doesn't block them from returning)
+                Mark #{jersey(outgoing)} {displayName(outgoing)} as injured (doesn't count against the sub limit, and doesn't block them from returning)
               </button>
               {canPair && (
                 <button
@@ -4555,7 +4627,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
     const statKeys = STAT_BUTTONS.map((s) => s.key);
     const header = ["Number", "Name", ...STAT_BUTTONS.map((s) => s.label)];
     const csvRows = rowsToExport.map(({ player, stats }) => [
-      player.num,
+      jerseyLabel(player),
       fullName(player),
       ...statKeys.map((k) => stats[k] || 0),
     ]);
@@ -4627,7 +4699,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             }}
           >
             <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
-              #{player.num} {displayName(player)}
+              #{jerseyLabel(player)} {displayName(player)}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {Object.entries(stats).map(([key, count]) =>
@@ -4883,7 +4955,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                 <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
                   {Object.entries(matchInsights.leaders).map(([key, l]) => (
                     <div key={key}>
-                      {STAT_LABELS[key]} leader: #{l.player.num} {displayName(l.player)} ({l.value})
+                      {STAT_LABELS[key]} leader: #{jerseyLabel(l.player)} {displayName(l.player)} ({l.value})
                     </div>
                   ))}
                 </div>
@@ -4940,7 +5012,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
               {rotationBreakdown.map((rb, i) => (
                 <div key={i} style={{ marginBottom: i < rotationBreakdown.length - 1 ? 6 : 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.chalk }}>
-                    {rb.player ? `#${rb.player.num} ${displayName(rb.player)}` : "Before tracking"}
+                    {rb.player ? `#${jerseyLabel(rb.player)} ${displayName(rb.player)}` : "Before tracking"}
                   </div>
                   <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
                     Us: <b style={{ color: COLORS.chalk }}>{rb.us}</b> · Opp:{" "}
@@ -4977,7 +5049,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             <optgroup label="Players">
               {roster.map((p) => (
                 <option key={p.id} value={`player:${p.id}`}>
-                  #{p.num} {displayName(p)}
+                  #{jerseyLabel(p)} {displayName(p)}
                 </option>
               ))}
             </optgroup>
@@ -5059,16 +5131,16 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 // ---- Roster screen: full team, independent of any single lineup ----
 function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
-  const [playerForm, setPlayerForm] = useState({ num: "", firstName: "", lastName: "", position: "", position2: "" });
+  const [playerForm, setPlayerForm] = useState({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
   const [sortBy, setSortBy] = useState("number"); // "number" | "position" — display order only, never touches roster's actual stored order
 
   const openAddPlayer = () => {
-    setPlayerForm({ num: "", firstName: "", lastName: "", position: "", position2: "" });
+    setPlayerForm({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
     setPlayerSheet({ mode: "add" });
   };
 
   const openEditPlayer = (p) => {
-    setPlayerForm({ num: String(p.num), firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
+    setPlayerForm({ num: String(p.num), liberoNum: p.liberoNum ? String(p.liberoNum) : "", firstName: p.firstName || "", lastName: p.lastName || "", position: p.position || "", position2: p.position2 || "" });
     setPlayerSheet({ mode: "edit", id: p.id });
   };
 
@@ -5085,6 +5157,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 lastName: playerForm.lastName.trim(),
                 position: playerForm.position,
                 position2: playerForm.position2 || "",
+                liberoNum: playerForm.liberoNum.trim(),
               }
             : p
         )
@@ -5100,6 +5173,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           lastName: playerForm.lastName.trim(),
           position: playerForm.position,
           position2: playerForm.position2 || "",
+          liberoNum: playerForm.liberoNum.trim(),
         },
       ]);
     }
@@ -5295,7 +5369,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
               downloadCSV(
                 "roster.csv",
                 ["Number", "First Name", "Last Name", "Position", "Captain"],
-                roster.map((p) => [p.num, p.firstName, p.lastName, p.position || "", p.id === captainId ? "C" : ""])
+                roster.map((p) => [jerseyLabel(p), p.firstName, p.lastName, p.position || "", p.id === captainId ? "C" : ""])
               )
             }
             title="Export roster as CSV"
@@ -5384,7 +5458,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
               flexShrink: 0,
             }}
           >
-            #{p.num}
+            #{jerseyLabel(p)}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -5625,6 +5699,33 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
                 </option>
               ))}
             </select>
+            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+              Libero Jersey # (optional)
+            </label>
+            <input
+              placeholder="e.g. 32"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={3}
+              value={playerForm.liberoNum}
+              onChange={(e) => setPlayerForm((s) => ({ ...s, liberoNum: e.target.value.replace(/[^0-9]/g, "") }))}
+              style={{
+                width: 80,
+                padding: "9px 10px",
+                marginTop: 4,
+                background: COLORS.bg,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            />
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "6px 0 14px" }}>
+              Only if she wears a different jersey as libero. She stays one player —
+              in a set where she's in the LIBEROS row she shows as this number, otherwise
+              as #{playerForm.num || "—"}. Don't add her to the roster twice.
+            </div>
             <button
               onClick={savePlayer}
               disabled={!playerForm.firstName.trim()}
@@ -6290,7 +6391,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
     if (!trendSubject || trendSubject === "team") return "Team Totals";
     if (trendSubject.startsWith("player:")) {
       const p = playerFor(Number(trendSubject.slice(7)));
-      return p ? `#${p.num} ${fullName(p)}` : "Player";
+      return p ? `#${jerseyLabel(p)} ${fullName(p)}` : "Player";
     }
     if (trendSubject.startsWith("lineup:")) {
       const l = lineups.find((l) => l.id === Number(trendSubject.slice(7)));
@@ -6355,7 +6456,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
           <tbody>
             {roster.map((p) => (
               <tr key={p.id}>
-                <td style={{ ...td, fontWeight: 700, color: "#000" }}>{p.num}</td>
+                <td style={{ ...td, fontWeight: 700, color: "#000" }}>{jerseyLabel(p)}</td>
                 <td style={{ ...td, color: "#000" }}>{`${p.firstName || ""} ${p.lastName || ""}`.trim() || "—"}</td>
                 <td style={{ ...td, color: "#000" }}>{p.position || "—"}</td>
                 <td style={{ ...td, color: "#000" }}>{p.id === captainId ? "C" : ""}</td>
@@ -6379,7 +6480,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                     const back = playerFor(pr.backId);
                     return (
                       <div key={pr.id} style={{ fontSize: 12, marginLeft: 8, marginBottom: 2 }}>
-                        Front: #{front?.num} {fullName(front)} &nbsp;↔&nbsp; Back: #{back?.num} {fullName(back)}
+                        Front: #{jerseyLabel(front)} {fullName(front)} &nbsp;↔&nbsp; Back: #{jerseyLabel(back)} {fullName(back)}
                         {pr.isLibero ? "  (Libero)" : ""}
                       </div>
                     );
@@ -6447,7 +6548,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
               <tbody>
                 {roster.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{jerseyLabel(p)}</td>
                     <td style={{ ...td, border: "1px solid #000", fontSize: 17, fontWeight: 600, padding: "6px 6px" }}>{fullName(p)}</td>
                   </tr>
                 ))}
@@ -6472,7 +6573,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                         const back = playerFor(pr.backId);
                         return (
                           <div key={pr.id} style={{ fontSize: 12, fontWeight: 600, marginLeft: 5, lineHeight: 1.35 }}>
-                            #{front?.num} {fullName(front)} ↔ #{back?.num} {fullName(back)}
+                            #{jerseyFor(front, l?.liberos)} {fullName(front)} ↔ #{jerseyFor(back, l?.liberos)} {fullName(back)}
                             {pr.isLibero ? " (L)" : ""}
                           </div>
                         );
@@ -6539,7 +6640,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                               position: "relative",
                             }}
                           >
-                            {p ? p.num : ""}
+                            {p ? jerseyFor(p, l?.liberos) : ""}
                             {p && isCap && (
                               <span
                                 style={{
@@ -6571,10 +6672,10 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                       }}
                     >
                       <span style={{ textAlign: "center" }}>
-                        <b>Lib 1</b>&nbsp;{playerFor(l?.liberos?.[0])?.num || ""}
+                        <b>Lib 1</b>&nbsp;{jerseyFor(playerFor(l?.liberos?.[0]), l?.liberos) || ""}
                       </span>
                       <span style={{ textAlign: "center" }}>
-                        <b>Lib 2</b>&nbsp;{playerFor(l?.liberos?.[1])?.num || ""}
+                        <b>Lib 2</b>&nbsp;{jerseyFor(playerFor(l?.liberos?.[1]), l?.liberos) || ""}
                       </span>
                     </div>
                   </div>
@@ -6629,7 +6730,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
               <tbody>
                 {roster.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{p.num}</td>
+                    <td style={{ ...td, border: "1px solid #000", fontSize: 14, padding: "6px 6px" }}>{jerseyLabel(p)}</td>
                     <td style={{ ...td, border: "1px solid #000", fontSize: 17, fontWeight: 600, padding: "6px 6px" }}>{fullName(p)}</td>
                   </tr>
                 ))}
@@ -6717,7 +6818,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
               <tbody>
                 {boxRows.map(({ player, stats }, idx) => (
                   <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
-                    <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{jerseyLabel(player)}</td>
                     <td style={td}>{fullName(player)}</td>
                     {visibleStats.map((s) => (
                       <td key={s.key} style={{ ...td, textAlign: "center" }}>
@@ -6767,7 +6868,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                   <tbody>
                     {setRows.map(({ player, stats }, idx) => (
                       <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
-                        <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
+                        <td style={{ ...td, fontWeight: 700 }}>{jerseyLabel(player)}</td>
                         <td style={td}>{fullName(player)}</td>
                         {visibleStats.map((s) => (
                           <td key={s.key} style={{ ...td, textAlign: "center" }}>
@@ -6806,7 +6907,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
               <div style={{ fontSize: 12, marginBottom: 16 }}>
                 {Object.entries(insightsLeaders).map(([key, l]) => (
                   <div key={key}>
-                    {STAT_LABELS[key]} leader: #{l.player.num} {fullName(l.player)} ({l.value})
+                    {STAT_LABELS[key]} leader: #{jerseyLabel(l.player)} {fullName(l.player)} ({l.value})
                   </div>
                 ))}
               </div>
@@ -6856,7 +6957,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
               <tbody>
                 {insightsByRotation.map((rb, i) => (
                   <tr key={i}>
-                    <td style={td}>{rb.player ? `#${rb.player.num} ${fullName(rb.player)}` : "Before tracking"}</td>
+                    <td style={td}>{rb.player ? `#${jerseyLabel(rb.player)} ${fullName(rb.player)}` : "Before tracking"}</td>
                     <td style={{ ...td, textAlign: "center" }}>{rb.us}</td>
                     <td style={{ ...td, textAlign: "center" }}>{rb.opp}</td>
                     <td style={{ ...td, textAlign: "center" }}>
@@ -6926,7 +7027,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
           <tbody>
             {seasonRows.map(({ player, stats }, idx) => (
               <tr key={player.id} style={{ background: idx % 2 === 1 ? "#cfcfcf" : "transparent" }}>
-                <td style={{ ...td, fontWeight: 700 }}>{player.num}</td>
+                <td style={{ ...td, fontWeight: 700 }}>{jerseyLabel(player)}</td>
                 <td style={td}>{fullName(player)}</td>
                 {STAT_BUTTONS.map((s) => (
                   <td key={s.key} style={{ ...td, textAlign: "center" }}>
@@ -7012,7 +7113,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                                     opacity: 0.65,
                                   }}
                                 >
-                                  <span style={{ fontSize: 14, fontWeight: 700 }}>{playerFor(t.leaving)?.num}</span>
+                                  <span style={{ fontSize: 14, fontWeight: 700 }}>{jerseyFor(playerFor(t.leaving), l?.liberos)}</span>
                                 </div>
                                 <div style={{ height: 1.5, background: "#FF6B35" }} />
                                 <div
@@ -7025,7 +7126,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                                   }}
                                 >
                                   <span style={{ fontSize: 16, fontWeight: 800 }}>
-                                    {playerFor(t.entering)?.num}
+                                    {jerseyFor(playerFor(t.entering), l?.liberos)}
                                     {isLib ? "L" : ""}
                                   </span>
                                 </div>
@@ -7045,7 +7146,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                                 justifyContent: "center",
                               }}
                             >
-                              <span style={{ fontSize: 17, fontWeight: 800 }}>{playerFor(withSubs[pos])?.num}</span>
+                              <span style={{ fontSize: 17, fontWeight: 800 }}>{jerseyFor(playerFor(withSubs[pos]), l?.liberos)}</span>
                             </div>
                           );
                         })}
@@ -7067,9 +7168,9 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                   const back = playerFor(pr.backId);
                   return (
                     <div key={pr.id || i} style={{ fontSize: 14, marginBottom: 3 }}>
-                      <b>{displayName(front)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{front?.num}</span>
+                      <b>{displayName(front)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{jerseyFor(front, l?.liberos)}</span>
                       {" ↔ "}
-                      <b>{displayName(back)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{back?.num}</span>
+                      <b>{displayName(back)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{jerseyFor(back, l?.liberos)}</span>
                       {pr.isLibero ? " (L)" : ""}
                     </div>
                   );
@@ -7117,7 +7218,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                         </div>
                       )}
                       <div style={{ fontSize: 9, color: "#888", textAlign: "left" }}>{slot}</div>
-                      <div style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{p?.num}</div>
+                      <div style={{ fontSize: 15, fontWeight: 400, color: "#333" }}>#{jerseyFor(p, l?.liberos)}</div>
                       <div style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.2 }}>{displayName(p)}</div>
                       {p?.position && (
                         <div style={{ fontSize: 9, fontWeight: 700, border: "1px solid #999", borderRadius: 3, padding: "0 3px", display: "inline-block", marginTop: 2 }}>
@@ -7157,9 +7258,9 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                       const isLib = (l.liberos || []).includes(t.entering);
                       return (
                         <div key={idx} style={{ fontSize: 16, marginBottom: 3 }}>
-                          <b>{displayName(entering)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{entering?.num}</span>
+                          <b>{displayName(entering)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{jerseyFor(entering, l?.liberos)}</span>
                           {" in for "}
-                          <b>{displayName(leaving)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{leaving?.num}</span>
+                          <b>{displayName(leaving)}</b> <span style={{ fontWeight: 400, color: "#333" }}>#{jerseyFor(leaving, l?.liberos)}</span>
                           {isLib && (
                             <span style={{ fontSize: 11, fontWeight: 700, border: "1px solid #000", borderRadius: 4, padding: "1px 6px", marginLeft: 6 }}>
                               LIBERO
@@ -7989,8 +8090,14 @@ function SettingsSheet({
   restoreReport,
   orphanedMatches,
   recoverOrphanedMatch,
+  roster,
+  mergePlayers,
+  mergeReport,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
+  const [mergeKeepId, setMergeKeepId] = useState("");
+  const [mergeDropId, setMergeDropId] = useState("");
+  const [mergeAsLibero, setMergeAsLibero] = useState(true);
   // Read once when Settings opens — the log only changes on a crash, which
   // takes the whole app down anyway, so there's nothing to keep in sync.
   const restoreFileRef = useRef(null);
@@ -8274,6 +8381,101 @@ function SettingsSheet({
               </div>
             ))}
           </>
+        )}
+
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
+          Merge Duplicate Players
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
+          For a player who ended up on the roster twice — usually a libero who
+          also plays DS and wears a different jersey in each role. Merging folds
+          her stats, ratings, lineups and sub record onto one player. Going
+          forward, give her a Libero Jersey # on her player card instead of a
+          second roster entry.
+        </div>
+        {(() => {
+          const opt = (p) => `#${p.num} ${displayName(p)}${p.position ? ` (${p.position})` : ""}`;
+          const keep = roster.find((p) => String(p.id) === mergeKeepId);
+          const drop = roster.find((p) => String(p.id) === mergeDropId);
+          const same = mergeKeepId && mergeKeepId === mergeDropId;
+          const ready = keep && drop && !same;
+          const selStyle = {
+            width: "100%",
+            padding: "9px 10px",
+            marginTop: 4,
+            marginBottom: 10,
+            background: COLORS.bg,
+            border: `1px solid ${COLORS.line}`,
+            borderRadius: 8,
+            color: COLORS.chalk,
+            fontSize: 13,
+          };
+          return (
+            <>
+              <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+                Keep this entry
+              </label>
+              <select value={mergeKeepId} onChange={(e) => setMergeKeepId(e.target.value)} style={selStyle}>
+                <option value="">Select player…</option>
+                {roster.map((p) => (
+                  <option key={p.id} value={p.id}>{opt(p)}</option>
+                ))}
+              </select>
+              <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+                Merge this one into it, then delete it
+              </label>
+              <select value={mergeDropId} onChange={(e) => setMergeDropId(e.target.value)} style={selStyle}>
+                <option value="">Select player…</option>
+                {roster.map((p) => (
+                  <option key={p.id} value={p.id}>{opt(p)}</option>
+                ))}
+              </select>
+              {same && (
+                <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 10 }}>
+                  Those are the same entry — pick two different rows.
+                </div>
+              )}
+              {ready && (
+                <>
+                  {checkboxRow(
+                    mergeAsLibero,
+                    () => setMergeAsLibero((v) => !v),
+                    `#${drop.num} was her libero jersey — save it as ${displayName(keep)}'s Libero Jersey #`
+                  )}
+                  <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "6px 0 10px" }}>
+                    She'll show as <b style={{ color: COLORS.chalk }}>#{keep.num}</b> normally
+                    {mergeAsLibero ? <> and <b style={{ color: COLORS.chalk }}>#{drop.num}</b> in any set where she's in the LIBEROS row</> : null}.
+                    This can't be undone from inside the app — export a backup first if you want a way back.
+                  </div>
+                  <ConfirmButton
+                    label={`Merge #${drop.num} into #${keep.num}`}
+                    confirmLabel="Tap again to merge"
+                    onConfirm={() => {
+                      mergePlayers(Number(mergeKeepId), Number(mergeDropId), mergeAsLibero);
+                      setMergeKeepId("");
+                      setMergeDropId("");
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${COLORS.gold}`,
+                      background: COLORS.goldSoft,
+                      color: COLORS.chalk,
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                    armedStyle={{ color: COLORS.gold }}
+                  />
+                </>
+              )}
+            </>
+          );
+        })()}
+        {mergeReport && (
+          <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.greenSoft, border: `1px solid ${COLORS.green}`, borderRadius: 8, padding: "8px 10px", margin: "10px 0" }}>
+            {mergeReport}
+          </div>
         )}
 
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
@@ -8716,6 +8918,123 @@ function AppInner() {
     ]);
   };
 
+
+  // Folds one roster entry into another and deletes the duplicate.
+  //
+  // This exists for a specific, real situation: a libero who also plays
+  // defensive specialist wears a different jersey number in each role, and
+  // with no way to give one player two numbers the only option was to add her
+  // to the roster twice. That splits everything that keys off `playerId` —
+  // her box score, her season totals, her Player Eval ratings, and her
+  // sub/re-entry record — into two half-players, permanently. `liberoNum` on
+  // the player is the fix going forward; this is the fix for rosters that
+  // already carry the duplicates.
+  //
+  // `keepId` survives and inherits everything. `useDropAsLibero` copies the
+  // dropped entry's jersey number onto the survivor as her `liberoNum`, which
+  // is almost always what you want — the duplicate WAS the libero jersey.
+  const [mergeReport, setMergeReport] = useState("");
+  const mergePlayers = (keepId, dropId, useDropAsLibero) => {
+    const keep = roster.find((p) => p.id === keepId);
+    const drop = roster.find((p) => p.id === dropId);
+    if (!keep || !drop || keepId === dropId) {
+      setMergeReport("Pick two different players from the roster.");
+      return;
+    }
+    const movedStats = log.filter((e) => e.playerId === dropId).length;
+    const movedPoints = pointLog.filter((e) => e.serverPlayerId === dropId).length;
+
+    setMainDoc((prev) => {
+      const dedupe = (arr) => [...new Set(arr)];
+      return {
+        ...prev,
+        roster: prev.roster
+          .map((p) =>
+            p.id === keepId
+              ? {
+                  ...p,
+                  liberoNum: useDropAsLibero ? String(drop.num) : p.liberoNum || "",
+                  // a position she only had on the duplicate entry is still hers
+                  position2: p.position2 || (drop.position !== p.position ? drop.position : "") || "",
+                }
+              : p
+          )
+          .filter((p) => p.id !== dropId),
+        captainId: prev.captainId === dropId ? keepId : prev.captainId,
+        injuredPlayerIds: dedupe((prev.injuredPlayerIds || []).map((id) => (id === dropId ? keepId : id))),
+        lineups: (prev.lineups || []).map((l) => remapLineupPlayer(l, dropId, keepId)),
+        subEntries: (prev.subEntries || [])
+          .map((e) => ({
+            ...e,
+            playerId: e.playerId === dropId ? keepId : e.playerId,
+            forPlayerId: e.forPlayerId === dropId ? keepId : e.forPlayerId,
+          }))
+          // she can't have subbed for herself — that entry was an artifact of
+          // the two jerseys being two roster entries
+          .filter((e) => e.playerId !== e.forPlayerId),
+        matches: (prev.matches || []).map((m) =>
+          m.lineupSnapshots
+            ? {
+                ...m,
+                lineupSnapshots: Object.fromEntries(
+                  Object.entries(m.lineupSnapshots).map(([setNo, snap]) => [
+                    setNo,
+                    remapLineupPlayer(snap, dropId, keepId),
+                  ])
+                ),
+              }
+            : m
+        ),
+        captainVote: prev.captainVote
+          ? {
+              ...prev.captainVote,
+              candidateIds: dedupe((prev.captainVote.candidateIds || []).map((id) => (id === dropId ? keepId : id))),
+              ballots: (prev.captainVote.ballots || []).map((b) =>
+                Array.isArray(b?.picks)
+                  ? { ...b, picks: dedupe(b.picks.map((id) => (id === dropId ? keepId : id))) }
+                  : b === dropId
+                  ? keepId
+                  : b
+              ),
+            }
+          : prev.captainVote,
+        trendSubject: prev.trendSubject === `player:${dropId}` ? `player:${keepId}` : prev.trendSubject,
+      };
+    });
+
+    if (movedStats > 0) setLog((prev) => prev.map((e) => (e.playerId === dropId ? { ...e, playerId: keepId } : e)));
+    if (movedPoints > 0)
+      setPointLog((prev) => prev.map((e) => (e.serverPlayerId === dropId ? { ...e, serverPlayerId: keepId } : e)));
+
+    // Player Eval keeps its own doc that this app never otherwise touches.
+    // Leaving it alone would strand every rating recorded against the
+    // duplicate, which is half the point of merging.
+    let evalNote = "";
+    if (teamCode) {
+      const peRef = doc(db, "teams", teamCode, "data", "playerEval");
+      getDoc(peRef)
+        .then((snap) => {
+          if (!snap.exists()) return;
+          const evaluations = snap.data().evaluations || [];
+          if (!evaluations.some((e) => e.playerId === dropId)) return;
+          return setDoc(
+            peRef,
+            { evaluations: evaluations.map((e) => (e.playerId === dropId ? { ...e, playerId: keepId } : e)) },
+            { merge: true }
+          );
+        })
+        .catch((err) => console.warn("Couldn't merge Player Eval ratings:", err));
+      evalNote = " Player Eval ratings were moved across too.";
+    }
+
+    setMergeReport(
+      `Merged #${drop.num} ${displayName(drop)} into #${keep.num} ${displayName(keep)}` +
+        (useDropAsLibero ? ` (libero jersey #${drop.num})` : "") +
+        `. Moved ${movedStats} stat ${movedStats === 1 ? "entry" : "entries"}` +
+        (movedPoints > 0 ? ` and ${movedPoints} served ${movedPoints === 1 ? "point" : "points"}` : "") +
+        `.${evalNote}`
+    );
+  };
 
   const teamLogo = brandingDoc.teamLogo;
   const updateTeamLogo = (dataUrl) => setBrandingDoc((prev) => ({ ...prev, teamLogo: dataUrl }));
@@ -9588,6 +9907,9 @@ function AppInner() {
             restoreReport={restoreReport}
             orphanedMatches={orphanedMatches}
             recoverOrphanedMatch={recoverOrphanedMatch}
+            roster={roster}
+            mergePlayers={mergePlayers}
+            mergeReport={mergeReport}
           />
         )}
         {tab === "roster" && (

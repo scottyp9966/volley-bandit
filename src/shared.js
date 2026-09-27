@@ -79,6 +79,35 @@ export const displayName = (p) => {
 
 export const fullName = (p) => (p ? `${p.firstName || ""} ${p.lastName || ""}`.trim() : "");
 
+// Which jersey number to show for a player RIGHT NOW.
+//
+// A libero who also plays defensive specialist wears a different, contrasting
+// jersey in each role — real rule, and it means one person legitimately has
+// two numbers. She is still ONE player: splitting her into two roster entries
+// (the only workaround before this existed) splits her stats, her Player Eval
+// ratings and her sub/re-entry record in half, permanently.
+//
+// So a player carries an optional `liberoNum` alongside `num`, and which one
+// is shown follows the libero DESIGNATION, which lives on the lineup — and
+// lineups are per set, which is exactly how the designation works on a
+// scoresheet. In a set where she's designated libero, she's in the libero
+// jersey; in a set where she isn't, she's in her regular one.
+//
+// `liberoIds` is that lineup's `liberos` array. Callers that have no lineup
+// in scope (season totals, the roster list) should show `jerseyLabel` instead
+// of guessing at a role that isn't defined there.
+export const jerseyFor = (p, liberoIds) => {
+  if (!p) return "";
+  const designated = Array.isArray(liberoIds) && liberoIds.includes(p.id);
+  return designated && p.liberoNum ? p.liberoNum : p.num;
+};
+
+// Both numbers, for anywhere there's no set/lineup to decide between them.
+export const jerseyLabel = (p) => {
+  if (!p) return "";
+  return p.liberoNum ? `${p.num}/${p.liberoNum}` : p.num;
+};
+
 // Today's calendar date as YYYY-MM-DD in the DEVICE's timezone.
 //
 // `new Date().toISOString().slice(0, 10)` looks like it does this and does

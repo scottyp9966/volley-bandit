@@ -468,6 +468,61 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     batch at 500 operations.
   - The Firestore rule in README.md is `/{document=**}`, which already
     covers subcollections. Nothing to change there.
+- **A player can have two jersey numbers: `num` and an optional `liberoNum`.**
+  A libero who also plays DS wears a different, contrasting jersey in each
+  role — a real rule, and one person legitimately has two numbers. Before
+  this existed the only workaround was adding her to the roster twice, which
+  the coach was actually doing; because everything keys off `playerId`, that
+  splits her box score, her season totals, her Player Eval ratings and her
+  sub/re-entry record into two half-players, permanently.
+  - **Which number shows follows the libero DESIGNATION, not the position
+    field.** `jerseyFor(player, liberoIds)` in `shared.js` returns
+    `liberoNum` when the player is in that lineup's `liberos` array and
+    `num` otherwise. The designation lives on the lineup and lineups are
+    per set, which is exactly how designation works on a scoresheet: she is
+    the libero for a set, or she isn't. Confirmed with the coach that it
+    never changes mid-set, which is what makes this a pure function of the
+    lineup rather than something needing live tracking.
+  - **`jerseyLabel(player)` (`"51/32"`) is for anywhere there's no set to
+    decide** — the roster list and its CSV, the box score, Season to Date,
+    Insights, Trends, the printed roster sheet and the printed box scores.
+    Don't guess a role where none is defined; show both.
+  - `LineupScreen` and `LiveScreen` each define a local
+    `jersey = (p) => jerseyFor(p, <that lineup's liberos>)` and every
+    number they render goes through it. `PrintArea` is mixed on purpose:
+    sheets that loop over a lineup (`l` in scope — the lineup sheet's
+    grids and Lib 1/Lib 2 rows, the sub sheet, the player guide) use
+    `jerseyFor(p, l?.liberos)`; season-wide sheets use `jerseyLabel`.
+    **Verified by rendering the actual sheet, not by reading the JSX** —
+    the printed lineup sheet shows `51/32` in the roster key (so the
+    scorer can match either jersey) and the bare `32` in her court slot
+    and Lib 1 row for a set where she's designated.
+  - Form fields (`playerForm.num`), the duplicate-number warning, and the
+    roster sort all still read `num` directly. Those are about identity and
+    data entry, not about what she's wearing — don't route them through
+    `jerseyFor`.
+- **`mergePlayers(keepId, dropId, useDropAsLibero)` folds one roster entry
+  into another** — Settings → Merge Duplicate Players. This is the repair
+  for rosters that already carry the duplicate entries described above.
+  It rewrites every place a player id can live, which is more places than
+  you'd guess: `roster`, `captainId`, `injuredPlayerIds`, every lineup's
+  `slots`/`liberos`/`pairings`, `subEntries`, every match's
+  `lineupSnapshots`, `captainVote.candidateIds` and each ballot's `picks`,
+  `trendSubject`, the `stats` collection's `playerId`, the `points`
+  collection's `serverPlayerId`, **and Player Eval's own
+  `teams/{code}/data/playerEval` doc** — which this app otherwise never
+  touches, but leaving it out would strand every rating recorded against
+  the duplicate.
+  - `remapLineupPlayer` (module scope) does the lineup-shaped rewrite and is
+    shared by real lineups and by frozen `lineupSnapshots`. It handles the
+    three states that only exist because the ids used to be two people:
+    both on court at once (the dropped one's slot is vacated rather than
+    doubling the keeper up), both holding libero slots, and a pairing
+    BETWEEN them (deleted — that was the coach pairing someone with
+    herself in a different jersey). A self-referential `subEntries` row
+    goes the same way.
+  - There is **no undo**. The sheet says so and points at Export first.
+    If you add anything else keyed by `playerId`, add it here too.
 - **Export has a matching Restore** (`restoreFromBackup`, Settings). A
   backup nobody can reinstate isn't a backup, and for a long time the
   export was a file you could read but never restore. It writes whichever
