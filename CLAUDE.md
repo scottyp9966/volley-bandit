@@ -1013,7 +1013,9 @@ other device wrote these", snapshot included. One more harness note worth
 not rediscovering: a `vite.harness.*.js` config has to sit in the repo
 root, not in the scratchpad — Vite resolves `vite` and the React plugin
 relative to the config file, so a config outside the project can't load
-them.
+them. Name it `vite.harness.<variant>.tmp.js`: that pattern is gitignored,
+so a leftover one doesn't show up as an untracked file at the end of a
+session.
 
 The sharper version of that warning: a *stub* standing in for Firestore
 only catches what it models. A session built one to test in the browser

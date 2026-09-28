@@ -6,3 +6,8 @@ dist-ssr
 .env
 .vscode/*
 !.vscode/extensions.json
+
+# Throwaway Firestore-stub harness configs — these have to sit in the repo
+# root so Vite can resolve itself and the React plugin, but they hardcode a
+# session-specific scratchpad path and are never part of the app.
+vite.harness.*.tmp.js
