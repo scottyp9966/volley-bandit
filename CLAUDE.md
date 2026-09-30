@@ -542,8 +542,9 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   - `vb-assistant` (localStorage, per device, like `vb-live-simple`) is
     whether THIS device is a helper's. It must never be team data: syncing
     it would lock the coach's own phone the moment they set up an
-    assistant's. Turning it off asks for `APP_PASSCODE`, which a helper
-    doesn't need in order to record stats.
+    assistant's. Turning it off asks for a passcode — see
+    `assistantPasscode` two bullets down for which one, and why "the app
+    passcode" was the wrong answer.
   - `mainDoc.assistantCanScore` (team data) is whether assistant devices
     may also work the scoreboard. That's the coach's policy, so it syncs —
     they set it from their own phone rather than borrowing the helper's.
