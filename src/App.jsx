@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.30a";
+const APP_VERSION = "2026.09.30b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -8176,6 +8176,8 @@ function SettingsSheet({
   setAssistantMode,
   assistantCanScore,
   setAssistantCanScore,
+  assistantPasscode,
+  setAssistantPasscode,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
   const [assistantExitCode, setAssistantExitCode] = useState("");
@@ -8375,12 +8377,14 @@ function SettingsSheet({
               <b>This device is in assistant mode.</b> It can record stats
               {assistantCanScore ? " and work the scoreboard" : ""} and nothing else —
               the roster, lineups, schedule and match records are read-only here, and
-              this device can't end a match. Enter the app passcode to turn it off.
+              this device can't end a match. Enter the{" "}
+              {(assistantPasscode || "").trim() ? "assistant passcode your coach set" : "app passcode"}{" "}
+              to turn it off.
             </div>
             <input
               type="password"
               inputMode="numeric"
-              placeholder="App passcode"
+              placeholder={(assistantPasscode || "").trim() ? "Assistant passcode" : "App passcode"}
               value={assistantExitCode}
               onChange={(e) => {
                 setAssistantExitCode(e.target.value);
@@ -8401,7 +8405,8 @@ function SettingsSheet({
               <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 8 }}>Wrong passcode.</div>
             )}
             {actionBtn(() => {
-              if (assistantExitCode === APP_PASSCODE) {
+              const required = (assistantPasscode || "").trim() || APP_PASSCODE;
+              if (assistantExitCode === required) {
                 setAssistantMode(false);
                 setAssistantExitCode("");
                 setAssistantExitError(false);
@@ -8419,6 +8424,34 @@ function SettingsSheet({
               lineup or end the match. Set it on <b>their</b> device, not yours:
               it's a per-device setting and never syncs. Turning it back off asks
               for the app passcode.
+            </div>
+            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
+              Assistant passcode (optional)
+            </label>
+            <input
+              type="text"
+              placeholder="Leave blank to use the app passcode"
+              value={assistantPasscode || ""}
+              onChange={(e) => setAssistantPasscode(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                marginTop: 4,
+                marginBottom: 6,
+                background: COLORS.bg,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            />
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 12, lineHeight: 1.45 }}>
+              Set one and it becomes the <b>only</b> way out of assistant mode —
+              the app passcode stops working for it. That's the point: your helper
+              had to type the app passcode to open the app at all, so a gate that
+              also accepted it wouldn't be a gate. Don't share this one. It's
+              shown here and nowhere else, so you can always look it up, and it
+              never appears on a device that's in assistant mode.
             </div>
             {checkboxRow(
               assistantCanScore,
@@ -8858,6 +8891,13 @@ function AppInner() {
     // data, not per-device, so the coach sets it once from their own phone
     // rather than having to borrow the assistant's.
     assistantCanScore: false,
+    // A code the coach sets and never shares, used ONLY to leave assistant
+    // mode. It deliberately replaces APP_PASSCODE for that one check rather
+    // than sitting alongside it: a helper running the app on their own phone
+    // had to type APP_PASSCODE to get past the lock screen, so accepting it
+    // here too would leave the gate opening to a code they already know.
+    // Blank falls back to APP_PASSCODE, which is the pre-existing behavior.
+    assistantPasscode: "",
   };
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
@@ -10179,6 +10219,8 @@ function AppInner() {
             setAssistantMode={setAssistantMode}
             assistantCanScore={assistantCanScore}
             setAssistantCanScore={fieldSetter(setMainDoc, "assistantCanScore")}
+            assistantPasscode={mainDoc.assistantPasscode}
+            setAssistantPasscode={fieldSetter(setMainDoc, "assistantPasscode")}
           />
         )}
         {tab === "roster" && (

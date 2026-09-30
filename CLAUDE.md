@@ -547,6 +547,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   - `mainDoc.assistantCanScore` (team data) is whether assistant devices
     may also work the scoreboard. That's the coach's policy, so it syncs —
     they set it from their own phone rather than borrowing the helper's.
+  - `mainDoc.assistantPasscode` (team data, coach-set, optional) is the code
+    that leaves assistant mode, and when it's set it **replaces**
+    `APP_PASSCODE` for that check rather than sitting alongside it. That
+    substitution is the whole point and shouldn't be softened into an
+    "either code works" fallback: a helper running the app on their own
+    phone had to type `APP_PASSCODE` to get past the lock screen, so a gate
+    that still accepted it would open to a code they already know. Blank
+    falls back to `APP_PASSCODE`. No lockout risk — the coach can read it
+    back in their own Settings any time — and the field is inside the
+    `!assistantMode` branch, so it never renders on a device that's in
+    assistant mode, while the write guard stops that device changing it.
+    It does sync in the team doc, so it's readable to someone who opens
+    devtools; like everything here it stops mis-taps, not people.
   - **`setMainDoc` is wrapped in `AppInner` when assistant mode is on**, and
     filters every write down to `ASSISTANT_WRITABLE` (`statsView`, plus
     `score` when allowed). This is the part that actually holds. Hiding
