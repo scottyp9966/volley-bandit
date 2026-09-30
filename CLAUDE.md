@@ -536,6 +536,51 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     goes the same way.
   - There is **no undo**. The sheet says so and points at Export first.
     If you add anything else keyed by `playerId`, add it here too.
+- **Assistant mode is a WRITE GUARD first and hidden buttons second.**
+  For a second device — an assistant coach or a parent keeping stats during
+  a match. Two separate settings, and the split matters:
+  - `vb-assistant` (localStorage, per device, like `vb-live-simple`) is
+    whether THIS device is a helper's. It must never be team data: syncing
+    it would lock the coach's own phone the moment they set up an
+    assistant's. Turning it off asks for `APP_PASSCODE`, which a helper
+    doesn't need in order to record stats.
+  - `mainDoc.assistantCanScore` (team data) is whether assistant devices
+    may also work the scoreboard. That's the coach's policy, so it syncs —
+    they set it from their own phone rather than borrowing the helper's.
+  - **`setMainDoc` is wrapped in `AppInner` when assistant mode is on**, and
+    filters every write down to `ASSISTANT_WRITABLE` (`statsView`, plus
+    `score` when allowed). This is the part that actually holds. Hiding
+    buttons is only as good as one session's memory of every control in a
+    10,000-line file, and a later session adding a new edit control will
+    not have heard of assistant mode — the guard catches it anyway. If you
+    add a field a helper legitimately needs to write, add it to that list;
+    don't reach for `setMainDocRaw`.
+  - `next` is computed OUTSIDE the `setMainDocRaw` updater on purpose, so
+    the `setAssistantNotice` call isn't the "setState inside a setState
+    updater" bug documented above.
+  - **`snapshotLineupForMatch` deliberately goes around the guard**
+    (`setMatchesUnguarded`). It's purely additive, first-write-wins, and is
+    triggered by recording a stat — which is the whole point of the device.
+    Blocking it would silently cost a match its record of who played
+    whenever the helper is the one taking stats.
+  - `setPointLog` follows the score policy rather than the stat-entry rule,
+    since the point log is the scoreboard's record.
+  - The stat collections are NOT guarded — writing them is what an assistant
+    device is for.
+  - UI: the score steppers dim but still fire, so the guard's notice
+    explains the refusal; a dimmed control that does nothing at all is the
+    "dead tap" this app has been bitten by before. Everything else
+    destructive is hidden rather than disabled (End Match, box-score Edit,
+    Add/Edit/Delete on Roster, Schedule and Lineup, Set Active, advance
+    rotation, start next set, Restore, Merge, Switch Team, Recover).
+  - Verified in the harness: an assistant device records a stat fine,
+    is refused the score with a visible reason, and leaves roster, matches,
+    lineup slots and the active match byte-identical; the passcode gate
+    rejects a wrong code and accepts the right one; and with
+    `assistantCanScore` on, the score and its point document both land while
+    End Match and the set advance stay gone.
+  - Be honest about what it is: guard rails against mis-taps, not access
+    control. Anyone with the team code and the passcode can switch it off.
 - **Export has a matching Restore** (`restoreFromBackup`, Settings). A
   backup nobody can reinstate isn't a backup, and for a long time the
   export was a file you could read but never restore. It writes whichever

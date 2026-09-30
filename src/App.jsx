@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.27b";
+const APP_VERSION = "2026.09.30a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -1075,7 +1075,7 @@ function MatchLineupRecord({ match, roster, onShowTemplates }) {
   );
 }
 
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem, matches, activeMatchId }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem, matches, activeMatchId, assistant }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
@@ -1440,7 +1440,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           </button>
         ))}
         <button
-          onClick={() => addLineup(false)}
+          onClick={() => !assistant && addLineup(false)}
           title="New lineup"
           style={{
             flexShrink: 0,
@@ -1482,7 +1482,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           />
         ) : (
           <button
-            onClick={() => setRenaming(true)}
+            onClick={() => !assistant && setRenaming(true)}
             style={{
               background: "none",
               border: "none",
@@ -1497,7 +1497,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           </button>
         )}
         <button
-          onClick={() => addLineup(true)}
+          onClick={() => !assistant && addLineup(true)}
           title="Duplicate lineup"
           style={{ background: "none", border: "none", color: COLORS.chalkDim, display: "flex" }}
         >
@@ -1505,7 +1505,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         </button>
         {lineups.length > 1 && (
           <button
-            onClick={() => deleteLineup(activeLineup.id)}
+            onClick={() => !assistant && deleteLineup(activeLineup.id)}
             title="Delete lineup"
             style={{ background: "none", border: "none", color: COLORS.red, display: "flex" }}
           >
@@ -1617,7 +1617,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           ].map((opt) => (
             <button
               key={opt.key}
-              onClick={() => setServesFirst(opt.key)}
+              onClick={() => !assistant && setServesFirst(opt.key)}
               style={{
                 flex: 1,
                 padding: "9px",
@@ -1711,7 +1711,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           return (
             <button
               key={slot}
-              onClick={() => !isPreviewing && setPicking({ type: "court", slot })}
+              onClick={() => !isPreviewing && !assistant && setPicking({ type: "court", slot })}
               style={{
                 gridArea,
                 aspectRatio: "1",
@@ -1876,7 +1876,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           return (
             <button
               key={idx}
-              onClick={() => setPicking({ type: "libero", slot: idx })}
+              onClick={() => !assistant && setPicking({ type: "libero", slot: idx })}
               style={{
                 flex: 1,
                 minHeight: 46,
@@ -1978,7 +1978,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           Substitution Pairings
         </div>
         <button
-          onClick={() => setAddingPairing(true)}
+          onClick={() => !assistant && setAddingPairing(true)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -2045,7 +2045,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   )}
                   {showsServesToggle && (
                     <button
-                      onClick={() => toggleLiberoServes(pr.id)}
+                      onClick={() => !assistant && toggleLiberoServes(pr.id)}
                       title="A libero can sub in for more than one player, but real volleyball rules only let them serve in one of those rotational turns — mark which pairing that is."
                       style={{
                         fontSize: 9,
@@ -2069,7 +2069,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     Back: <b>#{jersey(back)}{altJersey(back) ? `/${altJersey(back)}` : ""} {displayName(back)}</b>
                   </span>
                   <button
-                    onClick={() => deletePairing(pr.id)}
+                    onClick={() => !assistant && deletePairing(pr.id)}
                     style={{ marginLeft: "auto", background: "none", border: "none", color: COLORS.chalkDim }}
                   >
                     <Trash2 size={13} />
@@ -2091,7 +2091,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                       against your regular sub total.
                     </span>
                     <button
-                      onClick={() => togglePairingLibero(pr.id)}
+                      onClick={() => !assistant && togglePairingLibero(pr.id)}
                       style={{
                         background: "none",
                         border: `1px solid ${COLORS.red}`,
@@ -2131,6 +2131,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         >
           Bench
         </div>
+        {!assistant && (
         <button
           onClick={openAddPlayer}
           style={{
@@ -2148,6 +2149,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         >
           <Plus size={12} /> Add Player
         </button>
+        )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {roster
@@ -2168,7 +2170,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               }}
             >
               <button
-                onClick={() => setCaptainId((cur) => (cur === p.id ? null : p.id))}
+                onClick={() => !assistant && setCaptainId((cur) => (cur === p.id ? null : p.id))}
                 title="Tap to toggle captain"
                 style={{
                   display: "flex",
@@ -2216,7 +2218,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 )}
               </button>
               <button
-                onClick={() => openEditPlayer(p)}
+                onClick={() => !assistant && openEditPlayer(p)}
                 title="Edit player"
                 style={{
                   background: "none",
@@ -2290,7 +2292,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               {OFFENSIVE_SYSTEMS.map((s) => (
                 <button
                   key={s.key}
-                  onClick={() => setRoleSystem((prev) => ({ ...(prev || {}), system: s.key }))}
+                  onClick={() => !assistant && setRoleSystem((prev) => ({ ...(prev || {}), system: s.key }))}
                   style={{
                     flex: 1,
                     padding: "9px 0",
@@ -3130,6 +3132,8 @@ function LiveScreen({
   onSnapshotLineup,
   setTab,
   trackStatKeys,
+  assistant,
+  assistantCanScore,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
   const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
@@ -3560,6 +3564,7 @@ function LiveScreen({
         }}
       >
         <ScoreCounter
+          disabled={assistant && !assistantCanScore}
           label="US"
           value={score.us}
           onChange={(d) => {
@@ -3572,6 +3577,7 @@ function LiveScreen({
           SET {setNumber}
         </div>
         <ScoreCounter
+          disabled={assistant && !assistantCanScore}
           label="OPP"
           value={score.opp}
           onChange={(d) => {
@@ -3628,7 +3634,9 @@ function LiveScreen({
         }}
       >
         <div style={{ width: "66%" }}>
-          <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} height={30} />
+          {!assistant && (
+            <SwipeConfirm label="Swipe to Advance Rotation" color={COLORS.blue} onConfirm={advanceRotation} height={30} />
+          )}
         </div>
         <button
           onClick={undoMatchAction}
@@ -3655,12 +3663,14 @@ function LiveScreen({
           grouped down here rather than up near the score buttons, since a
           mis-tap there was landing dangerously close to resetting the set. */}
       <div style={{ padding: "8px 20px 0" }}>
+        {!assistant && (
         <SwipeConfirm
           label={`Swipe to Start Set ${(activeLineup.setNumber || 1) + 1}`}
           color={COLORS.red}
           height={30}
           onConfirm={advanceSet}
         />
+        )}
         {setBlockedMsg && (
           <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 6 }}>{setBlockedMsg}</div>
         )}
@@ -3902,7 +3912,7 @@ function LiveScreen({
           number. A swipe rather than a tap for the same reason Full mode
           uses one — this wipes the scoreboard, and the stat grid it sits
           above is tapped constantly. */}
-      {simpleMode && (
+      {simpleMode && !assistant && (
         <div style={{ padding: "8px 20px 0", flexShrink: 0 }}>
           <SwipeConfirm
             label={`Swipe to Start Set ${setNumber + 1}`}
@@ -4465,7 +4475,7 @@ function SwipeConfirm({ label, color, onConfirm, disabled, height = 20 }) {
   );
 }
 
-function ScoreCounter({ label, value, onChange, color }) {
+function ScoreCounter({ label, value, onChange, color, disabled }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <span style={{ fontSize: 10, color: COLORS.chalkDim, letterSpacing: 0.5 }}>{label}</span>
@@ -4473,6 +4483,7 @@ function ScoreCounter({ label, value, onChange, color }) {
         <button
           onClick={() => onChange(-1)}
           style={{
+            opacity: disabled ? 0.35 : 1,
             background: "rgba(255,255,255,0.05)",
             border: `1px solid ${COLORS.line}`,
             borderRadius: "50%",
@@ -4502,6 +4513,7 @@ function ScoreCounter({ label, value, onChange, color }) {
         <button
           onClick={() => onChange(1)}
           style={{
+            opacity: disabled ? 0.35 : 1,
             background: "rgba(255,255,255,0.05)",
             border: `1px solid ${COLORS.line}`,
             borderRadius: "50%",
@@ -4522,7 +4534,7 @@ function ScoreCounter({ label, value, onChange, color }) {
 }
 
 // ---- Box score screen: current match, a specific past match, or full season ----
-function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, statsView, setStatsView, pointLog, trendSubject, setTrendSubject, onEndMatch }) {
+function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, statsView, setStatsView, pointLog, trendSubject, setTrendSubject, onEndMatch, assistant }) {
   const section = statsView?.section || "boxscore";
   const insightsMatchId = statsView?.insightsMatchId ?? null;
   const [editMode, setEditMode] = useState(false);
@@ -4817,23 +4829,25 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
                 style={{ transform: boxPickerOpen ? "rotate(-90deg)" : "rotate(90deg)", flexShrink: 0 }}
               />
             </button>
-            <button
-              onClick={() => setEditMode((v) => !v)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                background: editMode ? COLORS.accentSoft : "none",
-                border: `1px solid ${editMode ? COLORS.orange : COLORS.line}`,
-                borderRadius: 6,
-                padding: "4px 8px",
-                color: COLORS.chalk,
-                fontSize: 10,
-                fontWeight: 700,
-              }}
-            >
-              <Pencil size={11} /> {editMode ? "Done Editing" : "Edit"}
-            </button>
+            {!assistant && (
+              <button
+                onClick={() => setEditMode((v) => !v)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  background: editMode ? COLORS.accentSoft : "none",
+                  border: `1px solid ${editMode ? COLORS.orange : COLORS.line}`,
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  color: COLORS.chalk,
+                  fontSize: 10,
+                  fontWeight: 700,
+                }}
+              >
+                <Pencil size={11} /> {editMode ? "Done Editing" : "Edit"}
+              </button>
+            )}
           </div>
           {boxPickerOpen && (
             <div style={{ marginBottom: 12 }}>
@@ -4888,7 +4902,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             editable
             editMode={editMode}
           />
-          {activeMatchId && boxMatchId === activeMatchId && (
+          {activeMatchId && boxMatchId === activeMatchId && !assistant && (
             <>
               <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 14, marginBottom: 4 }}>
                 Ending the match locks it in: each set's lineup and score are
@@ -5172,7 +5186,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 }
 
 // ---- Roster screen: full team, independent of any single lineup ----
-function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote }) {
+function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote, assistant }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
   const [sortBy, setSortBy] = useState("number"); // "number" | "position" — display order only, never touches roster's actual stored order
@@ -5381,12 +5395,14 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           fontSize: 12,
           fontWeight: 700,
           opacity: roster.length < 2 ? 0.5 : 1,
+          display: assistant ? "none" : "block",
         }}
       >
         Vote for Captain
       </button>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {!assistant && (
         <button
           onClick={openAddPlayer}
           style={{
@@ -5406,6 +5422,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
         >
           <Plus size={14} /> Add Player
         </button>
+        )}
         {roster.length > 0 && (
           <button
             onClick={() =>
@@ -5559,6 +5576,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
               </span>
             )}
           </div>
+          {!assistant && (
           <button
             onClick={() => setCaptainId((cur) => (cur === p.id ? null : p.id))}
             title="Toggle captain"
@@ -5579,6 +5597,8 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           >
             C
           </button>
+          )}
+          {!assistant && (
           <button
             onClick={() => openEditPlayer(p)}
             title="Edit player"
@@ -5586,6 +5606,8 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           >
             <Pencil size={14} />
           </button>
+          )}
+          {!assistant && (
           <button
             onClick={() => deletePlayer(p.id)}
             title="Remove from roster"
@@ -5593,6 +5615,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           >
             <Trash2 size={14} />
           </button>
+          )}
         </div>
         ));
       })()}
@@ -5793,7 +5816,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
 }
 
 // ---- Schedule screen: manual add + edit + paste import ----
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, onOpenSettings }) {
+function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, onOpenSettings, assistant }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -5877,6 +5900,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", position: "relative" }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {!assistant && (
         <button
           onClick={openAddMatch}
           style={{
@@ -5896,6 +5920,8 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
         >
           <Plus size={14} /> Add Match
         </button>
+        )}
+        {!assistant && (
         <button
           onClick={() => setShowImport(true)}
           style={{
@@ -5915,6 +5941,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
         >
           <ClipboardPaste size={14} /> Import
         </button>
+        )}
         {matches.length > 0 && (
           <button
             onClick={() =>
@@ -6005,6 +6032,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {!assistant && (
               <button
                 onClick={() => setActiveMatchId(isActive ? null : m.id)}
                 title="Set as active match for printed sheets"
@@ -6020,6 +6048,11 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               >
                 {isActive ? "Active" : "Set Active"}
               </button>
+              )}
+              {assistant && isActive && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.gold }}>Active</span>
+              )}
+              {!assistant && (
               <button
                 onClick={() => openEditMatch(m)}
                 title="Edit match"
@@ -6027,6 +6060,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               >
                 <Pencil size={14} />
               </button>
+              )}
               {/* Deleting a played match is not recoverable: the stats
                   themselves live in the logs doc and survive, but this
                   match's lineupSnapshots/setScores/completedAt live on the
@@ -6034,6 +6068,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
                   out of every per-match view (box score picker, Insights,
                   Trends) since those all list from `matches`. It used to
                   delete on a single tap with no confirmation whatsoever. */}
+              {!assistant && (
               <ConfirmButton
                 label={<Trash2 size={15} />}
                 confirmLabel={
@@ -6050,6 +6085,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
                 }}
                 armedStyle={{ color: COLORS.red }}
               />
+              )}
             </div>
           </div>
         );
@@ -8136,8 +8172,14 @@ function SettingsSheet({
   roster,
   mergePlayers,
   mergeReport,
+  assistantMode,
+  setAssistantMode,
+  assistantCanScore,
+  setAssistantCanScore,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
+  const [assistantExitCode, setAssistantExitCode] = useState("");
+  const [assistantExitError, setAssistantExitError] = useState(false);
   const [mergeKeepId, setMergeKeepId] = useState("");
   const [mergeDropId, setMergeDropId] = useState("");
   const [mergeAsLibero, setMergeAsLibero] = useState(true);
@@ -8325,17 +8367,88 @@ function SettingsSheet({
         </div>
 
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+          Assistant Device
+        </div>
+        {assistantMode ? (
+          <>
+            <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.goldSoft, border: `1px solid ${COLORS.gold}`, borderRadius: 8, padding: "9px 10px", marginBottom: 10, lineHeight: 1.45 }}>
+              <b>This device is in assistant mode.</b> It can record stats
+              {assistantCanScore ? " and work the scoreboard" : ""} and nothing else —
+              the roster, lineups, schedule and match records are read-only here, and
+              this device can't end a match. Enter the app passcode to turn it off.
+            </div>
+            <input
+              type="password"
+              inputMode="numeric"
+              placeholder="App passcode"
+              value={assistantExitCode}
+              onChange={(e) => {
+                setAssistantExitCode(e.target.value);
+                setAssistantExitError(false);
+              }}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                marginBottom: 8,
+                background: COLORS.bg,
+                border: `1.5px solid ${assistantExitError ? COLORS.red : COLORS.line}`,
+                borderRadius: 8,
+                color: COLORS.chalk,
+                fontSize: 13,
+              }}
+            />
+            {assistantExitError && (
+              <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 8 }}>Wrong passcode.</div>
+            )}
+            {actionBtn(() => {
+              if (assistantExitCode === APP_PASSCODE) {
+                setAssistantMode(false);
+                setAssistantExitCode("");
+                setAssistantExitError(false);
+              } else {
+                setAssistantExitError(true);
+              }
+            }, "Turn Off Assistant Mode")}
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10, lineHeight: 1.45 }}>
+              For a second device — an assistant coach or a parent keeping stats
+              during a match. It leaves stat entry working and makes everything
+              else read-only, so a stray tap can't delete a player, rewrite a
+              lineup or end the match. Set it on <b>their</b> device, not yours:
+              it's a per-device setting and never syncs. Turning it back off asks
+              for the app passcode.
+            </div>
+            {checkboxRow(
+              assistantCanScore,
+              () => setAssistantCanScore(!assistantCanScore),
+              "Assistant devices may also work the scoreboard"
+            )}
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "4px 0 10px" }}>
+              This one is team-wide, so you can set it from here and it applies to
+              whichever device is in assistant mode.
+            </div>
+            {actionBtn(() => setAssistantMode(true), "Put This Device In Assistant Mode", {
+              border: `1px solid ${COLORS.gold}`,
+              background: COLORS.goldSoft,
+            })}
+          </>
+        )}
+
+        <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
           Team
         </div>
         <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
           Team code: <b style={{ color: COLORS.chalk }}>{teamCode}</b>
         </div>
         {actionBtn(() => setUnlockedWith(""), "Lock This Device Now")}
-        {actionBtn(() => {
-          if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
-            setTeamCode("");
-          }
-        }, "Switch Team")}
+        {!assistantMode &&
+          actionBtn(() => {
+            if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
+              setTeamCode("");
+            }
+          }, "Switch Team")}
         {PLAYER_EVAL_URL &&
           actionBtn(
             () => window.open(`${PLAYER_EVAL_URL}?code=${encodeURIComponent(teamCode)}`, "_blank", "noopener,noreferrer"),
@@ -8346,11 +8459,14 @@ function SettingsSheet({
           border: `1px solid ${COLORS.blue}`,
           background: COLORS.blueSoft,
         })}
+        {!assistantMode && (
         <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "2px 0 8px" }}>
           Restoring replaces this team's roster, lineups, matches and stats with
           whatever is in the file. Use it to undo a bad sync or bring a device back
           to a known-good state.
         </div>
+        )}
+        {!assistantMode && (
         <ConfirmButton
           label="Restore From Backup…"
           confirmLabel="Tap again, then pick the backup file"
@@ -8368,6 +8484,7 @@ function SettingsSheet({
           }}
           armedStyle={{ background: COLORS.redSoft, color: COLORS.red }}
         />
+        )}
         <input
           ref={restoreFileRef}
           type="file"
@@ -8384,7 +8501,7 @@ function SettingsSheet({
             {restoreReport}
           </div>
         )}
-        {orphanedMatches && orphanedMatches.length > 0 && (
+        {!assistantMode && orphanedMatches && orphanedMatches.length > 0 && (
           <>
             <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
               Recover Deleted Matches
@@ -8426,9 +8543,12 @@ function SettingsSheet({
           </>
         )}
 
+        {!assistantMode && (
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
           Merge Duplicate Players
         </div>
+        )}
+        {!assistantMode && (
         <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
           For a player who ended up on the roster twice — usually a libero who
           also plays DS and wears a different jersey in each role. Merging folds
@@ -8436,7 +8556,8 @@ function SettingsSheet({
           forward, give her a Libero Jersey # on her player card instead of a
           second roster entry.
         </div>
-        {(() => {
+        )}
+        {!assistantMode && (() => {
           const opt = (p) => `#${p.num} ${displayName(p)}${p.position ? ` (${p.position})` : ""}`;
           const keep = roster.find((p) => String(p.id) === mergeKeepId);
           const drop = roster.find((p) => String(p.id) === mergeDropId);
@@ -8515,7 +8636,7 @@ function SettingsSheet({
             </>
           );
         })()}
-        {mergeReport && (
+        {mergeReport && !assistantMode && (
           <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.greenSoft, border: `1px solid ${COLORS.green}`, borderRadius: 8, padding: "8px 10px", margin: "10px 0" }}>
             {mergeReport}
           </div>
@@ -8672,6 +8793,21 @@ function AppInner() {
   const [unlockedWith, setUnlockedWith] = usePersisted("vb-unlocked-with", "");
   const locked = APP_PASSCODE.trim() !== "" && unlockedWith !== APP_PASSCODE;
 
+  // Assistant mode: this DEVICE is a helper's, here to tap stats and
+  // nothing else. Per-device on purpose — it is a property of whose phone
+  // this is, not of the team, so switching it on for an assistant's phone
+  // must never reach the coach's. (What an assistant is *allowed* to do is
+  // the coach's call and does sync — see `assistantCanScore` below.)
+  // Turning it OFF asks for the app passcode, which a helper doesn't need
+  // in order to record stats.
+  const [assistantMode, setAssistantMode] = usePersisted("vb-assistant", false);
+  const [assistantNotice, setAssistantNotice] = useState("");
+  useEffect(() => {
+    if (!assistantNotice) return;
+    const t = setTimeout(() => setAssistantNotice(""), 4000);
+    return () => clearTimeout(t);
+  }, [assistantNotice]);
+
   // Which team's data this device is linked to — stays local per device on
   // purpose, since it's literally "which team is this device pointing at."
   // Everything the team code unlocks below is what actually syncs.
@@ -8718,11 +8854,15 @@ function AppInner() {
     includePairingsLineup: false,
     roleSystem: { system: "5-1" },
     captainVote: { candidateIds: [], ballots: [] },
+    // Whether devices in assistant mode may also work the scoreboard. Team
+    // data, not per-device, so the coach sets it once from their own phone
+    // rather than having to borrow the assistant's.
+    assistantCanScore: false,
   };
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
 
-  const [mainDoc, setMainDoc, mainLoaded, mainError] = useTeamDoc(teamCode, "main", MAIN_DEFAULT);
+  const [mainDoc, setMainDocRaw, mainLoaded, mainError] = useTeamDoc(teamCode, "main", MAIN_DEFAULT);
   const [logsDoc, setLogsDoc, logsLoaded, logsError] = useTeamDoc(teamCode, "logs", LOGS_DEFAULT);
   const [brandingDoc, setBrandingDoc, brandingLoaded, brandingError] = useTeamDoc(teamCode, "branding", BRANDING_DEFAULT);
   // The two logs are collections now, one document per entry, so two
@@ -8732,6 +8872,53 @@ function AppInner() {
   const [statEntries, statOps, statsLoaded, statsError] = useTeamCollection(teamCode, "stats");
   const [pointEntries, pointOps, pointsLoaded, pointsError] = useTeamCollection(teamCode, "points");
   const syncError = mainError || logsError || brandingError || statsError || pointsError;
+
+  const assistantCanScore = !!mainDoc.assistantCanScore;
+
+  // THE safeguard for a second device taking stats during a match.
+  //
+  // Hiding buttons is how assistant mode *looks*, but hiding is only as
+  // good as my memory of every control in a 10,000-line file. This is the
+  // part that actually holds: in assistant mode every write to the team
+  // document is filtered down to the fields a helper is legitimately
+  // allowed to touch, so a control I missed — or one added later by a
+  // session that never heard of assistant mode — still cannot delete a
+  // player, rewrite a lineup or end a match.
+  //
+  // Stat entries aren't here because they don't live in this document; they
+  // are their own collection (see useTeamCollection) and are exactly what
+  // the helper is there to write.
+  //
+  // `next` is computed OUTSIDE the updater on purpose. React runs updaters
+  // during render and requires them to be pure, so the `setAssistantNotice`
+  // below would be the documented "setState inside a setState updater" bug
+  // if it ran in there.
+  const ASSISTANT_WRITABLE = ["statsView"];
+  const setMainDoc = (updater) => {
+    if (!assistantMode) return setMainDocRaw(updater);
+    const prev = mainDoc;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    const allowed = new Set(ASSISTANT_WRITABLE);
+    if (assistantCanScore) allowed.add("score");
+    const touched = Object.keys(next).filter((k) => !Object.is(next[k], prev?.[k]));
+    const kept = touched.filter((k) => allowed.has(k));
+    const blocked = touched.filter((k) => !allowed.has(k));
+    if (blocked.length > 0) {
+      setAssistantNotice(
+        blocked.includes("score")
+          ? "This device can record stats but not the score — ask the coach to allow it in Settings."
+          : "Assistant mode: that change wasn't saved. Only stat entry is enabled on this device."
+      );
+    }
+    if (kept.length === 0) return;
+    setMainDocRaw((p) => {
+      const merged = { ...p };
+      kept.forEach((k) => {
+        merged[k] = next[k];
+      });
+      return merged;
+    });
+  };
 
   // Small helper: makes `const setX = fieldSetter(setMainDoc, "x")` behave
   // exactly like the old per-field useState setters — including functional
@@ -8787,9 +8974,15 @@ function AppInner() {
   // the first stat — that's the starting six, which is what a lineup record
   // means. (Raw, not computeRotationSlots: subs are layered on for display
   // only and must never be committed as real lineup data.)
+  // Deliberately goes around the assistant-mode write guard: freezing the
+  // starting six onto a match is purely additive, first-write-wins, and is
+  // triggered by recording a stat — which is exactly what an assistant
+  // device is for. Blocking it would silently cost the match its record of
+  // who actually played whenever the helper is the one taking stats.
+  const setMatchesUnguarded = fieldSetter(setMainDocRaw, "matches");
   const snapshotLineupForMatch = (matchId, setNumber, lineup) => {
     if (matchId == null || !lineup) return;
-    setMatches((prev) =>
+    setMatchesUnguarded((prev) =>
       prev.map((m) => {
         if (m.id !== matchId) return m;
         const existing = m.lineupSnapshots || {};
@@ -8876,7 +9069,16 @@ function AppInner() {
   };
 
   const setLog = makeEntrySetter(log, statOps, "log");
-  const setPointLog = makeEntrySetter(pointLog, pointOps, "pointLog");
+  const setPointLogRaw = makeEntrySetter(pointLog, pointOps, "pointLog");
+  // The point log is the scoreboard's record, so it follows the same
+  // coach-set policy as `score` itself rather than the stat-entry rule.
+  const setPointLog = (updater) => {
+    if (assistantMode && !assistantCanScore) {
+      setAssistantNotice("This device can record stats but not the score — ask the coach to allow it in Settings.");
+      return;
+    }
+    setPointLogRaw(updater);
+  };
 
   // One-time, idempotent move of the legacy arrays into the collections.
   // Runs on whichever device opens the app first; a second device running
@@ -9596,6 +9798,26 @@ function AppInner() {
         overflow: "hidden",
       }}
     >
+      {assistantNotice && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 122,
+            left: 12,
+            right: 12,
+            zIndex: 70,
+            background: COLORS.goldSoft,
+            border: `1.5px solid ${COLORS.gold}`,
+            borderRadius: 10,
+            padding: "10px 12px",
+            fontSize: 12,
+            color: COLORS.chalk,
+            lineHeight: 1.4,
+          }}
+        >
+          {assistantNotice}
+        </div>
+      )}
       {printError && (
         <div
           style={{
@@ -9953,6 +10175,10 @@ function AppInner() {
             roster={roster}
             mergePlayers={mergePlayers}
             mergeReport={mergeReport}
+            assistantMode={assistantMode}
+            setAssistantMode={setAssistantMode}
+            assistantCanScore={assistantCanScore}
+            setAssistantCanScore={fieldSetter(setMainDoc, "assistantCanScore")}
           />
         )}
         {tab === "roster" && (
@@ -9972,6 +10198,7 @@ function AppInner() {
             log={log}
             setLog={setLog}
             onOpenCaptainVote={() => setShowCaptainVote(true)}
+            assistant={assistantMode}
           />
         )}
         {tab === "lineup" && (
@@ -9988,6 +10215,7 @@ function AppInner() {
             setRoleSystem={setRoleSystem}
             matches={matches}
             activeMatchId={activeMatchId}
+            assistant={assistantMode}
           />
         )}
         {tab === "live" && (
@@ -10016,6 +10244,8 @@ function AppInner() {
             onSnapshotLineup={snapshotLineupForMatch}
             setTab={setTab}
             trackStatKeys={trackStatKeys}
+            assistant={assistantMode}
+            assistantCanScore={assistantCanScore}
           />
         )}
         {tab === "box" && (
@@ -10032,6 +10262,7 @@ function AppInner() {
             trendSubject={trendSubject}
             setTrendSubject={setTrendSubject}
             onEndMatch={endMatch}
+            assistant={assistantMode}
           />
         )}
         {tab === "schedule" && (
@@ -10045,6 +10276,7 @@ function AppInner() {
             setActiveMatchId={setActiveMatchId}
             setTab={setTab}
             setStatsView={setStatsView}
+            assistant={assistantMode}
           />
         )}
         {tab === "tourney" && (
