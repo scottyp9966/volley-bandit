@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.09.30b";
+const APP_VERSION = "2026.10.07a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -390,6 +390,26 @@ function remapLineupPlayer(lineup, dropId, keepId) {
       return true;
     });
   return { ...lineup, slots, liberos, pairings };
+}
+
+// Short label for the live scoreboard. A full team name won't fit above a
+// 40px stepper on a phone, so take the first word — "Grafton High School JV1
+// Volleyball" reads as GRAFTON, "Shrewsbury - JV" as SHREWSBURY. The coach can
+// override their own side with `teamAbbr` when the first word isn't the one
+// that identifies the team.
+function scoreLabel(name, fallback) {
+  const first = String(name || "").trim().split(/\s+/)[0] || "";
+  const clean = first.replace(/[^A-Za-z0-9'-]/g, "");
+  return clean ? clean.slice(0, 10).toUpperCase() : fallback;
+}
+
+// Captains are a LIST — co-captains are normal, and a team can name two or
+// three. The field used to be a single `captainId`, so every read goes through
+// here: a team whose data hasn't been written since still shows its captain
+// instead of suddenly having none.
+function captainIdList(doc) {
+  if (Array.isArray(doc?.captainIds)) return doc.captainIds;
+  return doc?.captainId != null ? [doc.captainId] : [];
 }
 
 // displayName/fullName now live in shared.js alongside COLORS/usePersisted.
@@ -1075,7 +1095,7 @@ function MatchLineupRecord({ match, roster, onShowTemplates }) {
   );
 }
 
-function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainId, setCaptainId, roleSystem, setRoleSystem, matches, activeMatchId, assistant }) {
+function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, roster, setRoster, captainIds, toggleCaptain, roleSystem, setRoleSystem, matches, activeMatchId, assistant }) {
   const [picking, setPicking] = useState(null); // { type: 'court'|'libero', slot } | null
   const [renaming, setRenaming] = useState(false);
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
@@ -1764,7 +1784,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               >
                 {slot}
               </span>
-              {player && player.id === captainId && (
+              {player && captainIds.includes(player.id) && (
                 <span
                   style={{
                     position: "absolute",
@@ -1928,7 +1948,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                       {positionsOf(player)}
                     </span>
                   )}
-                  {player.id === captainId && (
+                  {captainIds.includes(player.id) && (
                     <span
                       style={{
                         fontSize: 9,
@@ -2162,7 +2182,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 alignItems: "center",
                 gap: 4,
                 background: COLORS.bgRaised,
-                border: `1px solid ${p.id === captainId ? COLORS.gold : COLORS.line}`,
+                border: `1px solid ${captainIds.includes(p.id) ? COLORS.gold : COLORS.line}`,
                 borderRadius: 8,
                 padding: "4px 4px 4px 10px",
                 fontSize: 12,
@@ -2170,7 +2190,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               }}
             >
               <button
-                onClick={() => !assistant && setCaptainId((cur) => (cur === p.id ? null : p.id))}
+                onClick={() => !assistant && toggleCaptain(p.id)}
                 title="Tap to toggle captain"
                 style={{
                   display: "flex",
@@ -2198,7 +2218,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     {p.position}
                   </span>
                 )}
-                {p.id === captainId && (
+                {captainIds.includes(p.id) && (
                   <span
                     style={{
                       fontSize: 9,
@@ -3014,7 +3034,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   picking.type === "court"
                     ? slots[picking.slot] === p.id
                     : liberos[picking.slot] === p.id;
-                const isCaptain = p.id === captainId;
+                const isCaptain = captainIds.includes(p.id);
                 return (
                   <div
                     key={p.id}
@@ -3068,7 +3088,7 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setCaptainId((cur) => (cur === p.id ? null : p.id));
+                        toggleCaptain(p.id);
                       }}
                       title="Toggle captain"
                       style={{
@@ -3134,6 +3154,8 @@ function LiveScreen({
   trackStatKeys,
   assistant,
   assistantCanScore,
+  usLabel,
+  oppLabel,
 }) {
   const [selectedSlot, setSelectedSlot] = useState("P1");
   const [subSheet, setSubSheet] = useState(null); // { slot, playerId } | null — free substitution sheet
@@ -3558,14 +3580,15 @@ function LiveScreen({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "10px 20px",
+          gap: 8,
+          padding: "12px 14px",
           background: COLORS.bgRaised,
           borderBottom: `1px solid ${COLORS.line}`,
         }}
       >
         <ScoreCounter
           disabled={assistant && !assistantCanScore}
-          label="US"
+          label={usLabel}
           value={score.us}
           onChange={(d) => {
             setScore((s) => ({ ...s, us: Math.max(0, s.us + d) }));
@@ -3573,12 +3596,12 @@ function LiveScreen({
           }}
           color={COLORS.orange}
         />
-        <div style={{ fontSize: 11, color: COLORS.chalkDim, textAlign: "center" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.chalkDim, textAlign: "center", flexShrink: 0 }}>
           SET {setNumber}
         </div>
         <ScoreCounter
           disabled={assistant && !assistantCanScore}
-          label="OPP"
+          label={oppLabel}
           value={score.opp}
           onChange={(d) => {
             setScore((s) => ({ ...s, opp: Math.max(0, s.opp + d) }));
@@ -4477,9 +4500,22 @@ function SwipeConfirm({ label, color, onConfirm, disabled, height = 20 }) {
 
 function ScoreCounter({ label, value, onChange, color, disabled }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-      <span style={{ fontSize: 10, color: COLORS.chalkDim, letterSpacing: 0.5 }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, minWidth: 0 }}>
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: COLORS.chalkDim,
+          letterSpacing: 0.5,
+          maxWidth: 124,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
         <button
           onClick={() => onChange(-1)}
           style={{
@@ -4488,24 +4524,25 @@ function ScoreCounter({ label, value, onChange, color, disabled }) {
             border: `1px solid ${COLORS.line}`,
             borderRadius: "50%",
             color: COLORS.chalk,
-            width: 40,
-            height: 40,
+            width: 46,
+            height: 46,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
           }}
         >
-          <Minus size={20} />
+          <Minus size={23} />
         </button>
         <span
           style={{
             fontFamily: "'Oswald', sans-serif",
-            fontSize: 30,
+            fontSize: 38,
             fontWeight: 700,
             color,
-            minWidth: 36,
+            minWidth: 44,
             textAlign: "center",
+            lineHeight: 1,
           }}
         >
           {value}
@@ -4518,15 +4555,15 @@ function ScoreCounter({ label, value, onChange, color, disabled }) {
             border: `1px solid ${COLORS.line}`,
             borderRadius: "50%",
             color: COLORS.chalk,
-            width: 40,
-            height: 40,
+            width: 46,
+            height: 46,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
           }}
         >
-          <Plus size={20} />
+          <Plus size={23} />
         </button>
       </div>
     </div>
@@ -5186,7 +5223,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
 }
 
 // ---- Roster screen: full team, independent of any single lineup ----
-function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, setLineups, teamName, setTeamName, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote, assistant }) {
+function RosterScreen({ roster, setRoster, captainIds, toggleCaptain, lineups, setLineups, teamName, setTeamName, teamAbbr, setTeamAbbr, coachName, setCoachName, teamLogo, updateTeamLogo, log, setLog, onOpenCaptainVote, assistant }) {
   const [playerSheet, setPlayerSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [playerForm, setPlayerForm] = useState({ num: "", liberoNum: "", firstName: "", lastName: "", position: "", position2: "" });
   const [sortBy, setSortBy] = useState("number"); // "number" | "position" — display order only, never touches roster's actual stored order
@@ -5260,7 +5297,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
         pairings: (l.pairings || []).filter((p) => p.frontId !== id && p.backId !== id),
       }))
     );
-    if (captainId === id) setCaptainId(null);
+    if (captainIds.includes(id)) toggleCaptain(id);
   };
 
   return (
@@ -5291,6 +5328,22 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           placeholder="Team name"
           value={teamName}
           onChange={(e) => setTeamName(e.target.value)}
+          style={{
+            width: "100%",
+            padding: "8px 10px",
+            marginBottom: 8,
+            background: COLORS.bg,
+            border: `1px solid ${COLORS.line}`,
+            borderRadius: 8,
+            color: COLORS.chalk,
+            fontSize: 13,
+          }}
+        />
+        <input
+          placeholder="Scoreboard short name (e.g. GRAFTON)"
+          value={teamAbbr}
+          maxLength={10}
+          onChange={(e) => setTeamAbbr(e.target.value)}
           style={{
             width: "100%",
             padding: "8px 10px",
@@ -5429,7 +5482,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
               downloadCSV(
                 "roster.csv",
                 ["Number", "First Name", "Last Name", "Position", "Captain"],
-                roster.map((p) => [jerseyLabel(p), p.firstName, p.lastName, p.position || "", p.id === captainId ? "C" : ""])
+                roster.map((p) => [jerseyLabel(p), p.firstName, p.lastName, p.position || "", captainIds.includes(p.id) ? "C" : ""])
               )
             }
             title="Export roster as CSV"
@@ -5502,7 +5555,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
             alignItems: "center",
             gap: 10,
             background: COLORS.bgRaised,
-            border: `1px solid ${p.id === captainId ? COLORS.gold : COLORS.line}`,
+            border: `1px solid ${captainIds.includes(p.id) ? COLORS.gold : COLORS.line}`,
             borderRadius: 10,
             padding: "10px 12px",
             marginBottom: 8,
@@ -5523,7 +5576,7 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 14, color: COLORS.chalk, fontWeight: 600 }}>{displayName(p)}</span>
-              {p.id === captainId && (
+              {captainIds.includes(p.id) && (
                 <span
                   style={{
                     fontSize: 9,
@@ -5578,15 +5631,15 @@ function RosterScreen({ roster, setRoster, captainId, setCaptainId, lineups, set
           </div>
           {!assistant && (
           <button
-            onClick={() => setCaptainId((cur) => (cur === p.id ? null : p.id))}
+            onClick={() => toggleCaptain(p.id)}
             title="Toggle captain"
             style={{
               flexShrink: 0,
               fontSize: 10,
               fontWeight: 700,
-              color: p.id === captainId ? "#1C2128" : COLORS.chalkDim,
-              background: p.id === captainId ? COLORS.gold : "transparent",
-              border: `1px solid ${p.id === captainId ? COLORS.gold : COLORS.line}`,
+              color: captainIds.includes(p.id) ? "#1C2128" : COLORS.chalkDim,
+              background: captainIds.includes(p.id) ? COLORS.gold : "transparent",
+              border: `1px solid ${captainIds.includes(p.id) ? COLORS.gold : COLORS.line}`,
               borderRadius: "50%",
               width: 26,
               height: 26,
@@ -6371,7 +6424,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
 
 // ---- Print area: standard black-on-white formats, one per document type.
 // Hidden on screen; shown via @media print CSS with everything else hidden.
-const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainId, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
+const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainIds, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
@@ -6538,7 +6591,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                 <td style={{ ...td, fontWeight: 700, color: "#000" }}>{jerseyLabel(p)}</td>
                 <td style={{ ...td, color: "#000" }}>{`${p.firstName || ""} ${p.lastName || ""}`.trim() || "—"}</td>
                 <td style={{ ...td, color: "#000" }}>{p.position || "—"}</td>
-                <td style={{ ...td, color: "#000" }}>{p.id === captainId ? "C" : ""}</td>
+                <td style={{ ...td, color: "#000" }}>{captainIds.includes(p.id) ? "C" : ""}</td>
               </tr>
             ))}
           </tbody>
@@ -6702,7 +6755,7 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                       {["P4", "P3", "P2", "P5", "P6", "P1"].map((slot) => {
                         const p = l ? playerFor(l.slots?.[slot]) : null;
                         const isServer = slot === serverSlot;
-                        const isCap = p && p.id === captainId;
+                        const isCap = p && captainIds.includes(p.id);
                         return (
                           <div
                             key={slot}
@@ -8857,6 +8910,8 @@ function AppInner() {
 
   const MAIN_DEFAULT = {
     roster: [],
+    captainIds: [],
+    // Kept in step with captainIds[0] on every write — see setCaptainIds.
     captainId: null,
     lineups: [
       {
@@ -8882,6 +8937,7 @@ function AppInner() {
     statsView: { section: "boxscore", insightsMatchId: null, boxMatchId: null },
     trendSubject: "team",
     teamName: "",
+    teamAbbr: "", // short form for the live scoreboard — see scoreLabel
     coachName: "",
     includePairingsRoster: false,
     includePairingsLineup: false,
@@ -8968,8 +9024,18 @@ function AppInner() {
 
   const roster = mainDoc.roster;
   const setRoster = fieldSetter(setMainDoc, "roster");
-  const captainId = mainDoc.captainId;
-  const setCaptainId = fieldSetter(setMainDoc, "captainId");
+  const captainIds = captainIdList(mainDoc);
+  const setCaptainIds = (updater) =>
+    setMainDoc((prev) => {
+      const cur = captainIdList(prev);
+      const next = typeof updater === "function" ? updater(cur) : updater;
+      // `captainId` is written alongside so a device still running an older
+      // build — or an older backup restored later — shows a captain rather
+      // than none. It's a mirror of the first entry, never read by this build.
+      return { ...prev, captainIds: next, captainId: next[0] ?? null };
+    });
+  const toggleCaptain = (id) =>
+    setCaptainIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   const captainVote = mainDoc.captainVote || { candidateIds: [], ballots: [] };
   const setCaptainVote = fieldSetter(setMainDoc, "captainVote");
   const [showCaptainVote, setShowCaptainVote] = useState(false);
@@ -9042,6 +9108,8 @@ function AppInner() {
   const setTrendSubject = fieldSetter(setMainDoc, "trendSubject");
   const teamName = mainDoc.teamName;
   const setTeamName = fieldSetter(setMainDoc, "teamName");
+  const teamAbbr = mainDoc.teamAbbr || "";
+  const setTeamAbbr = fieldSetter(setMainDoc, "teamAbbr");
   const coachName = mainDoc.coachName;
   const setCoachName = fieldSetter(setMainDoc, "coachName");
   const includePairingsRoster = mainDoc.includePairingsRoster;
@@ -9245,6 +9313,7 @@ function AppInner() {
               : p
           )
           .filter((p) => p.id !== dropId),
+        captainIds: dedupe(captainIdList(prev).map((id) => (id === dropId ? keepId : id))),
         captainId: prev.captainId === dropId ? keepId : prev.captainId,
         injuredPlayerIds: dedupe((prev.injuredPlayerIds || []).map((id) => (id === dropId ? keepId : id))),
         lineups: (prev.lineups || []).map((l) => remapLineupPlayer(l, dropId, keepId)),
@@ -9939,7 +10008,7 @@ function AppInner() {
         log={log}
         score={score}
         matches={matches}
-        captainId={captainId}
+        captainIds={captainIds}
         teamName={teamName}
         coachName={coachName}
         activeMatchId={activeMatchId}
@@ -10227,12 +10296,14 @@ function AppInner() {
           <RosterScreen
             roster={roster}
             setRoster={setRoster}
-            captainId={captainId}
-            setCaptainId={setCaptainId}
+            captainIds={captainIds}
+            toggleCaptain={toggleCaptain}
             lineups={lineups}
             setLineups={setLineups}
             teamName={teamName}
             setTeamName={setTeamName}
+            teamAbbr={teamAbbr}
+            setTeamAbbr={setTeamAbbr}
             coachName={coachName}
             setCoachName={setCoachName}
             teamLogo={teamLogo}
@@ -10251,8 +10322,8 @@ function AppInner() {
             setActiveLineupId={setActiveLineupId}
             roster={roster}
             setRoster={setRoster}
-            captainId={captainId}
-            setCaptainId={setCaptainId}
+            captainIds={captainIds}
+            toggleCaptain={toggleCaptain}
             roleSystem={roleSystem}
             setRoleSystem={setRoleSystem}
             matches={matches}
@@ -10288,6 +10359,8 @@ function AppInner() {
             trackStatKeys={trackStatKeys}
             assistant={assistantMode}
             assistantCanScore={assistantCanScore}
+            usLabel={scoreLabel(teamAbbr || teamName, "US")}
+            oppLabel={scoreLabel(liveMatch?.opponent, "OPP")}
           />
         )}
         {tab === "box" && (

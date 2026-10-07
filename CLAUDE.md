@@ -536,6 +536,30 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     goes the same way.
   - There is **no undo**. The sheet says so and points at Export first.
     If you add anything else keyed by `playerId`, add it here too.
+- **Captains are a list (`mainDoc.captainIds`), not one `captainId`.**
+  Co-captains are normal and a team can name two or three. Every read goes
+  through `captainIdList(doc)` (module scope), which falls back to
+  `[captainId]` for a team whose data hasn't been rewritten since — same
+  normalizer pattern as `ballotPicks`. `toggleCaptain(id)` adds or removes.
+  `setCaptainIds` also writes `captainId: next[0] ?? null` as a mirror, so a
+  device still on an older build, or an older backup restored later, shows a
+  captain rather than none; nothing in this build reads it. `mergePlayers`
+  remaps `captainIds` as well as the legacy field, and `deletePlayer` drops
+  the player from the list. Every C badge, the roster CSV and both print
+  sheets test membership, so all captains are marked, not just the first.
+- **The live scoreboard is labelled with the two teams, not "US"/"OPP".**
+  `scoreLabel(name, fallback)` (module scope) takes the first word of a name,
+  strips punctuation and uppercases it, capped at 10 characters — "Grafton
+  High School JV1 Volleyball" reads as GRAFTON, "Shrewsbury - JV" as
+  SHREWSBURY. The opponent comes from the active match, so it follows
+  whatever is on the Schedule with no extra typing; our own side can be
+  overridden with `mainDoc.teamAbbr` (Roster → Team Info, "Scoreboard short
+  name") for when the first word isn't the identifying one. Both fall back
+  to US/OPP when there's nothing to use — no active match, no team name.
+  The label is `text-overflow: ellipsis` at `maxWidth: 124`, which is what
+  the column can hold beside a 46px stepper at 390px wide; if you enlarge
+  the steppers again, re-check that width on a screenshot rather than
+  assuming.
 - **Assistant mode is a WRITE GUARD first and hidden buttons second.**
   For a second device — an assistant coach or a parent keeping stats during
   a match. Two separate settings, and the split matters:
