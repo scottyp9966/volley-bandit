@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.07a";
+const APP_VERSION = "2026.10.08a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -401,6 +401,40 @@ function scoreLabel(name, fallback) {
   const first = String(name || "").trim().split(/\s+/)[0] || "";
   const clean = first.replace(/[^A-Za-z0-9'-]/g, "");
   return clean ? clean.slice(0, 10).toUpperCase() : fallback;
+}
+
+const LIBERO_ROLE_LABEL = { any: "ANY", receive: "RECEIVE", serve: "SERVE" };
+
+// Who is serving RIGHT NOW. In rally scoring whoever won the last rally
+// serves the next one, so this falls out of the point log with nothing extra
+// for the coach to tap; before the first point of a set it's whatever the
+// lineup says about who served first.
+//
+// The catch is that it's only as good as the scoreboard. A coach who stops
+// tapping points mid-set would silently get the wrong answer, so the lineup
+// can also carry a one-rally override (`servingOverride`) — see
+// `servingState`. The override is pinned to the point count it was set at,
+// which is what stops it going stale: the very next point resolves
+// possession for real and the override stops applying on its own.
+function pointsThisSet(pointLog, matchId, setNumber) {
+  return (pointLog || []).filter(
+    (e) => (e.matchId ?? null) === (matchId ?? null) && (e.setNumber || 1) === setNumber
+  );
+}
+
+function servingState(pointLog, matchId, setNumber, lineup) {
+  const pts = pointsThisSet(pointLog, matchId, setNumber);
+  const last = pts[pts.length - 1];
+  const derived = last ? last.team === "us" : (lineup?.servesFirst || "us") === "us";
+  const o = lineup?.servingOverride;
+  const overridden =
+    o && o.setNumber === setNumber && o.at === pts.length && typeof o.serving === "boolean";
+  return {
+    serving: overridden ? o.serving : derived,
+    derived,
+    overridden: !!overridden,
+    pointCount: pts.length,
+  };
 }
 
 // Captains are a LIST — co-captains are normal, and a team can name two or
@@ -1104,6 +1138,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const [pairingForm, setPairingForm] = useState({ frontId: "", backId: "", isLibero: false });
   const [systemSheetOpen, setSystemSheetOpen] = useState(false);
   const [serveReceiveOpen, setServeReceiveOpen] = useState(false);
+  const [addingServeSub, setAddingServeSub] = useState(false);
+  const [serveSubForm, setServeSubForm] = useState({ forId: "", subId: "" });
   const [isAlternate, setIsAlternate] = useState(false);
   // Which lineup this SCREEN is showing/editing — deliberately separate from
   // activeLineupId (the one actually live on the Live screen). Browsing or
@@ -1146,6 +1182,56 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
   const liberos = activeLineup.liberos || [null, null];
   // Which jersey she is actually wearing in this set — see jerseyFor.
   const jersey = (p) => jerseyFor(p, liberos);
+  // Two-libero teams often run one for serve-receive and a different one when
+  // they're serving. The role lives per libero SLOT (L1/L2) rather than per
+  // player, so swapping who fills a slot keeps the plan intact.
+  const liberoRole = (idx) => (activeLineup.liberoRoles || [])[idx] || "any";
+  const serveSubs = activeLineup.serveSubs || [];
+  const serveSubSelectStyle = {
+    width: "100%",
+    padding: "9px 10px",
+    marginTop: 4,
+    marginBottom: 10,
+    background: COLORS.bg,
+    border: `1px solid ${COLORS.line}`,
+    borderRadius: 8,
+    color: COLORS.chalk,
+    fontSize: 13,
+  };
+  const serveSubError = (() => {
+    const { forId, subId } = serveSubForm;
+    if (!forId || !subId) return null;
+    if (forId === subId) return "Pick two different players.";
+    if (serveSubs.some((ss) => String(ss.forId) === forId)) return "That player already has a serving specialist.";
+    return null;
+  })();
+  const addServeSub = () => {
+    if (serveSubError || !serveSubForm.forId || !serveSubForm.subId) return;
+    const entry = { id: Date.now(), forId: Number(serveSubForm.forId), subId: Number(serveSubForm.subId) };
+    setLineups((prev) =>
+      prev.map((l) => (l.id === activeLineup.id ? { ...l, serveSubs: [...(l.serveSubs || []), entry] } : l))
+    );
+    setServeSubForm({ forId: "", subId: "" });
+    setAddingServeSub(false);
+  };
+  const deleteServeSub = (id) => {
+    setLineups((prev) =>
+      prev.map((l) => (l.id === activeLineup.id ? { ...l, serveSubs: (l.serveSubs || []).filter((ss) => ss.id !== id) } : l))
+    );
+  };
+  const cycleLiberoRole = (idx) => {
+    const order = ["any", "receive", "serve"];
+    const next = order[(order.indexOf(liberoRole(idx)) + 1) % order.length];
+    setLineups((prev) =>
+      prev.map((l) => {
+        if (l.id !== activeLineup.id) return l;
+        const roles = [...(l.liberoRoles || ["any", "any"])];
+        while (roles.length < 2) roles.push("any");
+        roles[idx] = next;
+        return { ...l, liberoRoles: roles };
+      })
+    );
+  };
   // Both positions, not just the primary. A player with two is exactly the
   // one this screen needs you to recognize at a glance — a libero who also
   // plays DS, a middle who swings outside — and showing only the first hides
@@ -1923,6 +2009,28 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               >
                 L{idx + 1}
               </span>
+              {player && (
+                <span
+                  role="button"
+                  title="When this libero plays"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!assistant) cycleLiberoRole(idx);
+                  }}
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: liberoRole(idx) === "any" ? COLORS.chalkDim : COLORS.orange,
+                    border: `1px solid ${liberoRole(idx) === "any" ? COLORS.line : COLORS.orange}`,
+                    background: liberoRole(idx) === "any" ? "transparent" : COLORS.accentSoft,
+                    borderRadius: 4,
+                    padding: "1px 5px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {LIBERO_ROLE_LABEL[liberoRole(idx)]}
+                </span>
+              )}
               {player ? (
                 <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600 }}>
@@ -2126,6 +2234,116 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     </button>
                   </div>
                 )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Serving specialists — a player brought on purely to serve a run and
+          taken straight back off at sideout. Kept as its own list rather than
+          folded into `pairings`, which is about front-row/back-row rotation
+          and is the most bug-prone code in this file; a serve sub has nothing
+          to do with which row anyone is in. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          Serving Specialists
+        </div>
+        {!assistant && (
+          <button
+            onClick={() => setAddingServeSub((v) => !v)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              background: "none",
+              border: `1px solid ${COLORS.orange}`,
+              borderRadius: 6,
+              padding: "4px 8px",
+              color: COLORS.orange,
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            <Plus size={12} /> Add
+          </button>
+        )}
+      </div>
+      {addingServeSub && !assistant && (
+        <div style={{ border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8, lineHeight: 1.45 }}>
+            When the first player rotates to serve and you win the serve, the app
+            offers to bring the specialist on; it offers to put them back the
+            moment you lose it. Each turn costs two of your {SUB_LIMIT} subs.
+          </div>
+          <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>Serves instead of</label>
+          <select value={serveSubForm.forId} onChange={(e) => setServeSubForm((f) => ({ ...f, forId: e.target.value }))} style={serveSubSelectStyle}>
+            <option value="">Select player…</option>
+            {roster.map((p) => (
+              <option key={p.id} value={p.id}>#{jersey(p)} {displayName(p)}</option>
+            ))}
+          </select>
+          <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>Specialist coming in</label>
+          <select value={serveSubForm.subId} onChange={(e) => setServeSubForm((f) => ({ ...f, subId: e.target.value }))} style={serveSubSelectStyle}>
+            <option value="">Select player…</option>
+            {roster.map((p) => (
+              <option key={p.id} value={p.id}>#{jersey(p)} {displayName(p)}</option>
+            ))}
+          </select>
+          {serveSubError && <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 8 }}>{serveSubError}</div>}
+          <button
+            onClick={addServeSub}
+            disabled={!serveSubForm.forId || !serveSubForm.subId || !!serveSubError}
+            style={{
+              width: "100%",
+              padding: "9px",
+              borderRadius: 8,
+              border: "none",
+              background: !serveSubForm.forId || !serveSubForm.subId || serveSubError ? COLORS.line : COLORS.orange,
+              color: "#1C2128",
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Save Serving Specialist
+          </button>
+        </div>
+      )}
+      {serveSubs.length === 0 ? (
+        <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 16 }}>
+          None set. Without one the app never prompts a serve sub — you can still
+          make one by hand from the Live screen.
+        </div>
+      ) : (
+        <div style={{ marginBottom: 16 }}>
+          {serveSubs.map((ss) => {
+            const forP = playerFor(ss.forId);
+            const subP = playerFor(ss.subId);
+            return (
+              <div
+                key={ss.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 12,
+                  background: COLORS.bgRaised,
+                  border: `1px solid ${COLORS.line}`,
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 6,
+                }}
+              >
+                <span style={{ color: COLORS.chalk }}>
+                  <b>#{jersey(subP)} {displayName(subP)}</b> serves for{" "}
+                  <b>#{jersey(forP)} {displayName(forP)}</b>
+                </span>
+                <button
+                  onClick={() => !assistant && deleteServeSub(ss.id)}
+                  style={{ marginLeft: "auto", background: "none", border: "none", color: COLORS.chalkDim }}
+                >
+                  <Trash2 size={13} />
+                </button>
               </div>
             );
           })}
@@ -3167,6 +3385,10 @@ function LiveScreen({
   // dialog inside an installed iOS PWA can look exactly like a frozen app.
   const [setBlockedMsg, setSetBlockedMsg] = useState("");
   const [subSuggestions, setSubSuggestions] = useState([]);
+  // Waving off a possession prompt lasts one rally: cleared whenever the
+  // point count moves, which is the same thing that makes the prompt
+  // re-evaluate in the first place.
+  const [dismissedPrompts, setDismissedPrompts] = useState([]);
   const [matchHistory, setMatchHistory] = useState([]); // stack of {slots, subCount, liberoSubCount, pairings, injuredPlayerIds, label} — undo for rotation/subs
   // Simple mode: tap any roster number, tap a stat, done — no rotation, no
   // subs, no court. Running the full Live screen solo during a match turned
@@ -3290,6 +3512,74 @@ function LiveScreen({
   // highlight the right one instead of needing to be set by hand.
   const setActiveRotation = (n) => {
     setLineups((prev) => prev.map((l) => (l.id === activeLineup.id ? { ...l, currentRotation: n } : l)));
+  };
+
+  // Serving or receiving, derived from the score with a one-rally manual
+  // correction. Everything possession-driven below — the two-libero swap and
+  // the serving specialist — reads this and nothing else.
+  const possession = servingState(pointLog, activeMatchId, setNumber, activeLineup);
+  // Possession-driven prompts: the two-libero swap and the serving
+  // specialist. Deliberately DERIVED every render rather than stored the way
+  // `subSuggestions` is — a rotation happens once and is captured, but
+  // possession flips every rally, and a stored list would go stale the moment
+  // the score moved. Dismissals are keyed and cleared when the point count
+  // changes, so waving one off lasts exactly one rally.
+  const possessionPrompts = (() => {
+    const out = [];
+    const onCourt = new Set(Object.values(slots).filter(Boolean));
+    const roles = activeLineup.liberoRoles || [];
+    const liberoSlots = activeLineup.liberos || [];
+    const wantedRole = possession.serving ? "serve" : "receive";
+    const wantedIdx = [0, 1].find((i) => liberoSlots[i] && roles[i] === wantedRole);
+    if (wantedIdx !== undefined) {
+      const wantedId = liberoSlots[wantedIdx];
+      const otherId = liberoSlots[wantedIdx === 0 ? 1 : 0];
+      const otherSlot = otherId ? Object.keys(slots).find((k) => slots[k] === otherId) : null;
+      if (!onCourt.has(wantedId) && otherSlot) {
+        out.push({
+          key: `libero-${wantedId}-${otherId}`,
+          kind: "libero",
+          slot: otherSlot,
+          outId: otherId,
+          inId: wantedId,
+          note: possession.serving ? "We're serving" : "We're receiving",
+        });
+      }
+    }
+    (activeLineup.serveSubs || []).forEach((ss) => {
+      if (possession.serving && slots.P1 === ss.forId && !onCourt.has(ss.subId)) {
+        out.push({ key: `serve-in-${ss.id}`, kind: "serveIn", slot: "P1", outId: ss.forId, inId: ss.subId, note: "Our serve" });
+      } else if (!possession.serving && slots.P1 === ss.subId && !onCourt.has(ss.forId)) {
+        out.push({ key: `serve-out-${ss.id}`, kind: "serveOut", slot: "P1", outId: ss.subId, inId: ss.forId, note: "Serve lost" });
+      }
+    });
+    // Dismissals are stamped with the point count they were made at, so they
+    // expire on their own the moment the next rally lands. No reset effect,
+    // and nothing to leave behind if the coach never dismisses anything.
+    return out.filter((pr) => !dismissedPrompts.includes(`${possession.pointCount}:${pr.key}`));
+  })();
+
+  const confirmPossessionPrompt = (pr) => {
+    const out = playerFor(pr.outId);
+    const inP = playerFor(pr.inId);
+    pushHistory(`${pr.kind === "libero" ? "Libero swap" : "Serve sub"}: ${displayName(inP)} in for ${displayName(out)}`);
+    setActiveSlots((cur) => ({ ...cur, [pr.slot]: pr.inId }));
+    if (pr.kind === "libero") {
+      setLiberoSubCount((c) => c + 1);
+    } else {
+      setSubCount((c) => c + 1);
+      recordSubEntry(pr.inId, pr.outId, pr.slot);
+    }
+  };
+
+  const setServingOverride = (serving) => {
+    setLineups((prev) =>
+      prev.map((l) =>
+        l.id === activeLineup.id
+          ? { ...l, servingOverride: { setNumber, at: possession.pointCount, serving } }
+          : l
+      )
+    );
   };
 
   // Snapshot current match state before a rotation/sub/substitution action,
@@ -3617,6 +3907,122 @@ function LiveScreen({
           bar above and the stat buttons / undo tray below are shared. */}
       {!simpleMode && (
         <>
+      {/* Serving / receiving. Read from the score, tappable to correct when
+          the scoreboard has drifted — the correction only has to survive one
+          rally, because the next point settles it for real. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 20px 0" }}>
+        <button
+          onClick={() => setServingOverride(!possession.serving)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 10px",
+            borderRadius: 999,
+            border: `1.5px solid ${possession.serving ? COLORS.orange : COLORS.blue}`,
+            background: possession.serving ? COLORS.accentSoft : COLORS.blueSoft,
+            color: possession.serving ? COLORS.orange : COLORS.blue,
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+          }}
+        >
+          {possession.serving ? "WE SERVE" : "RECEIVING"}
+          <Repeat size={12} />
+        </button>
+        <span style={{ fontSize: 10, color: COLORS.chalkDim }}>
+          {possession.overridden ? "set by hand — next point takes over" : "from the score · tap to correct"}
+        </span>
+      </div>
+
+      {/* Possession-driven prompts — the libero swap and the serving
+          specialist. Same shape as the rotation suggestions below, but these
+          come and go with the serve rather than with a rotation. */}
+      {possessionPrompts.length > 0 && (
+        <div style={{ padding: "8px 20px 0" }}>
+          {possessionPrompts.map((pr) => {
+            const out = playerFor(pr.outId);
+            const inP = playerFor(pr.inId);
+            const isLibero = pr.kind === "libero";
+            const overLimit = !isLibero && subCount >= SUB_LIMIT;
+            return (
+              <div
+                key={pr.key}
+                style={{
+                  background: isLibero ? COLORS.blueSoft : COLORS.goldSoft,
+                  border: `1.5px solid ${overLimit ? COLORS.red : isLibero ? COLORS.blue : COLORS.gold}`,
+                  borderRadius: 10,
+                  padding: "10px",
+                  marginBottom: 8,
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      color: isLibero ? COLORS.blue : COLORS.gold,
+                      border: `1px solid ${isLibero ? COLORS.blue : COLORS.gold}`,
+                      borderRadius: 4,
+                      padding: "1px 4px",
+                      flexShrink: 0,
+                      marginTop: 2,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {isLibero ? "LIBERO" : "SERVE SUB"}
+                  </span>
+                  <div style={{ color: COLORS.chalk, flex: 1, lineHeight: 1.5 }}>
+                    <div style={{ color: COLORS.chalkDim, fontSize: 10, fontWeight: 700 }}>{pr.note}</div>
+                    <div>
+                      Sub in: <b>#{jersey(inP)} {displayName(inP)}</b>
+                    </div>
+                    <div>
+                      For: <b>#{jersey(out)} {displayName(out)}</b> ({pr.slot})
+                    </div>
+                    {overLimit && <div style={{ color: COLORS.red, fontWeight: 700 }}>Over sub limit</div>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => confirmPossessionPrompt(pr)}
+                    style={{
+                      flex: 1,
+                      padding: "8px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: isLibero ? COLORS.blue : COLORS.gold,
+                      color: "#1C2128",
+                      fontWeight: 700,
+                      fontSize: 12,
+                    }}
+                  >
+                    Make the swap
+                  </button>
+                  <button
+                    onClick={() =>
+                      setDismissedPrompts((d) => [...d, `${possession.pointCount}:${pr.key}`])
+                    }
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      border: `1px solid ${COLORS.line}`,
+                      background: "none",
+                      color: COLORS.chalkDim,
+                      fontWeight: 700,
+                      fontSize: 12,
+                    }}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Sub counter */}
       <div
         style={{

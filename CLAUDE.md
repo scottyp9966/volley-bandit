@@ -536,6 +536,41 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     goes the same way.
   - There is **no undo**. The sheet says so and points at Export first.
     If you add anything else keyed by `playerId`, add it here too.
+- **The app knows whether you're SERVING or RECEIVING, and two features hang
+  off it.** `servingState(pointLog, matchId, setNumber, lineup)` (module
+  scope) derives it: in rally scoring whoever won the last rally serves the
+  next, so it falls out of the point log with nothing extra to tap, and
+  before the first point of a set it's `lineup.servesFirst`.
+  - It is only as good as the scoreboard, so the lineup also carries
+    `servingOverride: { setNumber, at, serving }` — a tap on the WE SERVE /
+    RECEIVING chip. **`at` is the point count when it was set, and that's
+    what stops it going stale**: the override applies only while the count
+    is unchanged, so the very next rally resolves possession for real and
+    the override lapses on its own. Don't "simplify" it to a bare boolean.
+  - **`possessionPrompts` in `LiveScreen` is DERIVED every render, not
+    stored** the way `subSuggestions` is. A rotation happens once and can be
+    captured; possession flips every rally, so a stored list would be stale
+    the moment the score moved. Dismissals ("Not now") are keyed
+    `${pointCount}:${key}` so they expire by themselves — no reset effect,
+    and nothing to leave behind.
+  - **Two liberos by possession.** `lineup.liberoRoles` is `["any"|"receive"
+    |"serve", ...]` aligned with `lineup.liberos`, cycled by a chip on each
+    LIBEROS row (the chip calls `stopPropagation` — the row itself opens the
+    player picker). The role lives per libero SLOT, not per player, so
+    changing who fills L1 keeps the plan. A prompt appears only when the
+    libero wanted for the current possession is off court AND the other one
+    is on, which is what stops it nagging every rally.
+  - **Serving specialists** are `lineup.serveSubs: [{ id, forId, subId }]` —
+    deliberately their own list rather than another flag on `pairings`,
+    which is about front-row/back-row rotation and is the most bug-prone
+    code in this file. Prompted in when we hold serve and `slots.P1 ===
+    forId`; prompted back out at sideout. **Each turn costs two of the 18
+    subs**, which the setup copy says out loud.
+  - Both prompts check `!onCourt.has(...)` before offering anyone. That guard
+    earned its place immediately: a test fixture that put one player in two
+    slots correctly got no "bring them back in" prompt, and the fixture was
+    the thing that was wrong.
+  - Full mode only — Simple mode has no court to swap anyone on.
 - **Captains are a list (`mainDoc.captainIds`), not one `captainId`.**
   Co-captains are normal and a team can name two or three. Every read goes
   through `captainIdList(doc)` (module scope), which falls back to
