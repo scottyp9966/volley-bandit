@@ -698,14 +698,26 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     `coord` is her rotational spot — she used to be drawn *at* the net, which
     was exactly the error the coach reported for the 4-2.
   - **`deriveServeReceive` returns a `frontSwitch` map** (`rotational slot ->
-    played slot`), populated for the **4-2 only**: setter to right front (P2),
-    middle blocker to the middle (P3), outside to left front (P4). That is the
-    "international"/advanced 4-2 the coach runs; the classic beginner 4-2 sets
-    from middle front instead, so if another team's sheet looks wrong, this is
-    the assumption to check first. 5-1 and 6-2 get an empty map. Assignment is
-    claim-based with a fallback loop, so a front-row player the position tags
-    don't place (an Opposite, a DS pushed up, no `position` set) still gets a
-    free spot instead of landing invisibly under someone else.
+    played slot`), populated for the **4-2 only**; 5-1 and 6-2 get an empty map.
+    Assignment is claim-based with a fallback loop, so a front-row player the
+    position tags don't place (an Opposite, a DS pushed up, no `position` set)
+    still gets a free spot instead of landing invisibly under someone else.
+  - **There are two 4-2s and the team picks which** —
+    `mainDoc.roleSystem.setterFront`, `"right"` (the default, and what this
+    coach runs) or `"middle"`, chosen in Lineup → Serve-Receive Settings, which
+    only shows that picker when the system is 4-2:
+    - `"right"` — the advanced / "international" 4-2: setter to right front
+      (P2), middle blocker to the middle (P3), outside to left front (P4).
+    - `"middle"` — the classic beginner 4-2: setter sets from the middle (P3)
+      and the two hitters take the pins, outside left (P4), the other hitter
+      right (P2).
+    Which one a squad runs cannot be inferred from the roster, which is why
+    it's a setting rather than a guess. Both variants are the same two
+    `assign` lines with the targets swapped; the stack, arrow and colour code
+    below is entirely generic over the destinations and needed no change. Note
+    the middle-front variant leaves rotations 2 and 5 with NOBODY switching —
+    everyone is already in their played spot — which is correct, not a bug.
+    The caption names the right destinations for whichever variant is on.
   - **STACKING is the whole point of the second pass.** The overlap rule
     (FIVB 7.4) is judged only at the instant of serve contact, and only against
     your neighbours in your own row and the player directly behind you — so a
@@ -791,7 +803,10 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     read back out of the app, every front-row role either standing at or ringed
     at its played spot, no two movers sharing an arrow colour, and an arrowhead
     for every mover — plus screenshots of the 4-2 in both themes and of the 5-1.
-    Per this file's standing rule for diagrams: don't trust the JSX.
+    **Run it for both 4-2 variants** (`VARIANT=right` / `VARIANT=middle`); the
+    middle run flips the setting through the real picker rather than poking
+    state, so it covers the UI too. Per this file's standing rule for diagrams:
+    don't trust the JSX.
 - **Substitution pairings** (`{ frontId, backId, isLibero, liberoServes }`)
   are bidirectional — either player could be the one actually placed on
   court, and `applySubPairings` has to check both directions (which one is

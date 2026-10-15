@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.15c";
+const APP_VERSION = "2026.10.16a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -651,7 +651,7 @@ function computeSubTransitions(lineup) {
 // back-row Middle is actually the libero on court — all derived directly
 // from the given slots (already shifted for whichever rotation is being
 // previewed) plus each on-court player's roster position tag.
-function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
+function deriveServeReceive(system, slots, roster, liberoIds, isAlternate, setterFront) {
   const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
   const playerAt = {};
   positions.forEach((pos) => {
@@ -687,19 +687,31 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
   // ever stands in, with the middle out wide and the setter overlapping
   // whoever is really at right front.
   //
-  // Reported by the coach for the 4-2 specifically: setter sets from right
-  // front, middle blocker takes the middle, outside takes left front.
+  // Two 4-2s, picked per team in the Offensive System sheet
+  // (`roleSystem.setterFront`), because which one a squad runs changes the
+  // whole front row and there is no way to infer it from the roster:
+  //   "right"  — the advanced / "international" 4-2 this coach runs: setter
+  //              sets from right front, middle blocker takes the middle,
+  //              outside takes left front.
+  //   "middle" — the classic beginner 4-2: setter sets from the middle
+  //              (zone 3) and the two hitters take the pins, outside on the
+  //              left, whoever else is up on the right.
   const frontSwitch = {};
   if (system === "4-2") {
+    const middleSetter = setterFront === "middle";
     const claimed = new Set();
     const assign = (pos, target) => {
       if (!pos || claimed.has(target)) return;
       frontSwitch[pos] = target;
       claimed.add(target);
     };
-    assign(sPositions.find(isFront), "P2");
-    assign(mbPositions.find(isFront), "P3");
+    assign(sPositions.find(isFront), middleSetter ? "P3" : "P2");
     assign(ohPositions.find(isFront), "P4");
+    // With the setter in the middle the other hitter takes the right pin; with
+    // the setter on the right she takes the middle. Either way she gets
+    // whichever of the two spots the setter didn't claim, so this is the same
+    // line for both variants — it only reads differently.
+    assign(mbPositions.find(isFront), middleSetter ? "P2" : "P3");
     // Anyone front row the tags didn't place — an Opposite, a DS pushed up,
     // a player with no position set — fills whatever front spot is left, so
     // nobody is silently stacked on top of someone else.
@@ -2579,6 +2591,44 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               ))}
             </div>
 
+            {roleSystem?.system === "4-2" && (
+              <div style={{ marginTop: 12, marginBottom: 6 }}>
+                <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", marginBottom: 6 }}>
+                  Setter sets from
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[
+                    { key: "right", label: "Right front", hint: "Advanced / international 4-2" },
+                    { key: "middle", label: "Middle front", hint: "Classic beginner 4-2" },
+                  ].map((o) => {
+                    const on = (roleSystem?.setterFront === "middle" ? "middle" : "right") === o.key;
+                    return (
+                      <button
+                        key={o.key}
+                        onClick={() => !assistant && setRoleSystem((prev) => ({ ...(prev || {}), setterFront: o.key }))}
+                        style={{
+                          flex: 1,
+                          padding: "9px 6px",
+                          borderRadius: 8,
+                          border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
+                          background: on ? COLORS.accentSoft : "transparent",
+                          color: COLORS.chalk,
+                          textAlign: "center",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{o.label}</div>
+                        <div style={{ fontSize: 9, color: COLORS.chalkDim, marginTop: 2 }}>{o.hint}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 10, color: COLORS.chalkDim, marginTop: 6, lineHeight: 1.4 }}>
+                  Changes the Serve-Receive diagram: where the setter ends up, and
+                  which pin each hitter switches to.
+                </div>
+              </div>
+            )}
+
             {roleSystem?.system === "5-1" && (
               <button
                 onClick={() => setIsAlternate((v) => !v)}
@@ -2639,7 +2689,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         // Reuses the same correctly-computed slots already driving the court
         // diagram above — no separate shift math needed here anymore.
         const shiftedSlots = slots;
-        const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate);
+        const setterFront = roleSystem?.setterFront === "middle" ? "middle" : "right";
+        const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate, setterFront);
 
         // Rough real-court coordinates per position (0-100, y=0 at the net)
         // — this is what actually shows alignment, unlike 6 equal boxes.
@@ -3136,9 +3187,11 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     ) : (
                       <>Then: </>
                     )}
-                    setter to right front, middle to the middle, outside to left
-                    front. The setter is front row here and doesn't pass, so all
-                    three back-row players receive.
+                    {setterFront === "middle"
+                      ? "setter to the middle, outside to left front, the other hitter to right front."
+                      : "setter to right front, middle to the middle, outside to left front."}{" "}
+                    The setter is front row here and doesn't pass, so all three
+                    back-row players receive.
                   </>
                 ) : (
                   <>
