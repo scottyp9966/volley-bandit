@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.16a";
+const APP_VERSION = "2026.10.16b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4810,6 +4810,39 @@ function LiveScreen({
         </div>
       )}
 
+      {/* Recording with no match selected is not a small thing: the entries
+          get no matchId, so they count in Season to Date but can never be
+          shown BY match — not in the box score, Insights or Trends — and
+          Settings' recover tool can't find them either, since it only rebuilds
+          matches whose stats still carry an id. This happened for real, for a
+          whole match. The header already said "No active match" in a dim
+          subtitle, which is far too quiet to notice mid-rally, so it's said
+          here instead: right above the buttons being tapped, in the colour
+          this app uses for "stop and read me". */}
+      {activeMatchId == null && (
+        <button
+          onClick={() => setTab("schedule")}
+          style={{
+            display: "block",
+            width: "calc(100% - 40px)",
+            margin: "4px 20px 0",
+            padding: "9px 11px",
+            borderRadius: 8,
+            border: `1.5px solid ${COLORS.gold}`,
+            background: COLORS.goldSoft,
+            textAlign: "left",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.gold }}>
+            No match selected — these stats won't be attached to one
+          </div>
+          <div style={{ fontSize: 10.5, color: COLORS.chalkDim, marginTop: 2, lineHeight: 1.35 }}>
+            They'll still count in Season to Date, but no box score will show
+            them. Tap to pick tonight's match on the Schedule.
+          </div>
+        </button>
+      )}
+
       {/* Selected player banner */}
       <div
         style={{
@@ -6668,7 +6701,88 @@ function RosterScreen({ roster, setRoster, captainIds, toggleCaptain, lineups, s
 }
 
 // ---- Schedule screen: manual add + edit + paste import ----
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, onOpenSettings, assistant }) {
+// One day's worth of stranded stats, with a picker for the match to attach
+// them to. Module scope, like everything else a long-lived screen renders —
+// see CLAUDE.md on the ReferenceError a component-local helper caused once.
+//
+// The match defaults to one played on the same calendar day if the schedule
+// has one, which is the overwhelmingly common case: the coach recorded on the
+// 8th and there is an Oct 8 match sitting right there. Attaching is a
+// ConfirmButton rather than a one-tap, since picking the wrong match moves a
+// whole evening's stats onto it and there's no undo.
+function UnassignedGroupRow({ group, matches, onAssign }) {
+  const sorted = [...(matches || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const sameDay = group.date ? sorted.find((m) => m.date === group.date) : null;
+  const [matchId, setMatchId] = useState(() => String(sameDay?.id ?? sorted[0]?.id ?? ""));
+  const chosen = sorted.find((m) => String(m.id) === String(matchId));
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.gold}`,
+        borderRadius: 8,
+        padding: "9px 10px",
+        marginBottom: 8,
+        background: COLORS.goldSoft,
+      }}
+    >
+      <div style={{ fontSize: 12, color: COLORS.chalk, fontWeight: 700 }}>
+        {group.date ? new Date(group.firstAt).toLocaleDateString() : "Unknown date"}
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 8 }}>
+        {group.stats} stat{group.stats === 1 ? "" : "s"}
+        {group.points ? ` · ${group.points} point${group.points === 1 ? "" : "s"}` : ""}
+        {group.sets.length ? ` · set${group.sets.length === 1 ? "" : "s"} ${group.sets.join(", ")}` : ""}
+      </div>
+      {sorted.length === 0 ? (
+        <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
+          No matches on the schedule yet — add the match first, then come back.
+        </div>
+      ) : (
+        <>
+          <select
+            value={matchId}
+            onChange={(e) => setMatchId(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px",
+              borderRadius: 6,
+              border: `1px solid ${COLORS.line}`,
+              background: COLORS.bg,
+              color: COLORS.chalk,
+              fontSize: 12,
+              marginBottom: 8,
+            }}
+          >
+            {sorted.map((m) => (
+              <option key={m.id} value={String(m.id)}>
+                {m.date} — {m.opponent}
+                {group.date && m.date === group.date ? " (same day)" : ""}
+              </option>
+            ))}
+          </select>
+          <ConfirmButton
+            label={`Attach to ${chosen ? chosen.opponent : "this match"}`}
+            confirmLabel="Tap again to attach"
+            onConfirm={() => matchId && onAssign(Number.isNaN(Number(matchId)) ? matchId : Number(matchId))}
+            style={{
+              width: "100%",
+              padding: "9px",
+              borderRadius: 8,
+              border: `1.5px solid ${COLORS.green}`,
+              background: COLORS.greenSoft,
+              color: COLORS.chalk,
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+            armedStyle={{ color: COLORS.green }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, unassignedEntries, onOpenSettings, assistant }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -6841,6 +6955,35 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
           </div>
           <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
             Nothing was lost — tap to restore in Settings → Recover Deleted Matches.
+          </div>
+        </button>
+      )}
+
+      {/* Same shape as the orphan banner above, different cause: these entries
+          never had a match at all, because the Live screen was recording with
+          none selected. Surfaced here because this is the screen where the
+          matches to attach them to actually live. */}
+      {!assistant && unassignedEntries && unassignedEntries.length > 0 && (
+        <button
+          onClick={onOpenSettings}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            border: `1px solid ${COLORS.gold}`,
+            background: COLORS.goldSoft,
+            borderRadius: 10,
+            padding: "9px 11px",
+            marginBottom: 10,
+            color: COLORS.chalk,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700 }}>
+            {unassignedEntries.reduce((n, g) => n + g.stats, 0)} stat
+            {unassignedEntries.reduce((n, g) => n + g.stats, 0) === 1 ? "" : "s"} aren't attached to a match
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.chalkDim }}>
+            Recorded with no match selected — tap to attach them in Settings →
+            Stats Not Attached To A Match.
           </div>
         </button>
       )}
@@ -9021,6 +9164,10 @@ function SettingsSheet({
   restoreReport,
   orphanedMatches,
   recoverOrphanedMatch,
+  unassignedEntries,
+  assignUnassignedTo,
+  assignReport,
+  matches,
   roster,
   mergePlayers,
   mergeReport,
@@ -9042,8 +9189,12 @@ function SettingsSheet({
   const restoreFileRef = useRef(null);
   const [crashes, setCrashes] = useState(() => readCrashLog());
   const [copiedCrashes, setCopiedCrashes] = useState(false);
-  const checkboxRow = (checked, onToggle, label) => (
+  // `key` is passed because this is rendered from inside STAT_BUTTONS.map —
+  // without it React logs a keyless-list warning for every stat, which both
+  // costs reconciliation and buries any real warning in the console.
+  const checkboxRow = (checked, onToggle, label, key) => (
     <button
+      key={key}
       onClick={onToggle}
       style={{
         display: "flex",
@@ -9215,7 +9366,8 @@ function SettingsSheet({
                   const current = prev || STAT_BUTTONS.map((b) => b.key);
                   return checked ? current.filter((k) => k !== s.key) : [...current, s.key];
                 }),
-              untracked ? `${s.label} — not tracked, will print empty` : s.label
+              untracked ? `${s.label} — not tracked, will print empty` : s.label,
+              s.key
             );
           })}
         </div>
@@ -9424,6 +9576,40 @@ function SettingsSheet({
                   background: COLORS.greenSoft,
                 })}
               </div>
+            ))}
+          </>
+        )}
+
+        {/* Shown while anything is still stranded, and for one more render
+            after the last group is attached so the confirmation has somewhere
+            to live — otherwise the section vanishes the instant you tap and
+            the only feedback goes with it. */}
+        {!assistantMode && ((unassignedEntries && unassignedEntries.length > 0) || assignReport) && (
+          <>
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
+              Stats Not Attached To A Match
+            </div>
+            {unassignedEntries && unassignedEntries.length > 0 ? (
+              <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
+                These were recorded while no match was selected on the Live
+                screen. They count in Season to Date, but no box score can show
+                them until they're attached to a match. Pick the match each day
+                belongs to — the set scores are rebuilt from the point log at the
+                same time.
+              </div>
+            ) : null}
+            {assignReport ? (
+              <div style={{ fontSize: 11, color: COLORS.green, marginBottom: 10 }}>
+                {assignReport} They'll show in that match's box score now.
+              </div>
+            ) : null}
+            {unassignedEntries.map((g) => (
+              <UnassignedGroupRow
+                key={g.key}
+                group={g}
+                matches={matches}
+                onAssign={(matchId) => assignUnassignedTo(g, matchId)}
+              />
             ))}
           </>
         )}
@@ -10070,6 +10256,80 @@ function AppInner() {
     ]);
   };
 
+
+  // Stats recorded with NO match selected at all. Different from an orphan
+  // above, and not fixable by the same tool: an orphan's entries still carry
+  // a matchId whose match was deleted, so rebuilding that match with the same
+  // id relinks everything at once. These carry no id to relink — they were
+  // tapped while the Live screen said "No active match" — so they count in
+  // Season to Date and are invisible everywhere that works by match. That
+  // happened for a whole match's worth of stats, which is what this is for.
+  //
+  // Grouped by the LOCAL calendar day the entries were recorded (stat ids are
+  // `Date.now() + Math.random()`, so the floor is when it was tapped) because
+  // that's what a coach can actually recognise: "the 42 stats from Oct 8".
+  // Deliberately todayISO-style local date arithmetic, never toISOString —
+  // see the UTC bullet in CLAUDE.md.
+  const unassignedEntries = useMemo(() => {
+    const byDay = new Map();
+    const note = (entry, kind) => {
+      if (entry?.matchId != null) return;
+      const at = Math.floor(entry?.id);
+      const valid = at > 1000000000000;
+      let key = "unknown";
+      if (valid) {
+        const d = new Date(at);
+        const pad = (n) => String(n).padStart(2, "0");
+        key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      }
+      if (!byDay.has(key))
+        byDay.set(key, { key, date: valid ? key : null, stats: 0, points: 0, statIds: [], pointIds: [], sets: new Set(), firstAt: Infinity });
+      const g = byDay.get(key);
+      g[kind] += 1;
+      g[kind === "stats" ? "statIds" : "pointIds"].push(entry.id);
+      if (entry.setNumber != null) g.sets.add(entry.setNumber);
+      if (valid && at < g.firstAt) g.firstAt = at;
+    };
+    (log || []).forEach((e) => note(e, "stats"));
+    (pointLog || []).forEach((e) => note(e, "points"));
+    return [...byDay.values()]
+      .map((g) => ({ ...g, sets: [...g.sets].sort((a, b) => a - b) }))
+      .sort((a, b) => b.firstAt - a.firstAt);
+  }, [log, pointLog]);
+
+  const [assignReport, setAssignReport] = useState("");
+
+  // Attach a day's worth of stranded entries to a real match. Stamping the
+  // matchId is what relinks them — the box score, Insights and Trends all
+  // filter on it — and the match's per-set scores are rebuilt from the point
+  // log the same way endMatch and the orphan recovery do it, or the box score
+  // would show the stats with no set scores beside them.
+  //
+  // setScores is computed from what the point log is ABOUT to be, not from
+  // state, since the setPointLog above hasn't been applied yet in this tick.
+  const assignUnassignedTo = (group, matchId) => {
+    if (!group || matchId == null) return;
+    const statIds = new Set(group.statIds.map(String));
+    const pointIds = new Set(group.pointIds.map(String));
+    const stamp = (e, ids) => (ids.has(String(e.id)) ? { ...e, matchId } : e);
+    if (statIds.size) setLog((prev) => prev.map((e) => stamp(e, statIds)));
+    const nextPoints = (pointLog || []).map((e) => stamp(e, pointIds));
+    if (pointIds.size) setPointLog(() => nextPoints);
+    const setScores = {};
+    nextPoints.forEach((e) => {
+      if (e.matchId !== matchId || !e.team) return;
+      const key = String(e.setNumber ?? 1);
+      if (!setScores[key]) setScores[key] = { us: 0, opp: 0 };
+      setScores[key][e.team] += 1;
+    });
+    if (Object.keys(setScores).length)
+      setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, setScores } : m)));
+    setAssignReport(
+      `Attached ${group.stats} stat${group.stats === 1 ? "" : "s"}` +
+        (group.points ? ` and ${group.points} point${group.points === 1 ? "" : "s"}` : "") +
+        " to the match."
+    );
+  };
 
   // Folds one roster entry into another and deletes the duplicate.
   //
@@ -11080,6 +11340,10 @@ function AppInner() {
             restoreReport={restoreReport}
             orphanedMatches={orphanedMatches}
             recoverOrphanedMatch={recoverOrphanedMatch}
+            unassignedEntries={unassignedEntries}
+            assignUnassignedTo={assignUnassignedTo}
+            assignReport={assignReport}
+            matches={matches}
             roster={roster}
             mergePlayers={mergePlayers}
             mergeReport={mergeReport}
@@ -11185,6 +11449,7 @@ function AppInner() {
             setMatches={setMatches}
             matchIdsWithStats={matchIdsWithStats}
             orphanedMatches={orphanedMatches}
+            unassignedEntries={unassignedEntries}
             onOpenSettings={() => setShowSettings(true)}
             activeMatchId={activeMatchId}
             setActiveMatchId={setActiveMatchId}

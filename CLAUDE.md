@@ -1012,6 +1012,47 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   back without them rather than with invented ones. Surfaced both in
   Settings → Recover Deleted Matches and as a banner on the Schedule screen,
   since that's where the deletion happens and where a coach looks first.
+- **Stats recorded with NO match selected are a separate loss from a deleted
+  match, and need a separate repair.** An orphan (above) still carries a
+  `matchId` whose match was deleted, so rebuilding that match with the same id
+  relinks everything. These carry no id at all — they were tapped while the
+  Live screen said "No active match" — so they count in Season to Date and are
+  invisible in the box score, Insights and Trends, and `orphanedMatches`
+  explicitly skips them (`if (matchId == null) return`). This happened for
+  real, for a whole match. Two halves, both needed:
+  - **Prevention: a loud banner on the Live screen** (`activeMatchId == null`),
+    right above the stat buttons, tapping through to the Schedule. The header
+    already said "No active match" in a dim subtitle — far too quiet to notice
+    mid-rally, which is exactly how an evening's stats got stranded. Shared by
+    Simple and Full mode, since it sits with the "Recording for" banner.
+  - **Repair: `unassignedEntries` + `assignUnassignedTo`** (both in `AppInner`,
+    below `log`/`pointLog` — see the temporal-dead-zone warning), surfaced in
+    Settings → Stats Not Attached To A Match and as a Schedule banner beside
+    the orphan one. Entries are grouped by the LOCAL calendar day they were
+    recorded (`Math.floor(entry.id)` is the timestamp), because that's what a
+    coach can recognise. Attaching stamps the `matchId` and **rebuilds that
+    match's `setScores` from the point log**, the same way `endMatch` and the
+    orphan recovery do, or the box score would show stats with no set scores.
+    `setScores` is computed from what the point log is ABOUT to be, not from
+    state, since `setPointLog` hasn't applied yet in that tick.
+  - The match defaults to one played on the same calendar day when the
+    schedule has one, which is the overwhelmingly common case. It's a
+    `ConfirmButton`: picking the wrong match moves a whole evening onto it and
+    there is no undo.
+  - **The Settings section stays rendered while `assignReport` is set**, not
+    only while something is unassigned. Attaching empties
+    `unassignedEntries`, so a section gated purely on that vanished the
+    instant you tapped it and took the only confirmation with it — caught in
+    the harness, not by reading the JSX.
+  - Verified end to end in the harness: the Live banner shows in both modes
+    and clears when a match is made active, the Schedule banner appears and
+    clears, the picker defaults to the same-day match, and attaching moves
+    exactly the right 12 stats and 8 points, leaves an already-attached entry
+    alone, and rebuilds per-set scores. One trap worth knowing for any future
+    harness assertion: **`textContent` on `body` (or any visible ancestor)
+    includes the hidden print root**, which carries its own "No match
+    selected" text — a check that the banner is gone has to look at visible
+    leaf elements, or it reports a false failure.
 - **`EMPTY_LINEUP` (module scope) is the fallback when `lineups` is empty.**
   Every screen resolved its lineup as `lineups.find(...) || lineups[0]`,
   which is `undefined` for an empty array, and the next line reads
@@ -1246,6 +1287,12 @@ sandboxed dev-server/headless-browser session may still be unable to reach
 Firestore directly (network policy) — in that case, verify pure logic with
 a standalone Node script against the same data shapes, and be explicit
 with the user about what was and wasn't actually verified end-to-end.
+
+A stub that models documents only is not enough any more: the stat and point
+logs are collections, so a stub whose collection listener never fires lets the
+migration clear the legacy arrays and the entries simply vanish mid-test. The
+stub must track docs by full path, fire the parent collection's listeners on
+every write (latency compensation), and reject nested arrays.
 
 The harness stub is now one shared core (`harness/firestore-stub-core.js`)
 that each `firestore-stub-*.js` seeds with a different team document, and
