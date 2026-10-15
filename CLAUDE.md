@@ -713,16 +713,33 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     zone. She may stand as close to where she's heading as the left-to-right
     order (4-3-2) allows. Drawing all three spread across their zones, which is
     what this sheet did first, shows a front row that never exists: when all
-    three switch they bunch together at the net and release on contact.
-  - **The stack is solved, not hardcoded**: `stackXs` is a weighted isotonic
-    regression (pool-adjacent-violators) over "everyone wants to be at her
-    destination, subject to rotational order with a `STACK_GAP` between
-    neighbours", then shifted back inside the court. **The setter carries
-    double weight** because hers is the run on a clock — she has to beat the
-    pass to the net — which is also why coaches stack toward the setter's side.
-    Change the weight and every rotation's picture changes; it is not a tuning
-    knob to fiddle with casually.
-  - **The stack sits OFF the net (`STACK_Y = 27`) and the destinations are at
+    three switch they bunch together and release on contact.
+  - **A stack is a near-vertical COLUMN, not a row** — the coach's correction,
+    and the thing to keep in mind if you ever re-lay this out. The sideways
+    test needs only part of one foot: the player based front-right has to stay
+    a sliver right of the one to her left, nothing more. Depth is free, because
+    the front-to-back test is against the back-row player she's paired with and
+    the passers are at the back of the court. So they wait almost on top of each
+    other: `STACK_GAP` is a **7%** sideways step, with `STACK_DY = 16` of depth
+    between them to keep the circles clear. A first pass laid them out in a row,
+    which needed a 20% gap just to fit the circles and so drew a much looser
+    front row than a stack really is.
+  - **The sideways positions are solved, not hardcoded**: `stackXs` is a
+    weighted isotonic regression (pool-adjacent-violators) over "everyone wants
+    to be at her destination, subject to rotational order with `STACK_GAP`
+    between neighbours", then shifted back inside the court. **The setter
+    carries double weight** because hers is the run on a clock — she has to beat
+    the pass to the net — which is also why coaches stack toward the setter's
+    side. Change the weight and every rotation's picture changes; it is not a
+    tuning knob to fiddle with casually.
+  - **Depth is ordered by how far each player has to go**: longest trip starts
+    deepest, so she runs *behind* her team-mates rather than through them, and
+    whoever is barely moving stands where she'll play, at the net. Two players
+    crossing are separated by a small bonus for travelling leftward, which puts
+    the one sweeping left behind. Only players who actually move take a depth
+    rank — counting a front-row player who is already home (she's drawn at the
+    net, not in the column) pushed everyone else a row deeper than they needed.
+  - **The stack sits OFF the net (`STACK_Y = 24`) and the destinations are at
     the net.** This is both true (a stacked front row needs room to approach)
     and the thing that makes the drawing work: with the stack and the
     destinations on one line at the net, the arrows came out shorter than the
@@ -735,6 +752,24 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     13%-long move rendered as a 2.7% stub). The destination is a dashed ring
     carrying the same jersey number, suppressed when another player is still
     standing on that spot — the arrow pointing at her says it better.
+  - **Arrows BOW around anyone standing in the way** (`avoid`, `CLEAR_R`): a
+    quadratic Bézier whose control point is pushed off the straight line by
+    however much it takes to clear the obstructing circle, to whichever side has
+    room. The arrowhead is pointed along the curve's tangent at the tip, which
+    for a quadratic is just the direction from the control point. This is not
+    decoration — markers paint on top of arrows, and the player sweeping across
+    the whole front row passes right under her team-mates, so the straight
+    version of her arrow was visible only as a stub either side of them.
+  - **One colour per switching player, keyed by ROLE so a coach can learn it**
+    (`moverColor`): setter gold, middle green, outside purple, anything else
+    red. The marker, the arrow and the destination ring all carry it, which is
+    what lets three paths crossing the front row be told apart — the coach asked
+    for this directly. **`purple` was added to both palettes in `shared.js` for
+    it**, because light mode's `orange` token is a dark *green* (see the palette
+    note below), so green/orange is an illegible pair in one of the two themes.
+    Verified by rendering both themes, not by reading the hex values. The legend
+    only shows the Middle and Outside chips when such a player is actually
+    moving, so 5-1/6-2 keeps its two-chip legend.
   - **The court box is taller than it is wide, so a y percent covers more
     pixels than an x percent.** `arrowGeom` builds the head in squared-up space
     (`Y_PER_X = 1 / 0.82`, matching the container's `aspectRatio`) and converts
@@ -751,10 +786,12 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     she isn't moving, or a neighbour can be placed straight through her.
   - Verified in the harness at 390px across all six rotations, by assertion and
     by eye (`pwcheck/sr42check.mjs`): six live markers with no two overlapping,
-    stack order preserved with gaps >= 15%, every front-row role either standing
-    at or ringed at its played spot, and an arrowhead for every mover — plus
-    screenshots of the 4-2 at rotations 1/2/3 and of the 5-1. Per this file's
-    standing rule for diagrams: don't trust the JSX.
+    **the overlap rule checked against slot occupancy derived independently from
+    the seed** (ring `P4->P3->P2->P1->P6->P5`, one step per rotation) rather than
+    read back out of the app, every front-row role either standing at or ringed
+    at its played spot, no two movers sharing an arrow colour, and an arrowhead
+    for every mover — plus screenshots of the 4-2 in both themes and of the 5-1.
+    Per this file's standing rule for diagrams: don't trust the JSX.
 - **Substitution pairings** (`{ frontId, backId, isLibero, liberoServes }`)
   are bidirectional — either player could be the one actually placed on
   court, and `applySubPairings` has to check both directions (which one is
@@ -1022,6 +1059,12 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   (green/blue/red/gold) and stronger alpha. If you add a colored fill, use a
   token; a new inline `rgba()` silently reintroduces the bug in one theme
   only, which is easy to miss when you develop in the other.
+  **Light mode's `orange` is a dark GREEN** (the key name was kept because
+  everything references it; only the value was repurposed as that theme's
+  accent). So `orange` and `green` are two greens in light mode and cannot be
+  used as a contrasting pair — that is why the Serve-Receive sheet's third
+  track colour is the `purple` token rather than one of those. Check any new
+  multi-colour encoding in BOTH themes by rendering it.
   Two specific traps this uncovered, both fixed, both worth not repeating:
   - `STAT_BUTTONS` held `color: COLORS.green` at module scope. That module
     is evaluated once, while `COLORS` is still the dark palette, so it froze

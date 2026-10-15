@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.15b";
+const APP_VERSION = "2026.10.15c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2678,12 +2678,18 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         // by pool-adjacent-violators. The setter carries double weight because
         // hers is the run on a clock — she has to beat the pass to the net —
         // which is the same reason coaches stack toward the setter's side.
-        const STACK_GAP = 20; // closest two bunched markers can sit and still read as two
-        // The stack waits OFF the net — they need room to approach — which is
-        // also what gives the arrows somewhere to travel. Drawing the stack and
-        // the spots they're heading for on the same line at the net left the
-        // arrows shorter than the circles they joined.
-        const STACK_Y = 27;
+        // A REAL stack is a near-vertical column, not a row. The left-to-right
+        // test needs only part of one foot: the player based front-right has to
+        // stay a sliver right of the one to her left, nothing more. The
+        // front-to-back test is against the back-row player she's paired with,
+        // and the passers are at the back of the court, so depth is free. So
+        // the three of them line up almost on top of each other, each a step
+        // right of the last, staggered in depth. Spreading them across the
+        // front the way an earlier pass did needed a 20% gap just to fit the
+        // circles, which drew a much looser front row than a stack really is.
+        const STACK_GAP = 7; // sideways step between neighbours: "slightly right"
+        const STACK_Y = 24; // the shallowest of the column, off the net
+        const STACK_DY = 16; // depth between stacked players, enough to clear the circles
         const STACK_MIN_X = 15;
         const STACK_MAX_X = 85;
         const STACK_DEADBAND = 5; // sideways travel below this isn't a switch at all
@@ -2723,10 +2729,44 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             stackSlots.map((pos) => BASE_COORD[layout.frontSwitch[pos]].x),
             stackSlots.map((pos) => (pos === layout.activeSetterPos ? 2 : 1))
           );
+          // Depth: whoever has the farthest to go starts deepest, so she runs
+          // behind the others rather than through them, and whoever is
+          // basically staying put stands where she'll play — at the net. Two
+          // players crossing get the leftward one behind, which is the tiebreak
+          // the small bonus buys.
+          // Only players who are really going somewhere take up a depth. A
+          // front-row player already standing where she plays is drawn at the
+          // net, not in the column, so counting her here just pushed everyone
+          // else a row deeper than they needed to be.
+          const rank = stackSlots
+            .map((pos, i) => {
+              const dx = BASE_COORD[layout.frontSwitch[pos]].x - xs[i];
+              return { i, dx, score: Math.abs(dx) + (dx < 0 ? 2 : 0) };
+            })
+            .filter((r) => Math.abs(r.dx) >= STACK_DEADBAND)
+            .sort((a, b) => b.score - a.score)
+            .map((r) => r.i);
           stackSlots.forEach((pos, i) => {
-            stackStart[pos] = { x: xs[i], y: STACK_Y };
+            const depth = rank.indexOf(i);
+            stackStart[pos] = {
+              x: xs[i],
+              y: STACK_Y + (depth < 0 ? 0 : rank.length - 1 - depth) * STACK_DY,
+            };
           });
         }
+
+        // One colour per switching player, so three arrows crossing the front
+        // row can be told apart. Keyed by role rather than by slot, so the
+        // coach can learn it: the setter's track is always gold. Light mode's
+        // "orange" token is a dark green, which is why the middle is green and
+        // the outside purple rather than green/orange — that pair is illegible
+        // in one of the two themes.
+        const moverColor = (m) => {
+          if (m.isSetter) return COLORS.gold;
+          if (m.player?.position === "MB") return COLORS.green;
+          if (m.player?.position === "OH") return COLORS.purple;
+          return COLORS.red;
+        };
 
         // Each marker is drawn where that player stands AT THE SERVE — which
         // for a passer is already her spot in the receive pattern, and for a
@@ -2771,7 +2811,9 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
             moveTo = null;
           }
           if (!player) moveTo = null;
-          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, moveTo, isSwitch: !!switchTarget };
+          const m = { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, moveTo, isSwitch: !!switchTarget };
+          m.color = moveTo ? moverColor(m) : null;
+          return m;
         });
 
         // Arrow geometry. The court box is taller than it is wide, so a y
@@ -2783,9 +2825,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         const MARKER_R = 8; // a 56px circle on a ~355px-wide court, in percent
         const DEST_R = 6; // the smaller destination ring
         const HEAD_LEN = 7;
-        const arrowGeom = (from, to) => {
-          const dx = to.x - from.x;
-          const dy = (to.y - from.y) * Y_PER_X;
+        const CLEAR_R = 10; // how far an arrow keeps off another player's circle
+        const arrowGeom = (from, to, avoid = []) => {
+          // Everything here is computed in "squared-up" space, where one unit
+          // is the same number of pixels on both axes, then divided back out.
+          const ax = from.x;
+          const ay = from.y * Y_PER_X;
+          const dx = to.x - ax;
+          const dy = to.y * Y_PER_X - ay;
           const len = Math.hypot(dx, dy);
           if (len < 4) return null;
           const ux = dx / len;
@@ -2795,19 +2842,51 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           // entirely by its own clearances.
           const startAt = Math.min(MARKER_R, len * 0.3);
           const endAt = len - Math.min(DEST_R, len * 0.18);
-          const head = Math.min(HEAD_LEN, (endAt - startAt) * 0.6);
-          const back = endAt - head;
-          const at = (t, perp = 0) => ({
-            x: from.x + ux * t - uy * perp,
-            y: (from.y * Y_PER_X + uy * t + ux * perp) / Y_PER_X,
+          // Bow around anyone standing in the way. A player crossing the whole
+          // front row runs behind her team-mates, and a straight shaft drawn
+          // under their circles vanishes for most of its length — the sheet had
+          // exactly that, an arrow visible only as a stub either side of the
+          // middle. The curve bends to whichever side of the obstruction has
+          // room, by however much it takes to clear it.
+          let bow = 0;
+          avoid.forEach((o) => {
+            const ox = o.x - ax;
+            const oy = o.y * Y_PER_X - ay;
+            const along = ox * ux + oy * uy;
+            if (along <= startAt || along >= endAt) return;
+            const side = ox * -uy + oy * ux; // signed perpendicular distance
+            if (Math.abs(side) >= CLEAR_R) return;
+            const push = (CLEAR_R - Math.abs(side)) * 2 * (side >= 0 ? -1 : 1);
+            if (Math.abs(push) > Math.abs(bow)) bow = push;
           });
-          const tip = at(endAt);
-          const l = at(back, -head * 0.45);
-          const r = at(back, head * 0.45);
+          const sq = (x, y) => ({ x, y: y / Y_PER_X });
+          const p0 = sq(ax + ux * startAt, ay + uy * startAt);
+          const tipS = { x: ax + ux * endAt, y: ay + uy * endAt };
+          const mid = (startAt + endAt) / 2;
+          const ctrlS = { x: ax + ux * mid - uy * bow, y: ay + uy * mid + ux * bow };
+          // The head sits at the tip, pointed along the curve's tangent there,
+          // which for a quadratic is simply the direction from the control
+          // point. It overlaps the last of the shaft, same colour, so there's
+          // no need to shorten the curve to meet it.
+          const tx = tipS.x - ctrlS.x;
+          const ty = tipS.y - ctrlS.y;
+          const tl = Math.hypot(tx, ty) || 1;
+          const hx = tx / tl;
+          const hy = ty / tl;
+          const head = Math.min(HEAD_LEN, (endAt - startAt) * 0.6);
+          const bx = tipS.x - hx * head;
+          const by = tipS.y - hy * head;
+          const wing = head * 0.45;
+          const pts = [
+            sq(tipS.x, tipS.y),
+            sq(bx - -hy * wing, by - hx * wing),
+            sq(bx + -hy * wing, by + hx * wing),
+          ];
+          const ctrl = sq(ctrlS.x, ctrlS.y);
+          const tip = sq(tipS.x, tipS.y);
           return {
-            start: at(startAt),
-            end: at(back),
-            points: [tip, l, r].map((pt) => `${pt.x},${pt.y}`).join(" "),
+            d: `M ${p0.x} ${p0.y} Q ${ctrl.x} ${ctrl.y} ${tip.x} ${tip.y}`,
+            points: pts.map((pt) => `${pt.x},${pt.y}`).join(" "),
           };
         };
 
@@ -2855,10 +2934,18 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.gold, display: "inline-block" }} />
                   Setter
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 14, height: 3, borderRadius: 2, background: COLORS.orange, display: "inline-block" }} />
-                  Moves after the serve
-                </span>
+                {markers.some((m) => m.moveTo && m.player?.position === "MB") ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.green, display: "inline-block" }} />
+                    Middle
+                  </span>
+                ) : null}
+                {markers.some((m) => m.moveTo && m.player?.position === "OH") ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.purple, display: "inline-block" }} />
+                    Outside
+                  </span>
+                ) : null}
               </div>
 
               <div
@@ -2920,14 +3007,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         width: 40,
                         height: 40,
                         borderRadius: "50%",
-                        border: `2px dashed ${m.isSetter ? COLORS.gold : COLORS.chalkDim}`,
-                        opacity: 0.55,
+                        border: `2px dashed ${m.color}`,
+                        opacity: 0.7,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         fontFamily: "'Oswald', sans-serif",
                         fontSize: 13,
-                        color: m.isSetter ? COLORS.gold : COLORS.chalkDim,
+                        color: m.color,
                       }}
                     >
                       #{jersey(m.player)}
@@ -2943,9 +3030,13 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 {markers
                   .filter((m) => m.moveTo)
                   .map((m) => {
-                    const g = arrowGeom(m.coord, m.moveTo);
+                    const g = arrowGeom(
+                      m.coord,
+                      m.moveTo,
+                      markers.filter((o) => o !== m && o.player).map((o) => o.coord)
+                    );
                     if (!g) return null;
-                    const color = m.isSetter ? COLORS.gold : COLORS.orange;
+                    const color = m.color;
                     return (
                       <svg
                         key={`arrow-${m.pos}`}
@@ -2953,11 +3044,9 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         preserveAspectRatio="none"
                         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
                       >
-                        <line
-                          x1={g.start.x}
-                          y1={g.start.y}
-                          x2={g.end.x}
-                          y2={g.end.y}
+                        <path
+                          d={g.d}
+                          fill="none"
                           stroke={color}
                           strokeWidth="4"
                           strokeLinecap="round"
@@ -2969,7 +3058,10 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   })}
 
                 {markers.map((m) => {
-                  const borderColor = m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line;
+                  // A mover's circle, her arrow and her destination ring all
+                  // carry the same colour — that's what lets three paths
+                  // crossing the front row be told apart at a glance.
+                  const borderColor = m.color || (m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line);
                   const bg = m.isSetter ? COLORS.goldSoft : m.isPasser ? COLORS.blueSoft : COLORS.bgRaised;
                   return (
                     <div
@@ -3034,8 +3126,16 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 is where they finish.{" "}
                 {system === "4-2" ? (
                   <>
-                    The front row stacks: they only have to keep their left-to-right
-                    order{stackSlots.length > 1 ? ", so they bunch up near the net and release on contact" : ""} —
+                    {stackSlots.length > 1 ? (
+                      <>
+                        The front row stacks. Each one only has to stay a step to
+                        the right of the player on her left — depth doesn't
+                        matter — so they wait almost on top of each other and
+                        release on contact:{" "}
+                      </>
+                    ) : (
+                      <>Then: </>
+                    )}
                     setter to right front, middle to the middle, outside to left
                     front. The setter is front row here and doesn't pass, so all
                     three back-row players receive.

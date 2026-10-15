@@ -15,6 +15,11 @@ export const DARK_COLORS = {
   red: "#C1443C",
   line: "#333B46",
   gold: "#FFC857",
+  // A third track colour, distinguishable from gold and green in BOTH themes.
+  // Added for the Serve-Receive sheet, which needs one arrow colour per
+  // switching front-row player; note light mode's "orange" is actually a dark
+  // green, so orange/green is not a legible pair there.
+  purple: "#9B6BD6",
   accentSoft: "rgba(255,107,53,0.15)",
   greenSoft: "rgba(76,154,99,0.14)",
   redSoft: "rgba(193,68,60,0.14)",
@@ -33,6 +38,7 @@ export const LIGHT_COLORS = {
   red: "#A63A32",
   line: "#CBD1CA",
   gold: "#8A6508",
+  purple: "#5B3E9B",
   accentSoft: "rgba(21,92,46,0.24)",
   greenSoft: "rgba(46,125,79,0.26)",
   redSoft: "rgba(166,58,50,0.24)",
