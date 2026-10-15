@@ -822,9 +822,20 @@ non-obvious things that look like they could be "simplified" but are load-bearin
       container's width/height to build heads in squared-up space; the printed
       courts are taller than the screen's (0.68 vs 0.82) because three across is
       fixed by the page width, so the only room to give the stack is downwards.
-    Circles carry jersey numbers only — at 244px a court can't fit a name — with
-    an ON COURT / LIBERO key underneath, the same convention as the lineup
-    sheet's roster key. The legend only lists roles that actually move in some
+    Circles carry the jersey number, with the **short name (`displayName`)
+    printed just BELOW each circle** — at 34px a circle holds a number or a
+    name, not both, but the court's dead space under each marker was free. The
+    label is sized to its own text and centred by the transform: a fixed width
+    with `overflow`/`textOverflow` clipped the names to "a S." the moment a
+    background span went inside it. It carries an **opaque white background**,
+    because the labels paint over the arrows but the bow maths only knows about
+    circles, so an arrow ran straight through the words under every stacked
+    front-row player; the background lets it pass behind the name instead. (A
+    text-shadow halo would look better — html2canvas renders those unreliably.)
+    Verified by measuring every label's rect in the DOM: no two overlap and none
+    escape its court, even with first names as long as "Bartholomea" three
+    abreast in the receive line. The ON COURT / LIBERO key underneath stays as
+    the full-name reference, same convention as the lineup sheet's roster key. The legend only lists roles that actually move in some
     rotation, so a 5-1 sheet shows Passer and Setter rather than all four.
     Verified by rendering the real PDF (not the JSX, not a DOM screenshot):
     three sets produce a three-page letter PDF, each page naming its own set and

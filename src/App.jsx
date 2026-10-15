@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.17b";
+const APP_VERSION = "2026.10.17c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -7744,6 +7744,49 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                             {m.player ? jp(m.player) : ""}
                           </div>
                         ))}
+                        {/* Name under the circle, not inside it: at 34px a
+                            circle can hold a jersey number or a name, not
+                            both, and the court's dead space below each marker
+                            is free real estate. Short form only — a full name
+                            is wider than the gap between two markers in the
+                            receive line. */}
+                        {geo.markers
+                          .filter((m) => m.player)
+                          .map((m) => (
+                            <div
+                              key={`n-${m.pos}`}
+                              style={{
+                                position: "absolute",
+                                left: `${m.coord.x}%`,
+                                top: `calc(${m.coord.y}% + ${MARK / 2 + 6}px)`,
+                                transform: "translate(-50%, -50%)",
+                                // Sized to its own text and centred by the
+                                // transform — a fixed width with
+                                // overflow/ellipsis clipped the names to "a S."
+                                // once there was a background span inside it.
+                                // `displayName` is short ("Olive O."), and the
+                                // receive line's markers are 68px apart, so
+                                // nothing needs truncating.
+                                whiteSpace: "nowrap",
+                                fontSize: 9,
+                                lineHeight: 1.25,
+                                padding: "0 2px",
+                                // The label paints over the arrows (it comes
+                                // last in the DOM), but an arrow crossing the
+                                // glyphs still makes them hard to read — the
+                                // bow maths only knows about circles, not about
+                                // text hanging below one. An opaque background
+                                // lets the arrow pass behind the name instead
+                                // of through it. A text-shadow halo would be
+                                // prettier; html2canvas renders those
+                                // unreliably.
+                                background: "#fff",
+                                color: m.colorKey ? track(m.colorKey) : "#222",
+                              }}
+                            >
+                              {displayName(m.player)}
+                            </div>
+                          ))}
                       </div>
                     </div>
                   );
