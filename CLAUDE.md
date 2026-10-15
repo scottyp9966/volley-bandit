@@ -796,8 +796,14 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     setter releases almost straight up the court, and the x-only test cancelled
     her arrow entirely. She still takes part in the stack ordering even when
     she isn't moving, or a neighbour can be placed straight through her.
-  - **The sheet PRINTS too, all six rotations on one page** — print target
-    `"servereceive"`, offered in the Lineup print menu. Three things made that
+  - **The sheet PRINTS too: one page per SET, six rotations on each** — print
+    target `"servereceive"`, offered in the Lineup print menu. It maps over
+    every lineup, not just the active one — a coach prepping for a match wants
+    the whole book, and the first version silently printed only set 1. Each set
+    is a `.servereceive-page-group`, registered in `handlePrint`'s `PAGE_GROUPS`
+    map so it is captured as its own PDF page; without that, height-based
+    slicing cuts a set's courts away from its own heading, which is the same
+    bug the sub sheet and player guide already had. Three things made that
     possible, and all three are load-bearing:
     - **`serveReceiveGeometry` (module scope) returns the whole picture as
       data** — markers, arrow paths, the lot — and both the screen overlay and
@@ -820,10 +826,14 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     an ON COURT / LIBERO key underneath, the same convention as the lineup
     sheet's roster key. The legend only lists roles that actually move in some
     rotation, so a 5-1 sheet shows Passer and Setter rather than all four.
-    Verified by rendering the real PDF (not the JSX, not a DOM screenshot): one
-    letter page, 612x792pt, ~91% full, legible at print size; and separately
-    that 5-1, 6-2, the middle-front 4-2, a lineup with an empty slot and a long
-    team name all still fit one page.
+    Verified by rendering the real PDF (not the JSX, not a DOM screenshot):
+    three sets produce a three-page letter PDF, each page naming its own set and
+    showing its own starting six — asserted, because a sheet that silently
+    reused the active lineup for every page would pass a page COUNT check. Each
+    page group is measured on its own against a letter page's height (the
+    section as a whole is now three pages tall, so measuring that overflows by
+    design); 5-1, 6-2, the middle-front 4-2, a lineup with an empty slot, one
+    with no libero, and a long team name all still fit a page each.
   - **DEFERRED, DO NOT "FIX" UNASKED — the 5-1's setter release.** Two things
     look off on the 5-1 and are deliberately untouched (see "Open — deferred"
     at the end of this file): on rotations 3 and 6 the setter is already at

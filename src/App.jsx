@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.17a";
+const APP_VERSION = "2026.10.17b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -7606,8 +7606,12 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
           dark-mode hues on paper. The track colours below resolve the same
           role keys the screen does, through a print palette instead. */}
       <div className={`print-section${target === "servereceive" ? " active" : ""}`}>
-        {(() => {
-          const l = activeLineupForPrint;
+        {/* One page per SET, not just the active one — a coach prepping for a
+            match wants the whole book. Each set is a `.servereceive-page-group`,
+            which `handlePrint` captures as its own PDF page; without that,
+            height-based slicing cuts a set's courts away from its own heading,
+            the same bug the sub sheet and player guide already had. */}
+        {(lineups || []).map((l) => {
           if (!l) return null;
           const system = roleSystem?.system || "5-1";
           const setterFront = roleSystem?.setterFront === "middle" ? "middle" : "right";
@@ -7638,13 +7642,15 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
           const movingRoles = new Set(rots.flatMap(({ geo }) => geo.arrows.map((a) => a.colorKey)));
           const jp = (p) => jerseyFor(p, l.liberos);
           return (
-            <>
+            <div className="servereceive-page-group" key={l.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
                 {teamLogo ? <img src={teamLogo} alt="" style={{ height: 34 }} /> : null}
-                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.5 }}>SERVE-RECEIVE — ALL ROTATIONS</div>
+                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.5 }}>
+                  SERVE-RECEIVE — {(l.name || `SET ${l.setNumber || 1}`).toUpperCase()}
+                </div>
               </div>
               <div style={{ fontSize: 11, marginBottom: 10 }}>
-                {teamName || ""}{teamName ? " · " : ""}{l.name || `Set ${l.setNumber || 1}`} · {system}
+                {teamName || ""}{teamName ? " · " : ""}All six rotations · {system}
                 {system === "4-2" ? ` · setter sets from ${setterFront === "middle" ? "middle" : "right"} front` : ""}
                 {isAlt ? " · alternate pattern" : ""}
               </div>
@@ -7767,9 +7773,9 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
                   </>
                 ) : null}
               </div>
-            </>
+            </div>
           );
-        })()}
+        })}
       </div>
 
       <div className={`print-section${target === "lineup" ? " active" : ""}`}>
@@ -10966,14 +10972,18 @@ function AppInner() {
         }
       };
 
-      // The Rotation Reference and Player Guide both force exactly 1 set per
-      // page — each page-group class gets captured and paginated on its own,
+      // The Rotation Reference, Player Guide and Serve-Receive sheets all
+      // force exactly 1 set per page — each page-group class gets captured and paginated on its own,
       // always starting a fresh page, instead of one continuous capture
       // where page breaks land wherever the height happens to run out
       // (which was orphaning a set's title or pairing list onto the next
       // page, separated from its own content).
-      const pageGroupSelector =
-        explicitTarget === "subsheet" ? ".subsheet-page-group" : explicitTarget === "playerguide" ? ".playerguide-page-group" : null;
+      const PAGE_GROUPS = {
+        subsheet: ".subsheet-page-group",
+        playerguide: ".playerguide-page-group",
+        servereceive: ".servereceive-page-group",
+      };
+      const pageGroupSelector = PAGE_GROUPS[explicitTarget] || null;
       const pageGroups = pageGroupSelector ? Array.from(activeSection.querySelectorAll(pageGroupSelector)) : [];
       if (pageGroups.length > 0) {
         for (const group of pageGroups) {
@@ -11393,7 +11403,7 @@ function AppInner() {
               >
                 Serve-Receive Sheet
                 <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
-                  All six rotations on one page, with the switch arrows
+                  One page per set — all six rotations, with the switch arrows
                 </div>
               </button>
               <button
