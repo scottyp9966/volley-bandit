@@ -685,6 +685,42 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     only marks who served the very first point of the set and is drawn at
     a fixed slot letter (P1 or P2) regardless of which rotation you're
     viewing — it's a historical/scoresheet marker, not a live indicator.
+- **The Serve-Receive sheet draws where players END UP, not where the
+  rotation puts them.** `deriveServeReceive` returns a `frontSwitch` map
+  (`rotational slot -> played slot`) alongside the passer/setter data, and
+  the sheet's renderer uses `BASE_COORD[frontSwitch[pos]]` for any marker
+  that has one. Rotational order only decides who is legally where at the
+  moment of contact; once the serve is away the front row slides to the
+  spots they actually play, and drawing only the rotational spots showed a
+  front row nobody ever stands in.
+  - **Populated for the 4-2 only**, which is what the coach reported:
+    setter to right front (P2), middle blocker to the middle (P3), outside
+    to left front (P4). 5-1 and 6-2 still get an empty map and render
+    exactly as before. If a coach reports those are wrong too, this is the
+    one place to extend — add another `if (system === ...)` branch; nothing
+    in the renderer is 4-2-specific.
+  - **Assignment is claim-based, and there's a fallback loop for untagged
+    players.** `assign(pos, target)` refuses a target another player already
+    claimed, and any front-row player the position tags didn't place (an
+    Opposite, a DS pushed up, a player with no `position` set) fills
+    whichever front spot is left. Without that, two markers end up at
+    identical coordinates and one is simply invisible underneath the other.
+  - **The dashed movement lines are drawn for every marker that moved**, not
+    just the setter (gold = setter, blue = passer, dim = front-row switch) —
+    otherwise the middle and outside appear to teleport. Two players
+    swapping spots trace the same segment in opposite directions, which
+    draws as a single line and reads as one player moving, so a switch line
+    is nudged off centre by `bow` (±3.5%, by travel direction). That offset
+    is far smaller than a marker's radius, so both ends still meet their
+    circles. Lines render BEFORE the markers so the circles paint on top.
+  - The caption and the legend both branch on `system === "4-2"`: in a 4-2
+    the setter is front row and never passes, so the 5-1/6-2 text ("Setter
+    releases to the net ... after passing") is simply wrong there.
+  - Verified by rendering the sheet in the harness at 390px and reading back
+    every marker's coordinates across all six rotations — setter at 84/14,
+    middle at 50/10, outside at 16/14 in each, with no two markers sharing a
+    position — plus screenshots of rotations 1 and 2 and of an unchanged
+    5-1. Per this file's standing rule for diagrams: don't trust the JSX.
 - **Substitution pairings** (`{ frontId, backId, isLibero, liberoServes }`)
   are bidirectional — either player could be the one actually placed on
   court, and `applySubPairings` has to check both directions (which one is

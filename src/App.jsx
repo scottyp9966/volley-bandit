@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.08a";
+const APP_VERSION = "2026.10.15a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -679,6 +679,38 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
   const liberoId = (liberoIds || []).find(Boolean) || null;
   const liberoPlayer = liberoId ? roster.find((p) => p.id === liberoId) : null;
 
+  // Where each FRONT-ROW player ends up once the switch happens after the
+  // serve is away. Rotational order only decides who is legally where at
+  // contact; the moment the ball is served everyone slides to the spot they
+  // actually play. Showing only the rotational spots — which this diagram
+  // used to do, moving nothing but the setter — draws a front row nobody
+  // ever stands in, with the middle out wide and the setter overlapping
+  // whoever is really at right front.
+  //
+  // Reported by the coach for the 4-2 specifically: setter sets from right
+  // front, middle blocker takes the middle, outside takes left front.
+  const frontSwitch = {};
+  if (system === "4-2") {
+    const claimed = new Set();
+    const assign = (pos, target) => {
+      if (!pos || claimed.has(target)) return;
+      frontSwitch[pos] = target;
+      claimed.add(target);
+    };
+    assign(sPositions.find(isFront), "P2");
+    assign(mbPositions.find(isFront), "P3");
+    assign(ohPositions.find(isFront), "P4");
+    // Anyone front row the tags didn't place — an Opposite, a DS pushed up,
+    // a player with no position set — fills whatever front spot is left, so
+    // nobody is silently stacked on top of someone else.
+    positions
+      .filter((pos) => isFront(pos) && playerAt[pos] && !frontSwitch[pos])
+      .forEach((pos) => {
+        const target = ["P2", "P3", "P4"].find((t) => !claimed.has(t));
+        if (target) assign(pos, target);
+      });
+  }
+
   let passerPositions = [];
   let backRowAttackPositions = [];
   // A DS on court is always a passer when they're back row — 4-2 already
@@ -700,7 +732,7 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate) {
     if (backOHPos) backRowAttackPositions = [backOHPos];
   }
 
-  return { playerAt, activeSetterPos, backMBPos, liberoPlayer, passerPositions, backRowAttackPositions };
+  return { playerAt, activeSetterPos, backMBPos, liberoPlayer, passerPositions, backRowAttackPositions, frontSwitch };
 }
 
 // Rolls a flat list of stat entries up into one row per player, with that
@@ -2636,13 +2668,16 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
           const isSetter = pos === layout.activeSetterPos;
           const isBackAttack = layout.backRowAttackPositions.includes(pos);
           let coord = BASE_COORD[pos];
+          const switchTarget = layout.frontSwitch?.[pos];
           if (isPasser) {
             const idx = passersSorted.indexOf(pos);
             coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
+          } else if (switchTarget) {
+            coord = BASE_COORD[switchTarget];
           } else if (isSetter) {
             coord = NET_TARGET;
           }
-          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos] };
+          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos], isSwitch: !isPasser && !!switchTarget };
         });
 
         return (
@@ -2687,8 +2722,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.gold, display: "inline-block" }} />
-                  Setter (moves to net)
+                  {system === "4-2" ? "Setter (switches to right front)" : "Setter (moves to net)"}
                 </span>
+                {system === "4-2" ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.chalkDim, display: "inline-block" }} />
+                    Front-row switch
+                  </span>
+                ) : null}
               </div>
 
               <div
@@ -2726,22 +2767,33 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   Net
                 </div>
 
-                {/* Movement line: setter's rotational spot → net target */}
+                {/* Movement lines: every player whose switched spot differs from
+                    their rotational one, not just the setter — otherwise the
+                    middle and outside appear to teleport. */}
                 {markers
-                  .filter((m) => m.isSetter)
-                  .map((m) => (
-                    <svg key={`line-${m.pos}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-                      <line
-                        x1={`${m.baseCoord.x}%`}
-                        y1={`${m.baseCoord.y}%`}
-                        x2={`${m.coord.x}%`}
-                        y2={`${m.coord.y}%`}
-                        stroke={COLORS.gold}
-                        strokeWidth="2"
-                        strokeDasharray="4 3"
-                      />
-                    </svg>
-                  ))}
+                  .filter((m) => m.player && (m.coord.x !== m.baseCoord.x || m.coord.y !== m.baseCoord.y))
+                  .map((m) => {
+                    // Two front-row players swapping spots trace the same
+                    // segment in opposite directions, which draws as one line
+                    // and reads as a single player moving. Nudge each off the
+                    // centre line by whichever way they're travelling — the
+                    // offset is far smaller than a marker's radius, so both
+                    // ends still meet their circles.
+                    const bow = m.isSwitch ? (m.coord.x > m.baseCoord.x ? 3.5 : -3.5) : 0;
+                    return (
+                      <svg key={`line-${m.pos}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                        <line
+                          x1={`${m.baseCoord.x}%`}
+                          y1={`${m.baseCoord.y + bow}%`}
+                          x2={`${m.coord.x}%`}
+                          y2={`${m.coord.y + bow}%`}
+                          stroke={m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.chalkDim}
+                          strokeWidth="2"
+                          strokeDasharray="4 3"
+                        />
+                      </svg>
+                    );
+                  })}
 
                 {markers.map((m) => {
                   const borderColor = m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line;
@@ -2804,11 +2856,22 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               </div>
 
               <div style={{ fontSize: 10, color: COLORS.chalkDim, lineHeight: 1.5 }}>
-                Setter releases to the net near position 2 after passing (dashed line shows the move).{" "}
-                {isAlternate
-                  ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
-                  : "The back-row Outside can hit a pipe."}
-                {system === "5-1" && !isAlternate ? " If the Opposite is back row, that's a \"D\" ball." : ""}
+                {system === "4-2" ? (
+                  <>
+                    Once the serve is away the front row switches (dashed lines): the
+                    setter to right front, the middle blocker to the middle, the
+                    outside to left front. The setter is front row here and doesn't
+                    pass — all three back-row players receive.
+                  </>
+                ) : (
+                  <>
+                    Setter releases to the net near position 2 after passing; dashed lines show each player's move into the pattern.{" "}
+                    {isAlternate
+                      ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
+                      : "The back-row Outside can hit a pipe."}
+                    {system === "5-1" && !isAlternate ? " If the Opposite is back row, that's a \"D\" ball." : ""}
+                  </>
+                )}
               </div>
             </div>
           </div>
