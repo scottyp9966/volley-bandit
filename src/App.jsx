@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.16b";
+const APP_VERSION = "2026.10.17a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -745,6 +745,288 @@ function deriveServeReceive(system, slots, roster, liberoIds, isAlternate, sette
   }
 
   return { playerAt, activeSetterPos, backMBPos, liberoPlayer, passerPositions, backRowAttackPositions, frontSwitch };
+}
+
+// The whole Serve-Receive picture as data: where every player stands at the
+// serve, where she goes after it, and the arrow path between. Module scope on
+// purpose — `PrintArea` renders this too, and anything PrintArea calls must be
+// module-scope or it is a ReferenceError that blanks the entire app (see
+// CLAUDE.md). It reads `COLORS` only inside the call, never at module
+// evaluation, so it stays theme-aware.
+//
+// `aspect` is the court box's width/height, which the arrowhead maths needs:
+// a y percent covers more pixels than an x percent, so heads are built in
+// squared-up space and converted back, or they come out skewed. Pass whatever
+// the container actually uses.
+function serveReceiveGeometry(system, slots, roster, liberos, isAlternate, setterFront, aspect = 0.82) {
+  const layout = deriveServeReceive(system, slots, roster, liberos, isAlternate, setterFront);
+  // Rough real-court coordinates per position (0-100, y=0 at the net)
+  // — this is what actually shows alignment, unlike 6 equal boxes.
+  const BASE_COORD = {
+    P4: { x: 16, y: 14 },
+    P3: { x: 50, y: 10 },
+    P2: { x: 84, y: 14 },
+    P5: { x: 16, y: 58 },
+    P6: { x: 50, y: 62 },
+    P1: { x: 84, y: 58 },
+  };
+  const NET_TARGET = { x: 80, y: 24 }; // where the setter releases to
+
+  const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
+  // Passers cluster into a receive line, ordered left-to-right by their
+  // natural court position, regardless of whether that spot is
+  // currently front or back row.
+  const passersSorted = [...layout.passerPositions].sort((a, b) => BASE_COORD[a].x - BASE_COORD[b].x);
+  const RECEIVE_Y = 78;
+  const RECEIVE_X = [22, 50, 78];
+
+  // STACKING. The overlap rule is judged only at the instant the server
+  // contacts the ball, and only against the neighbours in your own row
+  // (front row reads 4-3-2 left to right) and the player directly behind
+  // you. So a front-row player who is about to switch doesn't have to
+  // wait at her rotational spot — she may stand as close to where she's
+  // heading as that left-to-right order allows. Bunching the front row
+  // that way is exactly what coaches call stacking, and when all three
+  // have to switch, that's what the front row actually looks like: three
+  // players crowded together at the net, not spread across three zones.
+  // Drawing them spread out was the real complaint about this sheet.
+  //
+  // Finding the stack is a least-squares fit: each player wants to be at
+  // her destination, subject to staying in rotational order with a
+  // visible gap between neighbours. That's isotonic regression, solved
+  // by pool-adjacent-violators. The setter carries double weight because
+  // hers is the run on a clock — she has to beat the pass to the net —
+  // which is the same reason coaches stack toward the setter's side.
+  // A REAL stack is a near-vertical column, not a row. The left-to-right
+  // test needs only part of one foot: the player based front-right has to
+  // stay a sliver right of the one to her left, nothing more. The
+  // front-to-back test is against the back-row player she's paired with,
+  // and the passers are at the back of the court, so depth is free. So
+  // the three of them line up almost on top of each other, each a step
+  // right of the last, staggered in depth. Spreading them across the
+  // front the way an earlier pass did needed a 20% gap just to fit the
+  // circles, which drew a much looser front row than a stack really is.
+  const STACK_GAP = 7; // sideways step between neighbours: "slightly right"
+  const STACK_Y = 24; // the shallowest of the column, off the net
+  const STACK_DY = 16; // depth between stacked players, enough to clear the circles
+  const STACK_MIN_X = 15;
+  const STACK_MAX_X = 85;
+  const STACK_DEADBAND = 5; // sideways travel below this isn't a switch at all
+  const stackXs = (wants, weights) => {
+    const blocks = [];
+    wants.forEach((w, i) => {
+      blocks.push({ sum: (w - i * STACK_GAP) * weights[i], wt: weights[i], n: 1, start: i });
+      while (blocks.length > 1) {
+        const b = blocks[blocks.length - 1];
+        const a = blocks[blocks.length - 2];
+        if (a.sum / a.wt <= b.sum / b.wt) break;
+        blocks.pop();
+        blocks.pop();
+        blocks.push({ sum: a.sum + b.sum, wt: a.wt + b.wt, n: a.n + b.n, start: a.start });
+      }
+    });
+    const flat = [];
+    blocks.forEach((b) => {
+      for (let k = 0; k < b.n; k += 1) flat[b.start + k] = b.sum / b.wt;
+    });
+    const xs = flat.map((v, i) => v + i * STACK_GAP);
+    // Slide the whole stack back inside the court if the fit pushed it out.
+    let shift = 0;
+    if (xs[0] < STACK_MIN_X) shift = STACK_MIN_X - xs[0];
+    if (xs[xs.length - 1] + shift > STACK_MAX_X) shift = STACK_MAX_X - xs[xs.length - 1];
+    return xs.map((v) => v + shift);
+  };
+
+  // Front-row slots in rotational left-to-right order, keeping only the
+  // ones that are both occupied and actually switching somewhere.
+  const stackSlots = ["P4", "P3", "P2"].filter(
+    (pos) => layout.playerAt[pos] && layout.frontSwitch?.[pos]
+  );
+  const stackStart = {};
+  if (stackSlots.length) {
+    const xs = stackXs(
+      stackSlots.map((pos) => BASE_COORD[layout.frontSwitch[pos]].x),
+      stackSlots.map((pos) => (pos === layout.activeSetterPos ? 2 : 1))
+    );
+    // Depth: whoever has the farthest to go starts deepest, so she runs
+    // behind the others rather than through them, and whoever is
+    // basically staying put stands where she'll play — at the net. Two
+    // players crossing get the leftward one behind, which is the tiebreak
+    // the small bonus buys.
+    // Only players who are really going somewhere take up a depth. A
+    // front-row player already standing where she plays is drawn at the
+    // net, not in the column, so counting her here just pushed everyone
+    // else a row deeper than they needed to be.
+    const rank = stackSlots
+      .map((pos, i) => {
+        const dx = BASE_COORD[layout.frontSwitch[pos]].x - xs[i];
+        return { i, dx, score: Math.abs(dx) + (dx < 0 ? 2 : 0) };
+      })
+      .filter((r) => Math.abs(r.dx) >= STACK_DEADBAND)
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.i);
+    stackSlots.forEach((pos, i) => {
+      const depth = rank.indexOf(i);
+      stackStart[pos] = {
+        x: xs[i],
+        y: STACK_Y + (depth < 0 ? 0 : rank.length - 1 - depth) * STACK_DY,
+      };
+    });
+  }
+
+  // One track per switching player, so three arrows crossing the front row
+  // can be told apart. Keyed by ROLE rather than by slot, so a coach can
+  // learn it: the setter's track is always the setter's colour.
+  //
+  // Returns a KEY, not a colour. The screen resolves it through `COLORS` and
+  // the printed sheet through its own black-on-white palette — `PrintArea`
+  // deliberately uses no theme token anywhere, or a sheet printed in dark
+  // mode would come out in dark-mode hues on white paper. Same lesson as
+  // `STAT_BUTTONS` storing a `colorKey`; see CLAUDE.md.
+  const moverRole = (m) => {
+    if (m.isSetter) return "S";
+    if (m.player?.position === "MB") return "MB";
+    if (m.player?.position === "OH") return "OH";
+    return "other";
+  };
+
+  // Each marker is drawn where that player stands AT THE SERVE — which
+  // for a passer is already her spot in the receive pattern, and for a
+  // switching front-row player is her place in the stack. `moveTo` is
+  // where she goes once the ball is away, and is what the arrows show.
+  // Passers deliberately get no arrow: the receive line IS their
+  // alignment, not somewhere they travel to afterwards.
+  const markers = positions.map((pos) => {
+    const isLiberoSlot = pos === layout.backMBPos;
+    const player = isLiberoSlot && layout.liberoPlayer ? layout.liberoPlayer : layout.playerAt[pos];
+    const isPasser = layout.passerPositions.includes(pos);
+    const isSetter = pos === layout.activeSetterPos;
+    const isBackAttack = layout.backRowAttackPositions.includes(pos);
+    const switchTarget = !isPasser ? layout.frontSwitch?.[pos] : null;
+    let coord = BASE_COORD[pos];
+    let moveTo = null;
+    if (isPasser) {
+      const idx = passersSorted.indexOf(pos);
+      coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
+    } else if (switchTarget) {
+      coord = stackStart[pos] || BASE_COORD[pos];
+      moveTo = BASE_COORD[switchTarget];
+    } else if (isSetter) {
+      moveTo = NET_TARGET;
+    }
+    // A player already standing where she's going doesn't need an arrow
+    // pointing at her own feet. For a stacked switcher that's measured
+    // SIDEWAYS only, because every one of them shares the same step up to
+    // the net, so it's the across-court travel that says whether she is
+    // really switching or already home; she still takes part in the stack
+    // ordering above, or a neighbour could be placed straight through
+    // her. Anyone else is measured as a real distance — the 5-1 setter
+    // releases from the back row almost straight up the court, and an
+    // x-only test cancelled that move entirely.
+    const travel = switchTarget
+      ? Math.abs(moveTo ? moveTo.x - coord.x : 0)
+      : moveTo
+        ? Math.hypot(moveTo.x - coord.x, moveTo.y - coord.y)
+        : 0;
+    if (moveTo && player && travel < STACK_DEADBAND) {
+      coord = moveTo;
+      moveTo = null;
+    }
+    if (!player) moveTo = null;
+    const m = { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, moveTo, isSwitch: !!switchTarget };
+    m.colorKey = moveTo ? moverRole(m) : null;
+    return m;
+  });
+
+  // Arrow geometry. The court box is taller than it is wide, so a y
+  // percent covers more pixels than an x percent — the arrowheads are
+  // built in that squared-up space and converted back, or they come out
+  // skewed. Both ends are trimmed so the shaft starts clear of the
+  // marker it leaves and stops short of the ring it points at.
+  const Y_PER_X = 1 / aspect; // a y percent covers more pixels than an x percent
+  const MARKER_R = 8; // a 56px circle on a ~355px-wide court, in percent
+  const DEST_R = 6; // the smaller destination ring
+  const HEAD_LEN = 7;
+  const CLEAR_R = 10; // how far an arrow keeps off another player's circle
+  const arrowGeom = (from, to, avoid = []) => {
+    // Everything here is computed in "squared-up" space, where one unit
+    // is the same number of pixels on both axes, then divided back out.
+    const ax = from.x;
+    const ay = from.y * Y_PER_X;
+    const dx = to.x - ax;
+    const dy = to.y * Y_PER_X - ay;
+    const len = Math.hypot(dx, dy);
+    if (len < 4) return null;
+    const ux = dx / len;
+    const uy = dy / len;
+    // Both trims and the head are capped as a fraction of the trip, so a
+    // short slide still draws as a visible arrow instead of being eaten
+    // entirely by its own clearances.
+    const startAt = Math.min(MARKER_R, len * 0.3);
+    const endAt = len - Math.min(DEST_R, len * 0.18);
+    // Bow around anyone standing in the way. A player crossing the whole
+    // front row runs behind her team-mates, and a straight shaft drawn
+    // under their circles vanishes for most of its length — the sheet had
+    // exactly that, an arrow visible only as a stub either side of the
+    // middle. The curve bends to whichever side of the obstruction has
+    // room, by however much it takes to clear it.
+    let bow = 0;
+    avoid.forEach((o) => {
+      const ox = o.x - ax;
+      const oy = o.y * Y_PER_X - ay;
+      const along = ox * ux + oy * uy;
+      if (along <= startAt || along >= endAt) return;
+      const side = ox * -uy + oy * ux; // signed perpendicular distance
+      if (Math.abs(side) >= CLEAR_R) return;
+      const push = (CLEAR_R - Math.abs(side)) * 2 * (side >= 0 ? -1 : 1);
+      if (Math.abs(push) > Math.abs(bow)) bow = push;
+    });
+    const sq = (x, y) => ({ x, y: y / Y_PER_X });
+    const p0 = sq(ax + ux * startAt, ay + uy * startAt);
+    const tipS = { x: ax + ux * endAt, y: ay + uy * endAt };
+    const mid = (startAt + endAt) / 2;
+    const ctrlS = { x: ax + ux * mid - uy * bow, y: ay + uy * mid + ux * bow };
+    // The head sits at the tip, pointed along the curve's tangent there,
+    // which for a quadratic is simply the direction from the control
+    // point. It overlaps the last of the shaft, same colour, so there's
+    // no need to shorten the curve to meet it.
+    const tx = tipS.x - ctrlS.x;
+    const ty = tipS.y - ctrlS.y;
+    const tl = Math.hypot(tx, ty) || 1;
+    const hx = tx / tl;
+    const hy = ty / tl;
+    const head = Math.min(HEAD_LEN, (endAt - startAt) * 0.6);
+    const bx = tipS.x - hx * head;
+    const by = tipS.y - hy * head;
+    const wing = head * 0.45;
+    const pts = [
+      sq(tipS.x, tipS.y),
+      sq(bx - -hy * wing, by - hx * wing),
+      sq(bx + -hy * wing, by + hx * wing),
+    ];
+    const ctrl = sq(ctrlS.x, ctrlS.y);
+    const tip = sq(tipS.x, tipS.y);
+    return {
+      d: `M ${p0.x} ${p0.y} Q ${ctrl.x} ${ctrl.y} ${tip.x} ${tip.y}`,
+      points: pts.map((pt) => `${pt.x},${pt.y}`).join(" "),
+    };
+  };
+
+  // Precompute each arrow's path, so a renderer only has to draw. Markers are
+  // what an arrow has to bow around, which is why this runs after all of them.
+  const arrows = markers
+    .filter((m) => m.moveTo)
+    .map((m) => {
+      const g = arrowGeom(
+        m.coord,
+        m.moveTo,
+        markers.filter((o) => o !== m && o.player).map((o) => o.coord)
+      );
+      return g ? { pos: m.pos, colorKey: m.colorKey, ...g } : null;
+    })
+    .filter(Boolean);
+
+  return { layout, markers, arrows, system };
 }
 
 // Rolls a flat list of stat entries up into one row per player, with that
@@ -2692,254 +2974,16 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         const setterFront = roleSystem?.setterFront === "middle" ? "middle" : "right";
         const layout = deriveServeReceive(system, shiftedSlots, roster, liberos, isAlternate, setterFront);
 
-        // Rough real-court coordinates per position (0-100, y=0 at the net)
-        // — this is what actually shows alignment, unlike 6 equal boxes.
-        const BASE_COORD = {
-          P4: { x: 16, y: 14 },
-          P3: { x: 50, y: 10 },
-          P2: { x: 84, y: 14 },
-          P5: { x: 16, y: 58 },
-          P6: { x: 50, y: 62 },
-          P1: { x: 84, y: 58 },
-        };
-        const NET_TARGET = { x: 80, y: 24 }; // where the setter releases to
-
-        const positions = ["P1", "P2", "P3", "P4", "P5", "P6"];
-        // Passers cluster into a receive line, ordered left-to-right by their
-        // natural court position, regardless of whether that spot is
-        // currently front or back row.
-        const passersSorted = [...layout.passerPositions].sort((a, b) => BASE_COORD[a].x - BASE_COORD[b].x);
-        const RECEIVE_Y = 78;
-        const RECEIVE_X = [22, 50, 78];
-
-        // STACKING. The overlap rule is judged only at the instant the server
-        // contacts the ball, and only against the neighbours in your own row
-        // (front row reads 4-3-2 left to right) and the player directly behind
-        // you. So a front-row player who is about to switch doesn't have to
-        // wait at her rotational spot — she may stand as close to where she's
-        // heading as that left-to-right order allows. Bunching the front row
-        // that way is exactly what coaches call stacking, and when all three
-        // have to switch, that's what the front row actually looks like: three
-        // players crowded together at the net, not spread across three zones.
-        // Drawing them spread out was the real complaint about this sheet.
-        //
-        // Finding the stack is a least-squares fit: each player wants to be at
-        // her destination, subject to staying in rotational order with a
-        // visible gap between neighbours. That's isotonic regression, solved
-        // by pool-adjacent-violators. The setter carries double weight because
-        // hers is the run on a clock — she has to beat the pass to the net —
-        // which is the same reason coaches stack toward the setter's side.
-        // A REAL stack is a near-vertical column, not a row. The left-to-right
-        // test needs only part of one foot: the player based front-right has to
-        // stay a sliver right of the one to her left, nothing more. The
-        // front-to-back test is against the back-row player she's paired with,
-        // and the passers are at the back of the court, so depth is free. So
-        // the three of them line up almost on top of each other, each a step
-        // right of the last, staggered in depth. Spreading them across the
-        // front the way an earlier pass did needed a 20% gap just to fit the
-        // circles, which drew a much looser front row than a stack really is.
-        const STACK_GAP = 7; // sideways step between neighbours: "slightly right"
-        const STACK_Y = 24; // the shallowest of the column, off the net
-        const STACK_DY = 16; // depth between stacked players, enough to clear the circles
-        const STACK_MIN_X = 15;
-        const STACK_MAX_X = 85;
-        const STACK_DEADBAND = 5; // sideways travel below this isn't a switch at all
-        const stackXs = (wants, weights) => {
-          const blocks = [];
-          wants.forEach((w, i) => {
-            blocks.push({ sum: (w - i * STACK_GAP) * weights[i], wt: weights[i], n: 1, start: i });
-            while (blocks.length > 1) {
-              const b = blocks[blocks.length - 1];
-              const a = blocks[blocks.length - 2];
-              if (a.sum / a.wt <= b.sum / b.wt) break;
-              blocks.pop();
-              blocks.pop();
-              blocks.push({ sum: a.sum + b.sum, wt: a.wt + b.wt, n: a.n + b.n, start: a.start });
-            }
-          });
-          const flat = [];
-          blocks.forEach((b) => {
-            for (let k = 0; k < b.n; k += 1) flat[b.start + k] = b.sum / b.wt;
-          });
-          const xs = flat.map((v, i) => v + i * STACK_GAP);
-          // Slide the whole stack back inside the court if the fit pushed it out.
-          let shift = 0;
-          if (xs[0] < STACK_MIN_X) shift = STACK_MIN_X - xs[0];
-          if (xs[xs.length - 1] + shift > STACK_MAX_X) shift = STACK_MAX_X - xs[xs.length - 1];
-          return xs.map((v) => v + shift);
-        };
-
-        // Front-row slots in rotational left-to-right order, keeping only the
-        // ones that are both occupied and actually switching somewhere.
+        const geo = serveReceiveGeometry(system, shiftedSlots, roster, liberos, isAlternate, setterFront);
+        const { markers, arrows } = geo;
         const stackSlots = ["P4", "P3", "P2"].filter(
-          (pos) => layout.playerAt[pos] && layout.frontSwitch?.[pos]
+          (pos) => geo.layout.playerAt[pos] && geo.layout.frontSwitch?.[pos]
         );
-        const stackStart = {};
-        if (stackSlots.length) {
-          const xs = stackXs(
-            stackSlots.map((pos) => BASE_COORD[layout.frontSwitch[pos]].x),
-            stackSlots.map((pos) => (pos === layout.activeSetterPos ? 2 : 1))
-          );
-          // Depth: whoever has the farthest to go starts deepest, so she runs
-          // behind the others rather than through them, and whoever is
-          // basically staying put stands where she'll play — at the net. Two
-          // players crossing get the leftward one behind, which is the tiebreak
-          // the small bonus buys.
-          // Only players who are really going somewhere take up a depth. A
-          // front-row player already standing where she plays is drawn at the
-          // net, not in the column, so counting her here just pushed everyone
-          // else a row deeper than they needed to be.
-          const rank = stackSlots
-            .map((pos, i) => {
-              const dx = BASE_COORD[layout.frontSwitch[pos]].x - xs[i];
-              return { i, dx, score: Math.abs(dx) + (dx < 0 ? 2 : 0) };
-            })
-            .filter((r) => Math.abs(r.dx) >= STACK_DEADBAND)
-            .sort((a, b) => b.score - a.score)
-            .map((r) => r.i);
-          stackSlots.forEach((pos, i) => {
-            const depth = rank.indexOf(i);
-            stackStart[pos] = {
-              x: xs[i],
-              y: STACK_Y + (depth < 0 ? 0 : rank.length - 1 - depth) * STACK_DY,
-            };
-          });
-        }
-
-        // One colour per switching player, so three arrows crossing the front
-        // row can be told apart. Keyed by role rather than by slot, so the
-        // coach can learn it: the setter's track is always gold. Light mode's
-        // "orange" token is a dark green, which is why the middle is green and
-        // the outside purple rather than green/orange — that pair is illegible
-        // in one of the two themes.
-        const moverColor = (m) => {
-          if (m.isSetter) return COLORS.gold;
-          if (m.player?.position === "MB") return COLORS.green;
-          if (m.player?.position === "OH") return COLORS.purple;
-          return COLORS.red;
-        };
-
-        // Each marker is drawn where that player stands AT THE SERVE — which
-        // for a passer is already her spot in the receive pattern, and for a
-        // switching front-row player is her place in the stack. `moveTo` is
-        // where she goes once the ball is away, and is what the arrows show.
-        // Passers deliberately get no arrow: the receive line IS their
-        // alignment, not somewhere they travel to afterwards.
-        const markers = positions.map((pos) => {
-          const isLiberoSlot = pos === layout.backMBPos;
-          const player = isLiberoSlot && layout.liberoPlayer ? layout.liberoPlayer : layout.playerAt[pos];
-          const isPasser = layout.passerPositions.includes(pos);
-          const isSetter = pos === layout.activeSetterPos;
-          const isBackAttack = layout.backRowAttackPositions.includes(pos);
-          const switchTarget = !isPasser ? layout.frontSwitch?.[pos] : null;
-          let coord = BASE_COORD[pos];
-          let moveTo = null;
-          if (isPasser) {
-            const idx = passersSorted.indexOf(pos);
-            coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
-          } else if (switchTarget) {
-            coord = stackStart[pos] || BASE_COORD[pos];
-            moveTo = BASE_COORD[switchTarget];
-          } else if (isSetter) {
-            moveTo = NET_TARGET;
-          }
-          // A player already standing where she's going doesn't need an arrow
-          // pointing at her own feet. For a stacked switcher that's measured
-          // SIDEWAYS only, because every one of them shares the same step up to
-          // the net, so it's the across-court travel that says whether she is
-          // really switching or already home; she still takes part in the stack
-          // ordering above, or a neighbour could be placed straight through
-          // her. Anyone else is measured as a real distance — the 5-1 setter
-          // releases from the back row almost straight up the court, and an
-          // x-only test cancelled that move entirely.
-          const travel = switchTarget
-            ? Math.abs(moveTo ? moveTo.x - coord.x : 0)
-            : moveTo
-              ? Math.hypot(moveTo.x - coord.x, moveTo.y - coord.y)
-              : 0;
-          if (moveTo && player && travel < STACK_DEADBAND) {
-            coord = moveTo;
-            moveTo = null;
-          }
-          if (!player) moveTo = null;
-          const m = { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, moveTo, isSwitch: !!switchTarget };
-          m.color = moveTo ? moverColor(m) : null;
-          return m;
-        });
-
-        // Arrow geometry. The court box is taller than it is wide, so a y
-        // percent covers more pixels than an x percent — the arrowheads are
-        // built in that squared-up space and converted back, or they come out
-        // skewed. Both ends are trimmed so the shaft starts clear of the
-        // marker it leaves and stops short of the ring it points at.
-        const Y_PER_X = 1 / 0.82; // matches the container's aspectRatio
-        const MARKER_R = 8; // a 56px circle on a ~355px-wide court, in percent
-        const DEST_R = 6; // the smaller destination ring
-        const HEAD_LEN = 7;
-        const CLEAR_R = 10; // how far an arrow keeps off another player's circle
-        const arrowGeom = (from, to, avoid = []) => {
-          // Everything here is computed in "squared-up" space, where one unit
-          // is the same number of pixels on both axes, then divided back out.
-          const ax = from.x;
-          const ay = from.y * Y_PER_X;
-          const dx = to.x - ax;
-          const dy = to.y * Y_PER_X - ay;
-          const len = Math.hypot(dx, dy);
-          if (len < 4) return null;
-          const ux = dx / len;
-          const uy = dy / len;
-          // Both trims and the head are capped as a fraction of the trip, so a
-          // short slide still draws as a visible arrow instead of being eaten
-          // entirely by its own clearances.
-          const startAt = Math.min(MARKER_R, len * 0.3);
-          const endAt = len - Math.min(DEST_R, len * 0.18);
-          // Bow around anyone standing in the way. A player crossing the whole
-          // front row runs behind her team-mates, and a straight shaft drawn
-          // under their circles vanishes for most of its length — the sheet had
-          // exactly that, an arrow visible only as a stub either side of the
-          // middle. The curve bends to whichever side of the obstruction has
-          // room, by however much it takes to clear it.
-          let bow = 0;
-          avoid.forEach((o) => {
-            const ox = o.x - ax;
-            const oy = o.y * Y_PER_X - ay;
-            const along = ox * ux + oy * uy;
-            if (along <= startAt || along >= endAt) return;
-            const side = ox * -uy + oy * ux; // signed perpendicular distance
-            if (Math.abs(side) >= CLEAR_R) return;
-            const push = (CLEAR_R - Math.abs(side)) * 2 * (side >= 0 ? -1 : 1);
-            if (Math.abs(push) > Math.abs(bow)) bow = push;
-          });
-          const sq = (x, y) => ({ x, y: y / Y_PER_X });
-          const p0 = sq(ax + ux * startAt, ay + uy * startAt);
-          const tipS = { x: ax + ux * endAt, y: ay + uy * endAt };
-          const mid = (startAt + endAt) / 2;
-          const ctrlS = { x: ax + ux * mid - uy * bow, y: ay + uy * mid + ux * bow };
-          // The head sits at the tip, pointed along the curve's tangent there,
-          // which for a quadratic is simply the direction from the control
-          // point. It overlaps the last of the shaft, same colour, so there's
-          // no need to shorten the curve to meet it.
-          const tx = tipS.x - ctrlS.x;
-          const ty = tipS.y - ctrlS.y;
-          const tl = Math.hypot(tx, ty) || 1;
-          const hx = tx / tl;
-          const hy = ty / tl;
-          const head = Math.min(HEAD_LEN, (endAt - startAt) * 0.6);
-          const bx = tipS.x - hx * head;
-          const by = tipS.y - hy * head;
-          const wing = head * 0.45;
-          const pts = [
-            sq(tipS.x, tipS.y),
-            sq(bx - -hy * wing, by - hx * wing),
-            sq(bx + -hy * wing, by + hx * wing),
-          ];
-          const ctrl = sq(ctrlS.x, ctrlS.y);
-          const tip = sq(tipS.x, tipS.y);
-          return {
-            d: `M ${p0.x} ${p0.y} Q ${ctrl.x} ${ctrl.y} ${tip.x} ${tip.y}`,
-            points: pts.map((pt) => `${pt.x},${pt.y}`).join(" "),
-          };
-        };
+        // Resolve the geometry's role keys through the live palette. Done here
+        // rather than inside the geometry so the printed sheet can resolve the
+        // same keys through its own black-on-white set instead.
+        const trackColor = (key) =>
+          key === "S" ? COLORS.gold : key === "MB" ? COLORS.green : key === "OH" ? COLORS.purple : COLORS.red;
 
         return (
           <div
@@ -3058,14 +3102,14 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         width: 40,
                         height: 40,
                         borderRadius: "50%",
-                        border: `2px dashed ${m.color}`,
+                        border: `2px dashed ${trackColor(m.colorKey)}`,
                         opacity: 0.7,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         fontFamily: "'Oswald', sans-serif",
                         fontSize: 13,
-                        color: m.color,
+                        color: trackColor(m.colorKey),
                       }}
                     >
                       #{jersey(m.player)}
@@ -3078,41 +3122,30 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                     into one line the way they would along a single row: they
                     leave from different places in the stack and arrive at
                     different spots on the net, so the paths cross at an angle. */}
-                {markers
-                  .filter((m) => m.moveTo)
-                  .map((m) => {
-                    const g = arrowGeom(
-                      m.coord,
-                      m.moveTo,
-                      markers.filter((o) => o !== m && o.player).map((o) => o.coord)
-                    );
-                    if (!g) return null;
-                    const color = m.color;
-                    return (
-                      <svg
-                        key={`arrow-${m.pos}`}
-                        viewBox="0 0 100 100"
-                        preserveAspectRatio="none"
-                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
-                      >
-                        <path
-                          d={g.d}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth="4"
-                          strokeLinecap="round"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                        <polygon points={g.points} fill={color} />
-                      </svg>
-                    );
-                  })}
+                {arrows.map((g) => (
+                  <svg
+                    key={`arrow-${g.pos}`}
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
+                  >
+                    <path
+                      d={g.d}
+                      fill="none"
+                      stroke={trackColor(g.colorKey)}
+                      strokeWidth="4"
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <polygon points={g.points} fill={trackColor(g.colorKey)} />
+                  </svg>
+                ))}
 
                 {markers.map((m) => {
                   // A mover's circle, her arrow and her destination ring all
                   // carry the same colour — that's what lets three paths
                   // crossing the front row be told apart at a glance.
-                  const borderColor = m.color || (m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line);
+                  const borderColor = m.colorKey ? trackColor(m.colorKey) : m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.line;
                   const bg = m.isSetter ? COLORS.goldSoft : m.isPasser ? COLORS.blueSoft : COLORS.bgRaised;
                   return (
                     <div
@@ -7366,7 +7399,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
 
 // ---- Print area: standard black-on-white formats, one per document type.
 // Hidden on screen; shown via @media print CSS with everything else hidden.
-const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainIds, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys }) {
+const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainIds, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys, roleSystem }) {
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
@@ -7567,6 +7600,178 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
       </div>
 
       {/* LINEUP — matches a standard printed volleyball lineup sheet */}
+      {/* SERVE-RECEIVE — all six rotations on one page, as a reference card.
+          Black on white like every other sheet: PrintArea never touches a
+          COLORS token, or a sheet printed from dark mode comes out in
+          dark-mode hues on paper. The track colours below resolve the same
+          role keys the screen does, through a print palette instead. */}
+      <div className={`print-section${target === "servereceive" ? " active" : ""}`}>
+        {(() => {
+          const l = activeLineupForPrint;
+          if (!l) return null;
+          const system = roleSystem?.system || "5-1";
+          const setterFront = roleSystem?.setterFront === "middle" ? "middle" : "right";
+          const isAlt = !!l.serveReceiveAlternate;
+          const TRACK = { S: "#8A6508", MB: "#1F6B3F", OH: "#5B3E9B", other: "#A63A32" };
+          const track = (k) => TRACK[k] || TRACK.other;
+          // 3 across x 2 down inside the 752px of printable width. Keeping the
+          // screen's 0.82 aspect means the arrowhead maths is unchanged.
+          const COURT_W = 244;
+          // Taller than the screen's 0.82: three courts across is fixed by the
+          // page width, so the only way to give the stack more room to spread
+          // is downwards, and a letter page has the height spare. The aspect is
+          // passed into the geometry, which needs it for the arrowhead maths.
+          const ASPECT = 0.68;
+          const MARK = 34; // circle diameter; the court is 2/3 the screen's width
+          const onCourt = ["P1", "P2", "P3", "P4", "P5", "P6"]
+            .map((pos) => l.slots?.[pos])
+            .filter(Boolean);
+          const keyPlayers = onCourt.map((id) => roster.find((p) => p.id === id)).filter(Boolean);
+          const lib = (l.liberos || []).filter(Boolean).map((id) => roster.find((p) => p.id === id)).filter(Boolean);
+          // All six rotations up front: the legend has to know which roles
+          // actually move anywhere before the courts are drawn, and computing
+          // them twice would be wasted work inside a memoised print tree.
+          const rots = [1, 2, 3, 4, 5, 6].map((rot) => ({
+            rot,
+            geo: serveReceiveGeometry(system, computeRotationSlots(l, rot), roster, l.liberos || [], isAlt, setterFront, ASPECT),
+          }));
+          const movingRoles = new Set(rots.flatMap(({ geo }) => geo.arrows.map((a) => a.colorKey)));
+          const jp = (p) => jerseyFor(p, l.liberos);
+          return (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
+                {teamLogo ? <img src={teamLogo} alt="" style={{ height: 34 }} /> : null}
+                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.5 }}>SERVE-RECEIVE — ALL ROTATIONS</div>
+              </div>
+              <div style={{ fontSize: 11, marginBottom: 10 }}>
+                {teamName || ""}{teamName ? " · " : ""}{l.name || `Set ${l.setNumber || 1}`} · {system}
+                {system === "4-2" ? ` · setter sets from ${setterFront === "middle" ? "middle" : "right"} front` : ""}
+                {isAlt ? " · alternate pattern" : ""}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 9.5, marginBottom: 8 }}>
+                {[["#2B6285", "Passer", true], [TRACK.S, "Setter", movingRoles.has("S")], [TRACK.MB, "Middle", movingRoles.has("MB")], [TRACK.OH, "Outside", movingRoles.has("OH")]]
+                  .filter(([, , show]) => show)
+                  .map(([c, label]) => (
+                  <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", border: `2px solid ${c}`, display: "inline-block" }} />
+                    {label}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 9.5, marginBottom: 10 }}>
+                Solid circle = where she stands at the moment of the serve. Arrow
+                → dashed ring = where she moves once the ball is away.
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {rots.map(({ rot, geo }) => {
+                  return (
+                    <div key={rot} style={{ width: COURT_W }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 3 }}>ROTATION {rot}</div>
+                      <div
+                        style={{
+                          position: "relative",
+                          width: COURT_W,
+                          height: COURT_W / ASPECT,
+                          border: "1px solid #000",
+                          borderTop: "3px solid #000",
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        {geo.arrows.map((g) => (
+                          <svg
+                            key={`a-${g.pos}`}
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }}
+                          >
+                            <path d={g.d} fill="none" stroke={track(g.colorKey)} strokeWidth="2.5" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                            <polygon points={g.points} fill={track(g.colorKey)} />
+                          </svg>
+                        ))}
+                        {geo.markers
+                          .filter((m) => m.moveTo)
+                          .map((m) => (
+                            <div
+                              key={`d-${m.pos}`}
+                              style={{
+                                position: "absolute",
+                                left: `${m.moveTo.x}%`,
+                                top: `${m.moveTo.y}%`,
+                                transform: "translate(-50%, -50%)",
+                                width: MARK * 0.8,
+                                height: MARK * 0.8,
+                                borderRadius: "50%",
+                                border: `1.5px dashed ${track(m.colorKey)}`,
+                                color: track(m.colorKey),
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 10.5,
+                                fontWeight: 800,
+                              }}
+                            >
+                              {m.player ? jp(m.player) : ""}
+                            </div>
+                          ))}
+                        {geo.markers.map((m) => (
+                          <div
+                            key={m.pos}
+                            style={{
+                              position: "absolute",
+                              left: `${m.coord.x}%`,
+                              top: `${m.coord.y}%`,
+                              transform: "translate(-50%, -50%)",
+                              width: MARK,
+                              height: MARK,
+                              borderRadius: "50%",
+                              border: `${m.colorKey ? 2 : 1.5}px solid ${m.colorKey ? track(m.colorKey) : m.isPasser ? "#2B6285" : "#000"}`,
+                              background: "#fff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 13,
+                              fontWeight: 800,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            {m.player ? jp(m.player) : ""}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Numbers on the courts, names down here — at this size a circle
+                  only fits a jersey number, same convention as the lineup sheet's
+                  roster key. */}
+              <div style={{ marginTop: 12, fontSize: 10, lineHeight: 1.7 }}>
+                <b>ON COURT:</b>{" "}
+                {keyPlayers.map((p, i) => (
+                  <span key={p.id}>
+                    {i ? " · " : ""}#{jerseyLabel(p)} {fullName(p)}
+                    {p.position ? ` (${p.position})` : ""}
+                  </span>
+                ))}
+                {lib.length ? (
+                  <>
+                    <br />
+                    <b>LIBERO:</b>{" "}
+                    {lib.map((p, i) => (
+                      <span key={p.id}>
+                        {i ? " · " : ""}#{jerseyFor(p, l.liberos)} {fullName(p)}
+                      </span>
+                    ))}
+                  </>
+                ) : null}
+              </div>
+            </>
+          );
+        })()}
+      </div>
+
       <div className={`print-section${target === "lineup" ? " active" : ""}`}>
         <div
           style={{
@@ -11078,6 +11283,7 @@ function AppInner() {
         includePairingsRoster={includePairingsRoster}
         includePairingsLineup={includePairingsLineup}
         printStatKeys={printStatKeys}
+        roleSystem={roleSystem}
       />
       <PhoneFrame>
         {syncError && (
@@ -11165,6 +11371,29 @@ function AppInner() {
                 Lineup Sheet
                 <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
                   Coach reference — roster, court diagrams, pairings list
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setPrintChoiceOpen(false);
+                  handlePrint("servereceive");
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.purple}`,
+                  background: COLORS.bgRaised,
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                }}
+              >
+                Serve-Receive Sheet
+                <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.chalkDim, marginTop: 2 }}>
+                  All six rotations on one page, with the switch arrows
                 </div>
               </button>
               <button

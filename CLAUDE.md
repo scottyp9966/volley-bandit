@@ -796,6 +796,39 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     setter releases almost straight up the court, and the x-only test cancelled
     her arrow entirely. She still takes part in the stack ordering even when
     she isn't moving, or a neighbour can be placed straight through her.
+  - **The sheet PRINTS too, all six rotations on one page** — print target
+    `"servereceive"`, offered in the Lineup print menu. Three things made that
+    possible, and all three are load-bearing:
+    - **`serveReceiveGeometry` (module scope) returns the whole picture as
+      data** — markers, arrow paths, the lot — and both the screen overlay and
+      `PrintArea` render from it. It had to be hoisted out of the overlay's
+      render closure first: `PrintArea` is always mounted and anything it calls
+      from another component's scope is a ReferenceError that blanks the app.
+      `no-undef` caught the one dangling reference during the hoist, which is
+      exactly what that lint pass is for.
+    - **It returns colour KEYS (`"S"`/`"MB"`/`"OH"`), never resolved colours.**
+      `PrintArea` uses zero `COLORS` tokens anywhere — every sheet is hardcoded
+      black-on-white — because a sheet printed from dark mode would otherwise
+      come out in dark-mode hues on white paper. The screen resolves the keys
+      through `COLORS`, the sheet through its own print palette. Same lesson as
+      `STAT_BUTTONS` storing a `colorKey`.
+    - **`aspect` is a parameter, not a constant.** The arrowhead maths needs the
+      container's width/height to build heads in squared-up space; the printed
+      courts are taller than the screen's (0.68 vs 0.82) because three across is
+      fixed by the page width, so the only room to give the stack is downwards.
+    Circles carry jersey numbers only — at 244px a court can't fit a name — with
+    an ON COURT / LIBERO key underneath, the same convention as the lineup
+    sheet's roster key. The legend only lists roles that actually move in some
+    rotation, so a 5-1 sheet shows Passer and Setter rather than all four.
+    Verified by rendering the real PDF (not the JSX, not a DOM screenshot): one
+    letter page, 612x792pt, ~91% full, legible at print size; and separately
+    that 5-1, 6-2, the middle-front 4-2, a lineup with an empty slot and a long
+    team name all still fit one page.
+  - **Anything that queries the DOM for diagram markers must scope to visible
+    elements now.** The always-mounted print root holds six more courts, so an
+    unscoped `querySelectorAll` sees 42 markers instead of 6 and reports every
+    one as overlapping — which is how `sr42check.mjs` produced 506 failures the
+    first time this sheet existed. Same family as the `textContent` trap below.
   - Verified in the harness at 390px across all six rotations, by assertion and
     by eye (`pwcheck/sr42check.mjs`): six live markers with no two overlapping,
     **the overlap rule checked against slot occupancy derived independently from
