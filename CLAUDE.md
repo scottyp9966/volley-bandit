@@ -824,6 +824,15 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     letter page, 612x792pt, ~91% full, legible at print size; and separately
     that 5-1, 6-2, the middle-front 4-2, a lineup with an empty slot and a long
     team name all still fit one page.
+  - **DEFERRED, DO NOT "FIX" UNASKED — the 5-1's setter release.** Two things
+    look off on the 5-1 and are deliberately untouched (see "Open — deferred"
+    at the end of this file): on rotations 3 and 6 the setter is already at
+    right front, so her destination ring lands almost on top of her own circle
+    and the arrow is a stub; and `NET_TARGET` (80, 24) is further from the net
+    than P2's own base (84, 14), so she appears to move backwards off the net
+    to set. The coach has not reported either, and asked to look at the 5-1
+    himself before anything changes. Flagging them is the point; changing them
+    is his call.
   - **Anything that queries the DOM for diagram markers must scope to visible
     elements now.** The always-mounted print root holds six more courts, so an
     unscoped `querySelectorAll` sees 42 markers instead of 6 and reports every
@@ -1350,6 +1359,31 @@ so a change that broke every write in production passed every test here.
 If you build such a stub, make it enforce the real service's constraints
 (nested arrays, field-name rules, document size), not just its shape.
 Anything the stub doesn't enforce, you haven't actually tested.
+
+## Open — deferred, not bugs to fix unasked
+
+Things a session has noticed, raised with the coach, and been asked to leave
+alone. They are written down so the next session doesn't "discover" them and
+quietly change behaviour nobody asked to change. Raise them, don't fix them,
+unless the coach says so.
+
+- **The 5-1 serve-receive setter release** (asked to defer, 2026-10-17). Two
+  separate observations, both pre-existing and neither reported as a problem:
+  - On rotations 3 and 6 the setter already stands at right front, so her
+    destination ring overlaps her own circle and the arrow is a short stub.
+    Visible on screen, more obviously cluttered on the printed sheet.
+  - `NET_TARGET` is `(80, 24)` while P2's base is `(84, 14)`, so a setter at
+    P2 is drawn moving *away* from the net to reach her setting spot, which
+    looks backwards. It may well be intentional (a setter does set off the
+    net), which is exactly why it needs the coach's eye rather than a guess.
+  The 4-2 work this session deliberately did not touch either. The coach is
+  reviewing the 5-1 himself first.
+- **Google Fonts are uncached offline** (see the bullet under "Things that
+  broke…"). Cosmetic only — investigated and disproved as a cause of freezing.
+  It wants `workbox.runtimeCaching`; never been asked for.
+- **Two `window.confirm` calls remain** — the roster delete and "Unlink this
+  device". Both far from any live-match path, which is why they survived the
+  sweep that replaced the rest.
 
 ## Workflow note
 
