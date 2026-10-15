@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.15a";
+const APP_VERSION = "2026.10.15b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -2661,24 +2661,155 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
         const RECEIVE_Y = 78;
         const RECEIVE_X = [22, 50, 78];
 
+        // STACKING. The overlap rule is judged only at the instant the server
+        // contacts the ball, and only against the neighbours in your own row
+        // (front row reads 4-3-2 left to right) and the player directly behind
+        // you. So a front-row player who is about to switch doesn't have to
+        // wait at her rotational spot — she may stand as close to where she's
+        // heading as that left-to-right order allows. Bunching the front row
+        // that way is exactly what coaches call stacking, and when all three
+        // have to switch, that's what the front row actually looks like: three
+        // players crowded together at the net, not spread across three zones.
+        // Drawing them spread out was the real complaint about this sheet.
+        //
+        // Finding the stack is a least-squares fit: each player wants to be at
+        // her destination, subject to staying in rotational order with a
+        // visible gap between neighbours. That's isotonic regression, solved
+        // by pool-adjacent-violators. The setter carries double weight because
+        // hers is the run on a clock — she has to beat the pass to the net —
+        // which is the same reason coaches stack toward the setter's side.
+        const STACK_GAP = 20; // closest two bunched markers can sit and still read as two
+        // The stack waits OFF the net — they need room to approach — which is
+        // also what gives the arrows somewhere to travel. Drawing the stack and
+        // the spots they're heading for on the same line at the net left the
+        // arrows shorter than the circles they joined.
+        const STACK_Y = 27;
+        const STACK_MIN_X = 15;
+        const STACK_MAX_X = 85;
+        const STACK_DEADBAND = 5; // sideways travel below this isn't a switch at all
+        const stackXs = (wants, weights) => {
+          const blocks = [];
+          wants.forEach((w, i) => {
+            blocks.push({ sum: (w - i * STACK_GAP) * weights[i], wt: weights[i], n: 1, start: i });
+            while (blocks.length > 1) {
+              const b = blocks[blocks.length - 1];
+              const a = blocks[blocks.length - 2];
+              if (a.sum / a.wt <= b.sum / b.wt) break;
+              blocks.pop();
+              blocks.pop();
+              blocks.push({ sum: a.sum + b.sum, wt: a.wt + b.wt, n: a.n + b.n, start: a.start });
+            }
+          });
+          const flat = [];
+          blocks.forEach((b) => {
+            for (let k = 0; k < b.n; k += 1) flat[b.start + k] = b.sum / b.wt;
+          });
+          const xs = flat.map((v, i) => v + i * STACK_GAP);
+          // Slide the whole stack back inside the court if the fit pushed it out.
+          let shift = 0;
+          if (xs[0] < STACK_MIN_X) shift = STACK_MIN_X - xs[0];
+          if (xs[xs.length - 1] + shift > STACK_MAX_X) shift = STACK_MAX_X - xs[xs.length - 1];
+          return xs.map((v) => v + shift);
+        };
+
+        // Front-row slots in rotational left-to-right order, keeping only the
+        // ones that are both occupied and actually switching somewhere.
+        const stackSlots = ["P4", "P3", "P2"].filter(
+          (pos) => layout.playerAt[pos] && layout.frontSwitch?.[pos]
+        );
+        const stackStart = {};
+        if (stackSlots.length) {
+          const xs = stackXs(
+            stackSlots.map((pos) => BASE_COORD[layout.frontSwitch[pos]].x),
+            stackSlots.map((pos) => (pos === layout.activeSetterPos ? 2 : 1))
+          );
+          stackSlots.forEach((pos, i) => {
+            stackStart[pos] = { x: xs[i], y: STACK_Y };
+          });
+        }
+
+        // Each marker is drawn where that player stands AT THE SERVE — which
+        // for a passer is already her spot in the receive pattern, and for a
+        // switching front-row player is her place in the stack. `moveTo` is
+        // where she goes once the ball is away, and is what the arrows show.
+        // Passers deliberately get no arrow: the receive line IS their
+        // alignment, not somewhere they travel to afterwards.
         const markers = positions.map((pos) => {
           const isLiberoSlot = pos === layout.backMBPos;
           const player = isLiberoSlot && layout.liberoPlayer ? layout.liberoPlayer : layout.playerAt[pos];
           const isPasser = layout.passerPositions.includes(pos);
           const isSetter = pos === layout.activeSetterPos;
           const isBackAttack = layout.backRowAttackPositions.includes(pos);
+          const switchTarget = !isPasser ? layout.frontSwitch?.[pos] : null;
           let coord = BASE_COORD[pos];
-          const switchTarget = layout.frontSwitch?.[pos];
+          let moveTo = null;
           if (isPasser) {
             const idx = passersSorted.indexOf(pos);
             coord = { x: RECEIVE_X[idx], y: RECEIVE_Y };
           } else if (switchTarget) {
-            coord = BASE_COORD[switchTarget];
+            coord = stackStart[pos] || BASE_COORD[pos];
+            moveTo = BASE_COORD[switchTarget];
           } else if (isSetter) {
-            coord = NET_TARGET;
+            moveTo = NET_TARGET;
           }
-          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, baseCoord: BASE_COORD[pos], isSwitch: !isPasser && !!switchTarget };
+          // A player already standing where she's going doesn't need an arrow
+          // pointing at her own feet. For a stacked switcher that's measured
+          // SIDEWAYS only, because every one of them shares the same step up to
+          // the net, so it's the across-court travel that says whether she is
+          // really switching or already home; she still takes part in the stack
+          // ordering above, or a neighbour could be placed straight through
+          // her. Anyone else is measured as a real distance — the 5-1 setter
+          // releases from the back row almost straight up the court, and an
+          // x-only test cancelled that move entirely.
+          const travel = switchTarget
+            ? Math.abs(moveTo ? moveTo.x - coord.x : 0)
+            : moveTo
+              ? Math.hypot(moveTo.x - coord.x, moveTo.y - coord.y)
+              : 0;
+          if (moveTo && player && travel < STACK_DEADBAND) {
+            coord = moveTo;
+            moveTo = null;
+          }
+          if (!player) moveTo = null;
+          return { pos, player, isLiberoSlot, isPasser, isSetter, isBackAttack, coord, moveTo, isSwitch: !!switchTarget };
         });
+
+        // Arrow geometry. The court box is taller than it is wide, so a y
+        // percent covers more pixels than an x percent — the arrowheads are
+        // built in that squared-up space and converted back, or they come out
+        // skewed. Both ends are trimmed so the shaft starts clear of the
+        // marker it leaves and stops short of the ring it points at.
+        const Y_PER_X = 1 / 0.82; // matches the container's aspectRatio
+        const MARKER_R = 8; // a 56px circle on a ~355px-wide court, in percent
+        const DEST_R = 6; // the smaller destination ring
+        const HEAD_LEN = 7;
+        const arrowGeom = (from, to) => {
+          const dx = to.x - from.x;
+          const dy = (to.y - from.y) * Y_PER_X;
+          const len = Math.hypot(dx, dy);
+          if (len < 4) return null;
+          const ux = dx / len;
+          const uy = dy / len;
+          // Both trims and the head are capped as a fraction of the trip, so a
+          // short slide still draws as a visible arrow instead of being eaten
+          // entirely by its own clearances.
+          const startAt = Math.min(MARKER_R, len * 0.3);
+          const endAt = len - Math.min(DEST_R, len * 0.18);
+          const head = Math.min(HEAD_LEN, (endAt - startAt) * 0.6);
+          const back = endAt - head;
+          const at = (t, perp = 0) => ({
+            x: from.x + ux * t - uy * perp,
+            y: (from.y * Y_PER_X + uy * t + ux * perp) / Y_PER_X,
+          });
+          const tip = at(endAt);
+          const l = at(back, -head * 0.45);
+          const r = at(back, head * 0.45);
+          return {
+            start: at(startAt),
+            end: at(back),
+            points: [tip, l, r].map((pt) => `${pt.x},${pt.y}`).join(" "),
+          };
+        };
 
         return (
           <div
@@ -2722,14 +2853,12 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.gold, display: "inline-block" }} />
-                  {system === "4-2" ? "Setter (switches to right front)" : "Setter (moves to net)"}
+                  Setter
                 </span>
-                {system === "4-2" ? (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.chalkDim, display: "inline-block" }} />
-                    Front-row switch
-                  </span>
-                ) : null}
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 14, height: 3, borderRadius: 2, background: COLORS.orange, display: "inline-block" }} />
+                  Moves after the serve
+                </span>
               </div>
 
               <div
@@ -2767,30 +2896,74 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                   Net
                 </div>
 
-                {/* Movement lines: every player whose switched spot differs from
-                    their rotational one, not just the setter — otherwise the
-                    middle and outside appear to teleport. */}
+                {/* Where each switching player ends up: a hollow ring with her
+                    number, so the destination is readable without a second
+                    diagram. Drawn under the arrows and the live markers. */}
                 {markers
-                  .filter((m) => m.player && (m.coord.x !== m.baseCoord.x || m.coord.y !== m.baseCoord.y))
+                  .filter((m) => m.moveTo)
+                  // A destination that somebody else is still standing on gets
+                  // no ring — the arrow already points at them, and that's the
+                  // true picture: she takes the spot over as they leave it.
+                  .filter((m) =>
+                    !markers.some(
+                      (o) => o !== m && o.player && Math.hypot(o.coord.x - m.moveTo.x, o.coord.y - m.moveTo.y) < 9
+                    )
+                  )
+                  .map((m) => (
+                    <div
+                      key={`dest-${m.pos}`}
+                      style={{
+                        position: "absolute",
+                        left: `${m.moveTo.x}%`,
+                        top: `${m.moveTo.y}%`,
+                        transform: "translate(-50%, -50%)",
+                        width: 40,
+                        height: 40,
+                        borderRadius: "50%",
+                        border: `2px dashed ${m.isSetter ? COLORS.gold : COLORS.chalkDim}`,
+                        opacity: 0.55,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontFamily: "'Oswald', sans-serif",
+                        fontSize: 13,
+                        color: m.isSetter ? COLORS.gold : COLORS.chalkDim,
+                      }}
+                    >
+                      #{jersey(m.player)}
+                    </div>
+                  ))}
+
+                {/* Movement arrows — solid and heavy, with a real arrowhead, so
+                    which way somebody is going reads at a glance from a phone
+                    held courtside. Two players swapping spots don't collide
+                    into one line the way they would along a single row: they
+                    leave from different places in the stack and arrive at
+                    different spots on the net, so the paths cross at an angle. */}
+                {markers
+                  .filter((m) => m.moveTo)
                   .map((m) => {
-                    // Two front-row players swapping spots trace the same
-                    // segment in opposite directions, which draws as one line
-                    // and reads as a single player moving. Nudge each off the
-                    // centre line by whichever way they're travelling — the
-                    // offset is far smaller than a marker's radius, so both
-                    // ends still meet their circles.
-                    const bow = m.isSwitch ? (m.coord.x > m.baseCoord.x ? 3.5 : -3.5) : 0;
+                    const g = arrowGeom(m.coord, m.moveTo);
+                    if (!g) return null;
+                    const color = m.isSetter ? COLORS.gold : COLORS.orange;
                     return (
-                      <svg key={`line-${m.pos}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                      <svg
+                        key={`arrow-${m.pos}`}
+                        viewBox="0 0 100 100"
+                        preserveAspectRatio="none"
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
+                      >
                         <line
-                          x1={`${m.baseCoord.x}%`}
-                          y1={`${m.baseCoord.y + bow}%`}
-                          x2={`${m.coord.x}%`}
-                          y2={`${m.coord.y + bow}%`}
-                          stroke={m.isSetter ? COLORS.gold : m.isPasser ? COLORS.blue : COLORS.chalkDim}
-                          strokeWidth="2"
-                          strokeDasharray="4 3"
+                          x1={g.start.x}
+                          y1={g.start.y}
+                          x2={g.end.x}
+                          y2={g.end.y}
+                          stroke={color}
+                          strokeWidth="4"
+                          strokeLinecap="round"
+                          vectorEffect="non-scaling-stroke"
                         />
+                        <polygon points={g.points} fill={color} />
                       </svg>
                     );
                   })}
@@ -2806,8 +2979,8 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
                         left: `${m.coord.x}%`,
                         top: `${m.coord.y}%`,
                         transform: "translate(-50%, -50%)",
-                        width: 62,
-                        height: 62,
+                        width: 56,
+                        height: 56,
                         borderRadius: "50%",
                         border: `2px solid ${borderColor}`,
                         background: bg,
@@ -2856,16 +3029,20 @@ function LineupScreen({ lineups, setLineups, activeLineupId, setActiveLineupId, 
               </div>
 
               <div style={{ fontSize: 10, color: COLORS.chalkDim, lineHeight: 1.5 }}>
+                Circles are where everyone stands at the moment of the serve.
+                Arrows show who moves once the ball is away, and the dashed ring
+                is where they finish.{" "}
                 {system === "4-2" ? (
                   <>
-                    Once the serve is away the front row switches (dashed lines): the
-                    setter to right front, the middle blocker to the middle, the
-                    outside to left front. The setter is front row here and doesn't
-                    pass — all three back-row players receive.
+                    The front row stacks: they only have to keep their left-to-right
+                    order{stackSlots.length > 1 ? ", so they bunch up near the net and release on contact" : ""} —
+                    setter to right front, middle to the middle, outside to left
+                    front. The setter is front row here and doesn't pass, so all
+                    three back-row players receive.
                   </>
                 ) : (
                   <>
-                    Setter releases to the net near position 2 after passing; dashed lines show each player's move into the pattern.{" "}
+                    The setter releases to the net near position 2 after passing.{" "}
                     {isAlternate
                       ? "Alternate pattern: the front-row Outside stays at the net, and the Opposite drops back to pass instead."
                       : "The back-row Outside can hit a pipe."}

@@ -685,42 +685,76 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     only marks who served the very first point of the set and is drawn at
     a fixed slot letter (P1 or P2) regardless of which rotation you're
     viewing — it's a historical/scoresheet marker, not a live indicator.
-- **The Serve-Receive sheet draws where players END UP, not where the
-  rotation puts them.** `deriveServeReceive` returns a `frontSwitch` map
-  (`rotational slot -> played slot`) alongside the passer/setter data, and
-  the sheet's renderer uses `BASE_COORD[frontSwitch[pos]]` for any marker
-  that has one. Rotational order only decides who is legally where at the
-  moment of contact; once the serve is away the front row slides to the
-  spots they actually play, and drawing only the rotational spots showed a
-  front row nobody ever stands in.
-  - **Populated for the 4-2 only**, which is what the coach reported:
-    setter to right front (P2), middle blocker to the middle (P3), outside
-    to left front (P4). 5-1 and 6-2 still get an empty map and render
-    exactly as before. If a coach reports those are wrong too, this is the
-    one place to extend — add another `if (system === ...)` branch; nothing
-    in the renderer is 4-2-specific.
-  - **Assignment is claim-based, and there's a fallback loop for untagged
-    players.** `assign(pos, target)` refuses a target another player already
-    claimed, and any front-row player the position tags didn't place (an
-    Opposite, a DS pushed up, a player with no `position` set) fills
-    whichever front spot is left. Without that, two markers end up at
-    identical coordinates and one is simply invisible underneath the other.
-  - **The dashed movement lines are drawn for every marker that moved**, not
-    just the setter (gold = setter, blue = passer, dim = front-row switch) —
-    otherwise the middle and outside appear to teleport. Two players
-    swapping spots trace the same segment in opposite directions, which
-    draws as a single line and reads as one player moving, so a switch line
-    is nudged off centre by `bow` (±3.5%, by travel direction). That offset
-    is far smaller than a marker's radius, so both ends still meet their
-    circles. Lines render BEFORE the markers so the circles paint on top.
-  - The caption and the legend both branch on `system === "4-2"`: in a 4-2
-    the setter is front row and never passes, so the 5-1/6-2 text ("Setter
-    releases to the net ... after passing") is simply wrong there.
-  - Verified by rendering the sheet in the harness at 390px and reading back
-    every marker's coordinates across all six rotations — setter at 84/14,
-    middle at 50/10, outside at 16/14 in each, with no two markers sharing a
-    position — plus screenshots of rotations 1 and 2 and of an unchanged
-    5-1. Per this file's standing rule for diagrams: don't trust the JSX.
+- **The Serve-Receive sheet draws where everyone STANDS AT THE SERVE, and
+  arrows to where they go after it.** Two separate fixes, both from the same
+  coach report ("the diagrams are a little confusing"), and the second one
+  undid half of the first — read both before changing this sheet again.
+  - **A marker is drawn at its at-contact position (`coord`), and `moveTo` is
+    where it goes once the ball is away.** That one rule decides everything on
+    the sheet. A passer gets no `moveTo` at all: the receive line *is* her
+    alignment, not somewhere she travels to afterwards, and the lines this
+    sheet used to draw from each passer's rotational zone implied a move that
+    never happens. The 5-1/6-2 setter's `moveTo` is `NET_TARGET` and her
+    `coord` is her rotational spot — she used to be drawn *at* the net, which
+    was exactly the error the coach reported for the 4-2.
+  - **`deriveServeReceive` returns a `frontSwitch` map** (`rotational slot ->
+    played slot`), populated for the **4-2 only**: setter to right front (P2),
+    middle blocker to the middle (P3), outside to left front (P4). That is the
+    "international"/advanced 4-2 the coach runs; the classic beginner 4-2 sets
+    from middle front instead, so if another team's sheet looks wrong, this is
+    the assumption to check first. 5-1 and 6-2 get an empty map. Assignment is
+    claim-based with a fallback loop, so a front-row player the position tags
+    don't place (an Opposite, a DS pushed up, no `position` set) still gets a
+    free spot instead of landing invisibly under someone else.
+  - **STACKING is the whole point of the second pass.** The overlap rule
+    (FIVB 7.4) is judged only at the instant of serve contact, and only against
+    your neighbours in your own row and the player directly behind you — so a
+    front-row player about to switch does NOT have to wait at her rotational
+    zone. She may stand as close to where she's heading as the left-to-right
+    order (4-3-2) allows. Drawing all three spread across their zones, which is
+    what this sheet did first, shows a front row that never exists: when all
+    three switch they bunch together at the net and release on contact.
+  - **The stack is solved, not hardcoded**: `stackXs` is a weighted isotonic
+    regression (pool-adjacent-violators) over "everyone wants to be at her
+    destination, subject to rotational order with a `STACK_GAP` between
+    neighbours", then shifted back inside the court. **The setter carries
+    double weight** because hers is the run on a clock — she has to beat the
+    pass to the net — which is also why coaches stack toward the setter's side.
+    Change the weight and every rotation's picture changes; it is not a tuning
+    knob to fiddle with casually.
+  - **The stack sits OFF the net (`STACK_Y = 27`) and the destinations are at
+    the net.** This is both true (a stacked front row needs room to approach)
+    and the thing that makes the drawing work: with the stack and the
+    destinations on one line at the net, the arrows came out shorter than the
+    circles they joined and were swallowed whole. Markers were also shrunk
+    62px -> 56px to fit three bunched circles at 390px.
+  - **Arrows are solid, 4px, with a real polygon arrowhead** — the coach asked
+    for "bold and obvious, not dashed lines". Each one's trims and head length
+    are capped as a *fraction* of the trip, or a short slide gets eaten
+    entirely by its own clearances (that bug shipped once in this session: a
+    13%-long move rendered as a 2.7% stub). The destination is a dashed ring
+    carrying the same jersey number, suppressed when another player is still
+    standing on that spot — the arrow pointing at her says it better.
+  - **The court box is taller than it is wide, so a y percent covers more
+    pixels than an x percent.** `arrowGeom` builds the head in squared-up space
+    (`Y_PER_X = 1 / 0.82`, matching the container's `aspectRatio`) and converts
+    back, or the heads come out skewed. The arrow SVGs use
+    `viewBox="0 0 100 100"` with `preserveAspectRatio="none"` and
+    `vectorEffect="non-scaling-stroke"` so the shaft keeps an even width.
+  - **The deadband that drops a pointless arrow is measured differently for
+    the two cases**, and conflating them is a real bug that shipped mid-session:
+    a stacked switcher is measured SIDEWAYS only (every one of them shares the
+    same step up to the net, so across-court travel is what says whether she's
+    switching), while anyone else is measured as a true distance. The 5-1
+    setter releases almost straight up the court, and the x-only test cancelled
+    her arrow entirely. She still takes part in the stack ordering even when
+    she isn't moving, or a neighbour can be placed straight through her.
+  - Verified in the harness at 390px across all six rotations, by assertion and
+    by eye (`pwcheck/sr42check.mjs`): six live markers with no two overlapping,
+    stack order preserved with gaps >= 15%, every front-row role either standing
+    at or ringed at its played spot, and an arrowhead for every mover — plus
+    screenshots of the 4-2 at rotations 1/2/3 and of the 5-1. Per this file's
+    standing rule for diagrams: don't trust the JSX.
 - **Substitution pairings** (`{ frontId, backId, isLibero, liberoServes }`)
   are bidirectional — either player could be the one actually placed on
   court, and `applySubPairings` has to check both directions (which one is
