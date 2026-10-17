@@ -8,6 +8,7 @@ import { registerSW } from "virtual:pwa-register";
 import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
 import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
+import { generateCodes, buildPublishedSet, entitlementsOf, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
 
 // NOTE: these are deliberately STATIC imports, even though jsPDF and
 // html2canvas are only used by Print and are a large share of the bundle.
@@ -39,7 +40,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.17d";
+const APP_VERSION = "2026.10.18a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -62,6 +63,9 @@ const APP_VERSION = "2026.10.17d";
 // Eval" link in Settings, carrying the current team code as a `?code=` deep
 // link so the coach doesn't have to retype it over there.
 const PLAYER_EVAL_URL = "https://player-eval-three.vercel.app";
+// The one URL every player uses, whatever team or organisation she's on — she
+// types her own code there. Set this once the player app has a deployment.
+const PLAYER_STATS_URL = "https://volley-bandit-stats.vercel.app";
 
 // Random Team Code — the "address" a team's whole dataset lives under in
 // Firestore. Avoids visually similar characters (0/O, 1/I/L) since it has
@@ -9436,6 +9440,13 @@ function SettingsSheet({
   assignUnassignedTo,
   assignReport,
   matches,
+  playerCodes,
+  playerAccessStyle,
+  issuePlayerCodes,
+  publishPlayerStats,
+  revokePlayerAccess,
+  publishReport,
+  entitlements,
   roster,
   mergePlayers,
   mergeReport,
@@ -9879,6 +9890,99 @@ function SettingsSheet({
                 onAssign={(matchId) => assignUnassignedTo(g, matchId)}
               />
             ))}
+          </>
+        )}
+
+        {!assistantMode && entitlements?.playerAccess && (
+          <>
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
+              Player Access
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10, lineHeight: 1.5 }}>
+              Players look up their own stats at <b>{PLAYER_STATS_URL.replace(/^https:\/\//, "")}</b> by
+              typing their code. Each code opens that player's numbers and the
+              team totals — never the roster, the schedule, or anyone else's
+              line. Nothing appears until you publish, so a half-finished match
+              stays private.
+            </div>
+
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, marginBottom: 6 }}>CODE STYLE</div>
+            {CODE_STYLES.map((style) => {
+              const on = playerAccessStyle === style;
+              const note = CODE_STYLE_NOTES[style];
+              return (
+                <button
+                  key={style}
+                  onClick={() => issuePlayerCodes(style)}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "9px 10px",
+                    marginBottom: 6,
+                    borderRadius: 8,
+                    border: `1.5px solid ${on ? COLORS.orange : COLORS.line}`,
+                    background: on ? COLORS.accentSoft : "transparent",
+                    color: COLORS.chalk,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{note.label}</div>
+                  <div style={{ fontSize: 10.5, color: COLORS.chalkDim, marginTop: 2, lineHeight: 1.4 }}>{note.detail}</div>
+                </button>
+              );
+            })}
+            {playerAccessStyle === "jersey" ? (
+              <div style={{ fontSize: 10.5, color: COLORS.gold, border: `1px solid ${COLORS.gold}`, background: COLORS.goldSoft, borderRadius: 8, padding: "8px 10px", marginBottom: 10, lineHeight: 1.45 }}>
+                Heads up: jersey + initials can be worked out from the roster, so
+                any player can open a team-mate's stats. Fine if you don't mind
+                the team seeing each other's numbers — use one of the other two
+                if you do.
+              </div>
+            ) : null}
+
+            {playerCodes.length > 0 && (
+              <div style={{ border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "6px 10px", marginBottom: 10 }}>
+                {playerCodes.map((c) => {
+                  const p = roster.find((r) => r.id === c.playerId);
+                  if (!p) return null;
+                  return (
+                    <div key={c.code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12 }}>
+                      <span style={{ color: COLORS.chalkDim }}>#{jerseyLabel(p)} {fullName(p)}</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 700, letterSpacing: 1 }}>{c.code}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {publishReport ? (
+              <div style={{ fontSize: 11, color: /^Could not/.test(publishReport) ? COLORS.red : COLORS.green, marginBottom: 8 }}>
+                {publishReport}
+              </div>
+            ) : null}
+
+            {actionBtn(publishPlayerStats, playerCodes.length ? "Publish Stats For Players" : "Create Codes & Publish", {
+              border: `1px solid ${COLORS.green}`,
+              background: COLORS.greenSoft,
+            })}
+            {playerCodes.length > 0 && (
+              <ConfirmButton
+                label="Revoke All Player Access"
+                confirmLabel="Tap again — every code stops working"
+                onConfirm={revokePlayerAccess}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  marginTop: 6,
+                  borderRadius: 8,
+                  border: `1.5px solid ${COLORS.red}`,
+                  background: "transparent",
+                  color: COLORS.chalk,
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+                armedStyle={{ color: COLORS.red }}
+              />
+            )}
           </>
         )}
 
@@ -10597,6 +10701,75 @@ function AppInner() {
         (group.points ? ` and ${group.points} point${group.points === 1 ? "" : "s"}` : "") +
         " to the match."
     );
+  };
+
+  // ─── PLAYER ACCESS ────────────────────────────────────────────────────────
+  // Publishing is an EXPLICIT action, never automatic. A half-finished match
+  // must not appear on a player's phone, and the coach is the one who knows
+  // when the numbers are worth showing.
+  //
+  // Codes live on the team doc (`playerCodes`) so the coach's own device can
+  // always list, re-show and revoke what it issued — a published document
+  // deliberately carries no way back to its team.
+  const playerCodes = mainDoc.playerCodes || [];
+  const playerAccessStyle = mainDoc.playerAccessStyle || "hybrid";
+  const entitlements = entitlementsOf(mainDoc);
+  const [publishReport, setPublishReport] = useState("");
+
+  const issuePlayerCodes = (style) => {
+    const next = generateCodes(roster, style, playerCodes);
+    setMainDoc((prev) => ({ ...prev, playerCodes: next, playerAccessStyle: style }));
+    return next;
+  };
+
+  const publishPlayerStats = async () => {
+    setPublishReport("");
+    try {
+      const codes = playerCodes.length ? playerCodes : issuePlayerCodes(playerAccessStyle);
+      const docs = buildPublishedSet({
+        roster,
+        codes,
+        teamName: mainDoc.teamName || "",
+        log,
+        matches,
+        statKeys: printStatKeys,
+      });
+      const entries = Object.entries(docs);
+      // Same chunked batching as every other bulk write here: Firestore caps
+      // a batch at 500 operations.
+      for (let i = 0; i < entries.length; i += WRITE_BATCH_LIMIT) {
+        const batch = writeBatch(db);
+        entries.slice(i, i + WRITE_BATCH_LIMIT).forEach(([code, data]) => {
+          batch.set(doc(db, "playerAccess", code), data);
+        });
+        await batch.commit();
+      }
+      setPublishReport(
+        `Published ${entries.length} player${entries.length === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}.`
+      );
+    } catch (err) {
+      setPublishReport(`Could not publish: ${err?.message || err}`);
+    }
+  };
+
+  // Revoking deletes the published documents AND drops the codes, so a code
+  // already handed out stops working rather than going quiet and coming back
+  // to life at the next publish.
+  const revokePlayerAccess = async () => {
+    setPublishReport("");
+    try {
+      for (let i = 0; i < playerCodes.length; i += WRITE_BATCH_LIMIT) {
+        const batch = writeBatch(db);
+        playerCodes.slice(i, i + WRITE_BATCH_LIMIT).forEach((c) => {
+          batch.delete(doc(db, "playerAccess", c.code));
+        });
+        await batch.commit();
+      }
+      setMainDoc((prev) => ({ ...prev, playerCodes: [] }));
+      setPublishReport("Player access revoked — every code has stopped working.");
+    } catch (err) {
+      setPublishReport(`Could not revoke: ${err?.message || err}`);
+    }
   };
 
   // Folds one roster entry into another and deletes the duplicate.
@@ -11640,6 +11813,13 @@ function AppInner() {
             assignUnassignedTo={assignUnassignedTo}
             assignReport={assignReport}
             matches={matches}
+            playerCodes={playerCodes}
+            playerAccessStyle={playerAccessStyle}
+            issuePlayerCodes={issuePlayerCodes}
+            publishPlayerStats={publishPlayerStats}
+            revokePlayerAccess={revokePlayerAccess}
+            publishReport={publishReport}
+            entitlements={entitlements}
             roster={roster}
             mergePlayers={mergePlayers}
             mergeReport={mergeReport}

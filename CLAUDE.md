@@ -1394,6 +1394,60 @@ If you build such a stub, make it enforce the real service's constraints
 (nested arrays, field-name rules, document size), not just its shape.
 Anything the stub doesn't enforce, you haven't actually tested.
 
+## Player Access, and the seams left for charging money
+
+The coach wants to sell this eventually — one-time fee or subscription, with
+Player Eval, player access and other extras as paid upgrades, and more than
+one organisation using it. Two decisions were made with that in mind, and
+they are cheap now and expensive later, so don't undo them casually.
+
+- **`entitlementsOf(mainDoc)` in `src/playerAccess.js` is the gate.** Nothing
+  is gated today — every feature reads as on — but each paid-upgrade candidate
+  reads through this one normalizer, so switching billing on is a change here
+  plus a field on the team doc, not a hunt through a 12,000-line file. It
+  treats a missing field as ON, never OFF: a team whose document predates
+  billing must not silently lose a feature it has been using, and a failed
+  read must never lock a coach out mid-match.
+- **Published player docs are a TOP-LEVEL collection, `playerAccess/{code}`,
+  not a subcollection of the team.** Three reasons and the third is the
+  commercial one: a player app can resolve a code with one read and no idea
+  which team she's on; security rules can make this path world-readable
+  without exposing any team data; and it can be billed, gated or revoked on
+  its own.
+- **A published document must never carry the team code.** The team code is
+  the writable key to everything, so it can't travel into something handed to
+  a teenager. Same for the roster, lineups, schedule and any other player's
+  line. A published doc holds one player's numbers, team TOTALS, and a short
+  name ("Joy B.") — not a full name, because this is the one artefact here a
+  stranger might hold and the players are minors. There is a Node test
+  asserting exactly this; keep it passing if you add a field.
+- **Codes are global names** because one URL serves every organisation, so
+  `generateCodes` is handed the codes already taken and never reissues one. It
+  also never re-rolls an existing code: reissuing would silently kill a code a
+  player already has, with no sign anything changed. Six characters, not four
+  — four is ~1M combinations, fine for one team, collision-prone across many.
+  Three styles, and the trade-off is surfaced in the UI rather than buried:
+  `jersey` ("32JB") is derivable from the roster by ANY TEAMMATE, which is
+  arithmetic, not a subtle risk; `hybrid` ("32JB-K4P") keeps it derivable for
+  the coach and unguessable for a team-mate, and is the default.
+- **Publishing is explicit, never automatic** — a half-finished match must not
+  appear on a player's phone. Revoking deletes the published documents AND
+  drops the codes, so a handed-out code stops working rather than going quiet
+  and reviving at the next publish.
+
+**STILL OPEN — the lock-down.** With no authentication anywhere (confirmed:
+neither app imports `firebase/auth`), Firestore rules CANNOT distinguish the
+coach from a player — both are anonymous clients — so there is no rule that
+says "coach writes, players read". The current rule is
+`allow read, write: if true`. The coach chose to stage it: build player
+access first against current rules, add sign-in as its own change afterwards.
+Until that second step, a published doc is technically writable by anyone who
+finds it, and the team's own data stays exactly as exposed as it has always
+been. Doing it properly means adding a coach sign-in (and the same to Player
+Eval, which writes `roster`) — and note the real cost that buys the risk: a
+sign-in introduces a new way to be locked out courtside, which nothing can do
+today.
+
 ## Open — deferred, not bugs to fix unasked
 
 Things a session has noticed, raised with the coach, and been asked to leave
