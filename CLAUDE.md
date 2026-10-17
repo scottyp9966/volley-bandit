@@ -1522,6 +1522,13 @@ unless the coach says so.
 
 ## Workflow note
 
+**When walking the coach through something outside the codebase** (a Vercel
+setup, a Firebase console change, anything done by hand in someone else's
+UI): give ONE step, then wait for him to report back. He asked for this
+directly — a numbered list of ten steps gets skimmed, and a wrong turn at
+step 3 isn't noticed until step 9. One step, confirm, next step.
+
+
 The user bounces between chat-based Claude sessions and Claude Code on the
 same repo — sometimes literally pasting files (like this one) from one
 into the other. Don't assume you're the only thing editing this codebase;
