@@ -9,6 +9,12 @@ import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
 import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
 import { generateCodes, buildPublishedSet, entitlementsOf, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
+import {
+  generateAssistantCode,
+  assistantAccessOf,
+  orderTabs,
+  ASSISTANT_TABS,
+} from "./teamAccess.js";
 
 // NOTE: these are deliberately STATIC imports, even though jsPDF and
 // html2canvas are only used by Print and are a large share of the bundle.
@@ -40,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.18b";
+const APP_VERSION = "2026.10.18c";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -1241,8 +1247,12 @@ function TopBar({ title, sub, onPrint, printing, teamLogo, onInfo, onSettings })
   );
 }
 
-function TabBar({ tab, setTab }) {
-  const tabs = [
+// `allowedTabs` is undefined on a coach device (every tab) and a list on an
+// assistant device, whose tabs the coach chooses — see teamAccess.js. Hiding
+// a tab is presentation only; what an assistant device may WRITE is enforced
+// by the guard on setMainDoc, which is the half that actually holds.
+function TabBar({ tab, setTab, allowedTabs }) {
+  const all = [
     { key: "roster", label: "Roster", icon: Users },
     { key: "lineup", label: "Lineup", icon: LayoutGrid },
     { key: "live", label: "Live", icon: Activity },
@@ -1250,6 +1260,7 @@ function TabBar({ tab, setTab }) {
     { key: "schedule", label: "Schedule", icon: Calendar },
     { key: "tourney", label: "Tourney", icon: Trophy },
   ];
+  const tabs = allowedTabs ? all.filter((t) => allowedTabs.includes(t.key)) : all;
   return (
     <div
       style={{
@@ -8731,7 +8742,7 @@ function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
         setCodeTaken(true);
         return;
       }
-      onLinked(code);
+      onLinked(code, "coach");
     } catch (err) {
       setCreateError("Couldn't check that code — check your connection and try again.");
     } finally {
@@ -8743,20 +8754,39 @@ function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
   // Join has to verify the team actually exists first — otherwise a typo'd
   // code would silently start a brand-new blank team instead of telling the
   // coach it couldn't find the one they meant to join.
+  //
+  // This one box takes EITHER code (see teamAccess.js). A team code links the
+  // device with full access; an assistant code links it to the same team with
+  // only what the coach allows. The code is the mode — there is no switch on
+  // the device afterwards, which is what lets a helper set their own device
+  // up without the coach ever touching it.
   const checkAndJoin = async () => {
-    const code = joinInput.trim();
+    const code = normalizeCode(joinInput);
     if (!code) return;
     setChecking(true);
     setJoinError("");
     const forceCleanupTimer = setTimeout(() => setChecking(false), 15000);
     try {
-      const ref = doc(db, "teams", code, "data", "main");
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setJoinError("No team found with that code — double-check it and try again.");
+      const snap = await getDoc(doc(db, "teams", code, "data", "main"));
+      if (snap.exists()) {
+        onLinked(code, "coach");
         return;
       }
-      onLinked(code);
+      // Not a team code. Before calling it a typo, see whether it's an
+      // assistant code — they're issued from a different alphabet-sharing
+      // pool and resolved through their own top-level collection.
+      const asst = await getDoc(doc(db, "assistantAccess", code));
+      const linkedTeam = asst.exists() ? asst.data()?.teamCode : null;
+      if (linkedTeam) {
+        // The team the code points at can be deleted or re-made; don't link a
+        // device to a team that isn't there.
+        const teamSnap = await getDoc(doc(db, "teams", linkedTeam, "data", "main"));
+        if (teamSnap.exists()) {
+          onLinked(linkedTeam, "assistant", code);
+          return;
+        }
+      }
+      setJoinError("No team found with that code — double-check it and try again.");
     } catch (err) {
       setJoinError("Couldn't check that code — check your connection and try again.");
     } finally {
@@ -9453,15 +9483,15 @@ function SettingsSheet({
   mergePlayers,
   mergeReport,
   assistantMode,
-  setAssistantMode,
   assistantCanScore,
-  setAssistantCanScore,
-  assistantPasscode,
-  setAssistantPasscode,
+  assistantAccess,
+  setAssistantAccess,
+  assistantCode,
+  issueAssistantCode,
+  revokeAssistantCode,
+  assistantCodeError,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
-  const [assistantExitCode, setAssistantExitCode] = useState("");
-  const [assistantExitError, setAssistantExitError] = useState(false);
   const [mergeKeepId, setMergeKeepId] = useState("");
   const [mergeDropId, setMergeDropId] = useState("");
   const [mergeAsLibero, setMergeAsLibero] = useState(true);
@@ -9528,6 +9558,20 @@ function SettingsSheet({
       {label}
     </button>
   );
+
+  // Same shape as actionBtn, for the ConfirmButtons that sit beside those
+  // buttons in this sheet's single column.
+  const confirmBtnStyle = {
+    width: "100%",
+    padding: "9px",
+    marginBottom: 8,
+    borderRadius: 8,
+    border: `1px solid ${COLORS.line}`,
+    background: "none",
+    color: COLORS.chalk,
+    fontSize: 12,
+    fontWeight: 700,
+  };
 
   return (
     <div
@@ -9657,117 +9701,142 @@ function SettingsSheet({
           Assistant Device
         </div>
         {assistantMode ? (
-          <>
-            <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.goldSoft, border: `1px solid ${COLORS.gold}`, borderRadius: 8, padding: "9px 10px", marginBottom: 10, lineHeight: 1.45 }}>
-              <b>This device is in assistant mode.</b> It can record stats
-              {assistantCanScore ? " and work the scoreboard" : ""} and nothing else —
-              the roster, lineups, schedule and match records are read-only here, and
-              this device can't end a match. Enter the{" "}
-              {(assistantPasscode || "").trim() ? "assistant passcode your coach set" : "app passcode"}{" "}
-              to turn it off.
-            </div>
-            <input
-              type="password"
-              inputMode="numeric"
-              placeholder={(assistantPasscode || "").trim() ? "Assistant passcode" : "App passcode"}
-              value={assistantExitCode}
-              onChange={(e) => {
-                setAssistantExitCode(e.target.value);
-                setAssistantExitError(false);
-              }}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                marginBottom: 8,
-                background: COLORS.bg,
-                border: `1.5px solid ${assistantExitError ? COLORS.red : COLORS.line}`,
-                borderRadius: 8,
-                color: COLORS.chalk,
-                fontSize: 13,
-              }}
-            />
-            {assistantExitError && (
-              <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 8 }}>Wrong passcode.</div>
-            )}
-            {actionBtn(() => {
-              const required = (assistantPasscode || "").trim() || APP_PASSCODE;
-              if (assistantExitCode === required) {
-                setAssistantMode(false);
-                setAssistantExitCode("");
-                setAssistantExitError(false);
-              } else {
-                setAssistantExitError(true);
-              }
-            }, "Turn Off Assistant Mode")}
-          </>
+          <div style={{ fontSize: 11, color: COLORS.chalk, background: COLORS.goldSoft, border: `1px solid ${COLORS.gold}`, borderRadius: 8, padding: "9px 10px", marginBottom: 10, lineHeight: 1.45 }}>
+            <b>This device joined with an assistant code.</b> It can record stats
+            {assistantCanScore ? " and work the scoreboard" : ""}, and the tabs your
+            coach allowed are read-only. There's nothing to switch off here — the
+            code this device joined with is what sets this. To give it full access,
+            join again with the team code.
+          </div>
         ) : (
           <>
             <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10, lineHeight: 1.45 }}>
               For a second device — an assistant coach or a parent keeping stats
-              during a match. It leaves stat entry working and makes everything
-              else read-only, so a stray tap can't delete a player, rewrite a
-              lineup or end the match. Set it on <b>their</b> device, not yours:
-              it's a per-device setting and never syncs. Turning it back off asks
-              for the app passcode.
+              during a match. Give them the <b>assistant code</b> instead of your
+              team code: they open the app, type it where they'd type a team code,
+              and their device lands on your team with only what you allow below.
+              You never have to touch their phone, and they can't reach the rest of
+              the app because they don't have the team code.
             </div>
-            <label style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase" }}>
-              Assistant passcode (optional)
-            </label>
-            <input
-              type="text"
-              placeholder="Leave blank to use the app passcode"
-              value={assistantPasscode || ""}
-              onChange={(e) => setAssistantPasscode(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                marginTop: 4,
-                marginBottom: 6,
-                background: COLORS.bg,
-                border: `1px solid ${COLORS.line}`,
-                borderRadius: 8,
-                color: COLORS.chalk,
-                fontSize: 13,
-              }}
-            />
-            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 12, lineHeight: 1.45 }}>
-              Set one and it becomes the <b>only</b> way out of assistant mode —
-              the app passcode stops working for it. That's the point: your helper
-              had to type the app passcode to open the app at all, so a gate that
-              also accepted it wouldn't be a gate. Don't share this one. It's
-              shown here and nowhere else, so you can always look it up, and it
-              never appears on a device that's in assistant mode.
+            {assistantCode ? (
+              <>
+                <div style={{ textAlign: "center", padding: "10px 8px", marginBottom: 8, background: COLORS.bg, border: `1px solid ${COLORS.line}`, borderRadius: 8 }}>
+                  <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                    Assistant code
+                  </div>
+                  <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 24, letterSpacing: 2, color: COLORS.orange }}>
+                    {assistantCode}
+                  </div>
+                </div>
+                {actionBtn(() => {
+                  try {
+                    navigator.clipboard?.writeText(assistantCode);
+                  } catch (err) {
+                    /* a refused clipboard is not worth an error banner — the
+                       code is on screen to read out either way */
+                  }
+                }, "Copy Code")}
+                {/* ConfirmButton takes `style`/`armedStyle`, not a colour —
+                    matching actionBtn's shape so these two sit in the column
+                    with every other button on this sheet. */}
+                <ConfirmButton
+                  onConfirm={issueAssistantCode}
+                  label="Replace Code"
+                  confirmLabel="Tap again — the old code stops working"
+                  style={confirmBtnStyle}
+                  armedStyle={{ border: `1px solid ${COLORS.gold}`, background: COLORS.goldSoft }}
+                />
+                <ConfirmButton
+                  onConfirm={revokeAssistantCode}
+                  label="Turn Off Assistant Access"
+                  confirmLabel="Tap again — signs every helper out"
+                  style={confirmBtnStyle}
+                  armedStyle={{ border: `1px solid ${COLORS.red}`, background: COLORS.redSoft }}
+                />
+                <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "4px 0 12px", lineHeight: 1.45 }}>
+                  Either one signs out every device that joined with this code, back
+                  to the join screen, next time it has signal. Replacing hands you a
+                  new code to give out; turning it off leaves none.
+                </div>
+              </>
+            ) : (
+              <>
+                {actionBtn(issueAssistantCode, "Create Assistant Code", {
+                  border: `1px solid ${COLORS.gold}`,
+                  background: COLORS.goldSoft,
+                })}
+                <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "4px 0 12px" }}>
+                  Nobody can join as an assistant until you create one.
+                </div>
+              </>
+            )}
+            {assistantCodeError && (
+              <div style={{ fontSize: 11, color: COLORS.red, marginBottom: 10 }}>{assistantCodeError}</div>
+            )}
+
+            <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+              What an assistant device can see
             </div>
+            {ASSISTANT_TABS.map((t) =>
+              checkboxRow(
+                t.locked || assistantAccess.tabs.includes(t.key),
+                () => {
+                  if (t.locked) return;
+                  const on = assistantAccess.tabs.includes(t.key);
+                  const next = on
+                    ? assistantAccess.tabs.filter((k) => k !== t.key)
+                    : [...assistantAccess.tabs, t.key];
+                  setAssistantAccess({ ...assistantAccess, tabs: next });
+                },
+                t.locked ? `${t.label} — always on` : t.label,
+                t.key
+              )
+            )}
             {checkboxRow(
               assistantCanScore,
-              () => setAssistantCanScore(!assistantCanScore),
-              "Assistant devices may also work the scoreboard"
+              () => setAssistantAccess({ ...assistantAccess, canScore: !assistantCanScore }),
+              "May also work the scoreboard",
+              "canScore"
             )}
-            <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "4px 0 10px" }}>
-              This one is team-wide, so you can set it from here and it applies to
-              whichever device is in assistant mode.
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "4px 0 12px", lineHeight: 1.45 }}>
+              A tab an assistant can see is still read-only — they can record stats,
+              and nothing else they do is written to the team. Change any of this
+              from here and their device follows, no re-joining needed.
             </div>
-            {actionBtn(() => setAssistantMode(true), "Put This Device In Assistant Mode", {
-              border: `1px solid ${COLORS.gold}`,
-              background: COLORS.goldSoft,
-            })}
+            <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 12, lineHeight: 1.45 }}>
+              Be clear-eyed about what this is: guard rails against a stray tap, not
+              a lock. Anyone who learns the team code has the whole app.
+            </div>
           </>
         )}
 
         <div style={{ fontSize: 10, color: COLORS.chalkDim, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 }}>
           Team
         </div>
+        {/* An assistant device must never display the team code — that code is
+            the whole app, and this screen is on a phone the coach doesn't
+            hold. It joined with an assistant code and shows that instead. */}
         <div style={{ fontSize: 11, color: COLORS.chalkDim, marginBottom: 10 }}>
-          Team code: <b style={{ color: COLORS.chalk }}>{teamCode}</b>
+          {assistantMode ? (
+            <>Joined as an assistant device.</>
+          ) : (
+            <>Team code: <b style={{ color: COLORS.chalk }}>{teamCode}</b></>
+          )}
         </div>
         {actionBtn(() => setUnlockedWith(""), "Lock This Device Now")}
-        {!assistantMode &&
-          actionBtn(() => {
-            if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
-              setTeamCode("");
-            }
-          }, "Switch Team")}
-        {PLAYER_EVAL_URL &&
+        {/* Available on an assistant device too, and it has to be: joining
+            again with the team code is the ONLY way to give this device full
+            access, now that there's no assistant switch to turn off. Safe
+            either way — it lands on the join screen, which needs a code. */}
+        {actionBtn(() => {
+          if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
+            setTeamCode("");
+          }
+        }, "Switch Team")}
+        {/* Not on an assistant device: this link carries the team code in a
+            URL, which would hand over the thing the assistant code exists to
+            withhold — and land them in Player Eval, which writes the roster. */}
+        {PLAYER_EVAL_URL && !assistantMode &&
           actionBtn(
             () => window.open(`${PLAYER_EVAL_URL}?code=${encodeURIComponent(teamCode)}`, "_blank", "noopener,noreferrer"),
             "Open Player Eval ↗",
@@ -10238,14 +10307,27 @@ function AppInner() {
   const [unlockedWith, setUnlockedWith] = usePersisted("vb-unlocked-with", "");
   const locked = APP_PASSCODE.trim() !== "" && unlockedWith !== APP_PASSCODE;
 
-  // Assistant mode: this DEVICE is a helper's, here to tap stats and
-  // nothing else. Per-device on purpose — it is a property of whose phone
-  // this is, not of the team, so switching it on for an assistant's phone
-  // must never reach the coach's. (What an assistant is *allowed* to do is
-  // the coach's call and does sync — see `assistantCanScore` below.)
-  // Turning it OFF asks for the app passcode, which a helper doesn't need
-  // in order to record stats.
-  const [assistantMode, setAssistantMode] = usePersisted("vb-assistant", false);
+  // How this DEVICE got into the team, and therefore what it can do:
+  // "coach" (joined with the team code) or "assistant" (joined with an
+  // assistant code). Per-device, because it is a property of which code was
+  // typed on this phone — what an assistant is *allowed* to do is the
+  // coach's call and does sync, see `assistantAccess` below.
+  //
+  // THE CODE IS THE MODE. There is deliberately no switch to turn assistant
+  // mode off: leaving it means joining again with the team code, which a
+  // helper was never given. See teamAccess.js for why the old
+  // tap-to-enable/passcode-to-leave arrangement was backwards.
+  const [accessMode, setAccessMode] = usePersisted("vb-access-mode", "");
+  // Devices that were put in assistant mode under the old per-device switch
+  // stay assistants until they join again — dropping them to full access on
+  // update is the one failure mode this must not have.
+  const [legacyAssistant] = usePersisted("vb-assistant", false);
+  // The assistant code this device joined with. Kept so that replacing the
+  // code on the coach's phone actually kicks this device out — without it,
+  // "revoke" would only stop NEW devices joining while every device already
+  // set up carried on, which is not what that word means.
+  const [accessCode, setAccessCode] = usePersisted("vb-access-code", "");
+  const assistantMode = accessMode ? accessMode === "assistant" : !!legacyAssistant;
   const [assistantNotice, setAssistantNotice] = useState("");
   useEffect(() => {
     if (!assistantNotice) return;
@@ -10312,7 +10394,8 @@ function AppInner() {
     // had to type APP_PASSCODE to get past the lock screen, so accepting it
     // here too would leave the gate opening to a code they already know.
     // Blank falls back to APP_PASSCODE, which is the pre-existing behavior.
-    assistantPasscode: "",
+    assistantCode: "",
+    assistantAccess: null,
   };
   const LOGS_DEFAULT = { log: [], pointLog: [] };
   const BRANDING_DEFAULT = { teamLogo: null };
@@ -10328,7 +10411,80 @@ function AppInner() {
   const [pointEntries, pointOps, pointsLoaded, pointsError] = useTeamCollection(teamCode, "points");
   const syncError = mainError || logsError || brandingError || statsError || pointsError;
 
-  const assistantCanScore = !!mainDoc.assistantCanScore;
+  // What an assistant device may do, set by the coach and synced with the
+  // team. `mainDoc.assistantCanScore` is the field this used to live in; a
+  // team that ticked it before keeps it rather than silently losing it.
+  const assistantAccess = assistantAccessOf(mainDoc);
+  const assistantCanScore = assistantAccess.canScore || !!mainDoc.assistantCanScore;
+  const allowedTabs = assistantMode ? orderTabs(assistantAccess.tabs) : null;
+  const allowedTabsKey = allowedTabs ? allowedTabs.join(",") : "";
+
+  // The open tab can stop being one this device is allowed — on first load
+  // (`tab` starts at "roster"), or when the coach unticks a tab from their
+  // own phone while the helper is standing on it.
+  useEffect(() => {
+    if (!allowedTabs || allowedTabs.includes(tab)) return;
+    setTab(allowedTabs[0] || "live");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedTabsKey, tab]);
+
+  // Replacing the assistant code evicts every device that joined with the
+  // old one, back to the join screen. Gated on `mainLoaded` because an
+  // unloaded document reads as the default (no code at all), and unlinking a
+  // helper's device mid-match because their phone hadn't synced yet would be
+  // far worse than the thing this is protecting against.
+  useEffect(() => {
+    if (accessMode !== "assistant" || !accessCode || !mainLoaded) return;
+    if ((mainDoc.assistantCode || "") === accessCode) return;
+    setAccessMode("");
+    setAccessCode("");
+    setTeamCode("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessMode, accessCode, mainLoaded, mainDoc.assistantCode]);
+
+  // Issue (or replace) the code a helper types in to join with limited
+  // access. Replacing deletes the old one first, so a code already handed
+  // out stops working rather than going quiet and reviving later — same rule
+  // as revoking player access.
+  const [assistantCodeError, setAssistantCodeError] = useState("");
+  const issueAssistantCode = async () => {
+    setAssistantCodeError("");
+    try {
+      const previous = mainDoc.assistantCode || "";
+      let next = "";
+      // A code is a global name — it has to resolve to a team with nothing
+      // else to go on — so don't hand out one another team already holds.
+      for (let i = 0; i < 20 && !next; i += 1) {
+        const candidate = generateAssistantCode();
+        const taken = await getDoc(doc(db, "assistantAccess", candidate));
+        const isTeam = await getDoc(doc(db, "teams", candidate, "data", "main"));
+        if (!taken.exists() && !isTeam.exists()) next = candidate;
+      }
+      if (!next) {
+        setAssistantCodeError("Couldn't find a free code — try again.");
+        return;
+      }
+      await setDoc(doc(db, "assistantAccess", next), {
+        teamCode,
+        createdAt: Date.now(),
+      });
+      if (previous) await deleteDoc(doc(db, "assistantAccess", previous));
+      setMainDoc((prev) => ({ ...prev, assistantCode: next }));
+    } catch (err) {
+      setAssistantCodeError(`Couldn't create a code: ${err?.message || err}`);
+    }
+  };
+
+  const revokeAssistantCode = async () => {
+    setAssistantCodeError("");
+    try {
+      const previous = mainDoc.assistantCode || "";
+      if (previous) await deleteDoc(doc(db, "assistantAccess", previous));
+      setMainDoc((prev) => ({ ...prev, assistantCode: "" }));
+    } catch (err) {
+      setAssistantCodeError(`Couldn't revoke: ${err?.message || err}`);
+    }
+  };
 
   // THE safeguard for a second device taking stats during a match.
   //
@@ -10362,7 +10518,7 @@ function AppInner() {
       setAssistantNotice(
         blocked.includes("score")
           ? "This device can record stats but not the score — ask the coach to allow it in Settings."
-          : "Assistant mode: that change wasn't saved. Only stat entry is enabled on this device."
+          : "This device joined as an assistant — that change wasn't saved. It can record stats, and read the rest."
       );
     }
     if (kept.length === 0) return;
@@ -11376,7 +11532,11 @@ function AppInner() {
     }
     return (
       <TeamGate
-        onLinked={setTeamCode}
+        onLinked={(code, mode, typedCode) => {
+          setAccessMode(mode || "coach");
+          setAccessCode(mode === "assistant" ? typedCode || "" : "");
+          setTeamCode(code);
+        }}
         initialJoinCode={deepLink.status === "failed" ? deepLink.code : undefined}
         initialJoinError={deepLink.status === "failed" ? deepLink.error || "No team found with that code — double-check it and try again." : undefined}
       />
@@ -11826,11 +11986,13 @@ function AppInner() {
             mergePlayers={mergePlayers}
             mergeReport={mergeReport}
             assistantMode={assistantMode}
-            setAssistantMode={setAssistantMode}
             assistantCanScore={assistantCanScore}
-            setAssistantCanScore={fieldSetter(setMainDoc, "assistantCanScore")}
-            assistantPasscode={mainDoc.assistantPasscode}
-            setAssistantPasscode={fieldSetter(setMainDoc, "assistantPasscode")}
+            assistantAccess={assistantAccess}
+            assistantCode={mainDoc.assistantCode}
+            setAssistantAccess={fieldSetter(setMainDoc, "assistantAccess")}
+            issueAssistantCode={issueAssistantCode}
+            revokeAssistantCode={revokeAssistantCode}
+            assistantCodeError={assistantCodeError}
           />
         )}
         {tab === "roster" && (
@@ -11944,7 +12106,7 @@ function AppInner() {
             onReadyChange={setTourneyReady}
           />
         )}
-        <TabBar tab={tab} setTab={setTab} />
+        <TabBar tab={tab} setTab={setTab} allowedTabs={allowedTabs} />
       </PhoneFrame>
     </div>
   );

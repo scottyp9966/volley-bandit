@@ -595,65 +595,82 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   the column can hold beside a 46px stepper at 390px wide; if you enlarge
   the steppers again, re-check that width on a screenshot rather than
   assuming.
-- **Assistant mode is a WRITE GUARD first and hidden buttons second.**
-  For a second device — an assistant coach or a parent keeping stats during
-  a match. Two separate settings, and the split matters:
-  - `vb-assistant` (localStorage, per device, like `vb-live-simple`) is
-    whether THIS device is a helper's. It must never be team data: syncing
-    it would lock the coach's own phone the moment they set up an
-    assistant's. Turning it off asks for a passcode — see
-    `assistantPasscode` two bullets down for which one, and why "the app
-    passcode" was the wrong answer.
-  - `mainDoc.assistantCanScore` (team data) is whether assistant devices
-    may also work the scoreboard. That's the coach's policy, so it syncs —
-    they set it from their own phone rather than borrowing the helper's.
-  - `mainDoc.assistantPasscode` (team data, coach-set, optional) is the code
-    that leaves assistant mode, and when it's set it **replaces**
-    `APP_PASSCODE` for that check rather than sitting alongside it. That
-    substitution is the whole point and shouldn't be softened into an
-    "either code works" fallback: a helper running the app on their own
-    phone had to type `APP_PASSCODE` to get past the lock screen, so a gate
-    that still accepted it would open to a code they already know. Blank
-    falls back to `APP_PASSCODE`. No lockout risk — the coach can read it
-    back in their own Settings any time — and the field is inside the
-    `!assistantMode` branch, so it never renders on a device that's in
-    assistant mode, while the write guard stops that device changing it.
-    It does sync in the team doc, so it's readable to someone who opens
-    devtools; like everything here it stops mis-taps, not people.
-  - **`setMainDoc` is wrapped in `AppInner` when assistant mode is on**, and
-    filters every write down to `ASSISTANT_WRITABLE` (`statsView`, plus
-    `score` when allowed). This is the part that actually holds. Hiding
-    buttons is only as good as one session's memory of every control in a
-    10,000-line file, and a later session adding a new edit control will
-    not have heard of assistant mode — the guard catches it anyway. If you
-    add a field a helper legitimately needs to write, add it to that list;
-    don't reach for `setMainDocRaw`.
-  - `next` is computed OUTSIDE the `setMainDocRaw` updater on purpose, so
-    the `setAssistantNotice` call isn't the "setState inside a setState
-    updater" bug documented above.
-  - **`snapshotLineupForMatch` deliberately goes around the guard**
-    (`setMatchesUnguarded`). It's purely additive, first-write-wins, and is
-    triggered by recording a stat — which is the whole point of the device.
-    Blocking it would silently cost a match its record of who played
-    whenever the helper is the one taking stats.
-  - `setPointLog` follows the score policy rather than the stat-entry rule,
-    since the point log is the scoreboard's record.
-  - The stat collections are NOT guarded — writing them is what an assistant
-    device is for.
-  - UI: the score steppers dim but still fire, so the guard's notice
-    explains the refusal; a dimmed control that does nothing at all is the
-    "dead tap" this app has been bitten by before. Everything else
-    destructive is hidden rather than disabled (End Match, box-score Edit,
-    Add/Edit/Delete on Roster, Schedule and Lineup, Set Active, advance
-    rotation, start next set, Restore, Merge, Switch Team, Recover).
-  - Verified in the harness: an assistant device records a stat fine,
-    is refused the score with a visible reason, and leaves roster, matches,
-    lineup slots and the active match byte-identical; the passcode gate
-    rejects a wrong code and accepts the right one; and with
-    `assistantCanScore` on, the score and its point document both land while
-    End Match and the set advance stay gone.
-  - Be honest about what it is: guard rails against mis-taps, not access
-    control. Anyone with the team code and the passcode can switch it off.
+- **An assistant device is one that joined with an ASSISTANT CODE, not one
+  with a switch flipped on it.** `src/teamAccess.js` holds the pure part. The
+  join box takes either code: a team code links the device with full access,
+  an assistant code (`assistantAccess/{code}` -> `{ teamCode }`, a top-level
+  collection like `playerAccess`) links it to the same team with only what the
+  coach allows. **The code IS the mode** — there is deliberately no "turn
+  assistant mode off" anywhere.
+  - **This replaced a design that was backwards in two ways**, and the reasons
+    are worth keeping: the coach had to physically take the helper's device
+    (usually the team's tablet, handed to whoever is free) and tap a switch on
+    it, and the way OUT was a passcode while the way IN was a tap. Restricting
+    yourself needs no permission; un-restricting yourself is the thing worth
+    gating. And the old `assistantPasscode` couldn't be the app passcode,
+    because the helper had to type that just to open the app — a whole
+    bullet's worth of reasoning that evaporates once the code is the mode.
+    `mainDoc.assistantPasscode` is now dead data; nothing reads it.
+  - **`vb-access-mode` ("coach" | "assistant") and `vb-access-code` are
+    per-device**, set by `TeamGate`'s `onLinked(teamCode, mode, typedCode)`.
+    `vb-assistant` (the old switch) is still read as a fallback when
+    `vb-access-mode` is empty, so a device someone put in assistant mode under
+    the old build stays limited instead of silently gaining full access on
+    update. That fallback is the one thing here that must not be dropped.
+  - **Replacing or revoking the code evicts devices that joined with it.** An
+    effect compares `vb-access-code` against `mainDoc.assistantCode` and
+    unlinks on a mismatch — without it "revoke" would only stop NEW devices
+    joining while every device already set up carried on, which is not what
+    that word means. **It is gated on `mainLoaded`**: an unloaded document
+    reads as the default (no code at all), and unlinking a helper mid-match
+    because their phone hadn't synced yet is far worse than what this guards.
+  - **The coach chooses which TABS an assistant sees** (`mainDoc.assistantAccess
+    = { tabs, canScore }`, normalized by `assistantAccessOf`, which treats a
+    missing field as the default pair and a present-but-empty list as the
+    coach's actual choice). Live is not removable — a device with no Live tab
+    has nothing to do. `TabBar` takes `allowedTabs`; an effect snaps the open
+    tab back when it stops being allowed, which also covers first load, since
+    `tab` starts at "roster".
+  - **The write guard is unchanged and is still the half that actually holds.**
+    `setMainDoc` filters an assistant device's writes down to
+    `ASSISTANT_WRITABLE` (`statsView`, plus `score` when allowed); hiding tabs
+    is presentation. A visible tab is still read-only.
+  - **Nothing on an assistant device may show or carry the team code.** The
+    Settings "Team code:" line reads "Joined as an assistant device" instead,
+    and the Player Eval link is hidden there — it puts the team code in a URL,
+    and Player Eval writes the roster. If you add anything else that renders
+    or links `teamCode`, it needs the same treatment; that code is the whole
+    app.
+  - **"Switch Team" IS available on an assistant device**, and has to be:
+    joining again with the team code is the only way to give that device full
+    access now that there's no switch to turn off. It lands on the join
+    screen, which needs a code, so it gives nothing away.
+  - The score steppers dim but still fire, so the guard's notice explains the
+    refusal — a dimmed control that does nothing at all is the "dead tap" this
+    app has been bitten by before. `ScoreCounter` takes `disabled` as an
+    opacity hint only and never sets the DOM attribute; keep it that way.
+  - `snapshotLineupForMatch` still goes around the guard
+    (`setMatchesUnguarded`): purely additive, first-write-wins, triggered by
+    recording a stat, which is the whole point of the device.
+  - Verified in the harness (`pwcheck/assistant.mjs`): a coach issues a code
+    and `assistantAccess/{code}` points at the team; a second device joins by
+    typing it in lowercase and comes up limited to the allowed tabs, on Live
+    rather than Roster; that device shows no team code, no Player Eval link
+    and no code controls, still records a stat, and is refused the score with
+    a visible reason; replacing the code signs it out to the join screen; a
+    device on the old `vb-assistant` switch stays limited and is NOT evicted;
+    a wrong code still reports a wrong code.
+  - Two harness traps found doing this, both worth not rediscovering: a
+    `position: fixed` element (the assistant notice banner) has **no
+    `offsetParent`**, so an "is it visible" helper written that way reports it
+    as absent — measure `getBoundingClientRect()` instead; and the stub seeds
+    documents per page, so a seed that assigns `teams/X/data/main` wholesale
+    **replaces** the roster, lineups and schedule, and the app then renders an
+    empty team that looks like a bug in the app. The stub merges per path now.
+  - Still honest about what it is: guard rails against mis-taps, not access
+    control. `assistantAccess/{code}` has to hold the team code or the code
+    couldn't resolve to a team, so someone who opens devtools on the helper's
+    device can recover it. Real sign-in is the fix, and it's its own project.
 - **Export has a matching Restore** (`restoreFromBackup`, Settings). A
   backup nobody can reinstate isn't a backup, and for a long time the
   export was a file you could read but never restore. It writes whichever
