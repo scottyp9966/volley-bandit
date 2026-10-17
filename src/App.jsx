@@ -40,7 +40,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.18a";
+const APP_VERSION = "2026.10.18b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -64,8 +64,10 @@ const APP_VERSION = "2026.10.18a";
 // link so the coach doesn't have to retype it over there.
 const PLAYER_EVAL_URL = "https://player-eval-three.vercel.app";
 // The one URL every player uses, whatever team or organisation she's on — she
-// types her own code there. Set this once the player app has a deployment.
-const PLAYER_STATS_URL = "https://volley-bandit-stats.vercel.app";
+// types her own code there. Live: its own Vercel project, root directory
+// `player-stats`. "my-stats" rather than "stats" on purpose — it's one
+// player's own card, not the team's numbers.
+const PLAYER_STATS_URL = "https://volley-bandit-my-stats.vercel.app";
 
 // Random Team Code — the "address" a team's whole dataset lives under in
 // Firestore. Avoids visually similar characters (0/O, 1/I/L) since it has

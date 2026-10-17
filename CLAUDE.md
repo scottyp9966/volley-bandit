@@ -1477,11 +1477,13 @@ from this repo's `src/`, same as Player Eval.
   second. The dim line under *By match* appears only when the two differ.
   Don't "fix" it by dropping unattached stats from the season total; that
   would make her card disagree with the coach's own screen instead.
-- `PLAYER_STATS_URL` in `src/App.jsx` is still the placeholder
-  `volley-bandit-stats.vercel.app` — **there is no deployment yet.** The
-  coach creates the Vercel project (this environment has no `vercel` CLI and
-  no token); update that constant with the real URL afterwards, or Settings
-  points players nowhere.
+- **Live at `volley-bandit-my-stats.vercel.app`** (`PLAYER_STATS_URL` in
+  `src/App.jsx`), its own Vercel project, root directory `player-stats`,
+  created by the coach — this environment has no `vercel` CLI and no token,
+  and cannot even reach the deployed host to check it (egress policy), so
+  anything about what is actually live has to come from him. "my-stats"
+  rather than "stats" is deliberate: it is one player's own card, not the
+  team's numbers.
 - Verified in a browser harness (`pwcheck/playerstats.mjs`) against documents
   built by the REAL `buildPublishedSet`, not hand-written fixtures: wrong
   code, lowercase hyphen-less code, season-before-matches ordering, per-match
