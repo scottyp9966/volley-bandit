@@ -1448,6 +1448,53 @@ Eval, which writes `roster`) — and note the real cost that buys the risk: a
 sign-in introduces a new way to be locked out courtside, which nothing can do
 today.
 
+## The player-facing app (`player-stats/`)
+
+`player-stats/` is a third Vite + React app in this repo — the only one
+players themselves open. One URL for everybody; a player types the code her
+coach issued and sees her season totals first, then the same numbers match by
+match, with team totals in a column beside her own. Its own Vercel project
+(root directory `player-stats`), same Firebase project as the other two, its
+own copies of the palette and the stat labels — a separate app can't import
+from this repo's `src/`, same as Player Eval.
+
+- **It reads exactly one document, `playerAccess/{code}`, and writes
+  nothing.** It never touches `teams/{code}/…`. If you add a read here, keep
+  it inside that one document — the published shape is built and documented
+  in `src/playerAccess.js`, and the Node test asserting what must never be in
+  it is the thing to keep passing.
+- **`codeCandidates()` tries the typed code and, if it has no hyphen, the
+  same characters WITH one inserted before the last three.** A `hybrid` code
+  (`32JB-K4P`) is the one a player retypes from memory, and the hyphen is
+  what she leaves out; without this, the right code typed plainly reads as
+  wrong. Input is also folded to uppercase, since codes are issued uppercase.
+- **The season tally and the per-match list legitimately disagree**, and the
+  app says so rather than hiding it. `season` counts every stat recorded
+  against her (same as the coach's Season to Date), while `matches[]` can
+  only hold matches that still exist on the schedule and that the stats were
+  actually attached to — so stats tapped with no active match (see
+  "Stats recorded with NO match selected") are in the first and not the
+  second. The dim line under *By match* appears only when the two differ.
+  Don't "fix" it by dropping unattached stats from the season total; that
+  would make her card disagree with the coach's own screen instead.
+- `PLAYER_STATS_URL` in `src/App.jsx` is still the placeholder
+  `volley-bandit-stats.vercel.app` — **there is no deployment yet.** The
+  coach creates the Vercel project (this environment has no `vercel` CLI and
+  no token); update that constant with the real URL afterwards, or Settings
+  points players nowhere.
+- Verified in a browser harness (`pwcheck/playerstats.mjs`) against documents
+  built by the REAL `buildPublishedSet`, not hand-written fixtures: wrong
+  code, lowercase hyphen-less code, season-before-matches ordering, per-match
+  rows for only the matches with her stats, the local-date rendering (a match
+  on the 22nd must not read as the 21st), the remembered-code path, the
+  `?code=` deep link and its stripping from the URL, a revoked code, a player
+  with no last name, and an unreachable read reporting a network problem
+  rather than "wrong code". The harness stubs `firebase/app` and
+  `firebase/firestore` with one module so the app's real `firebase.js` runs
+  unchanged; its Vite config has to live in `player-stats/` (Vite resolves
+  plugins relative to the config file), named `vite.harness.*.tmp.js` so it
+  stays gitignored.
+
 ## Open — deferred, not bugs to fix unasked
 
 Things a session has noticed, raised with the coach, and been asked to leave

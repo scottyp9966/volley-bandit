@@ -177,3 +177,19 @@ recommendations). It's its own standalone app, but shares this app's
 Firebase project and team code, so entering the same code there picks up
 this app's roster (and, for its Recommend tab, this app's active lineup)
 live — see `player-eval/README.md` for details.
+
+## My Volleyball Stats (player-facing companion app)
+
+`player-stats/` is a third Vite + React app in this repo, and the only one
+players themselves use: one URL for everybody, where a player types the code
+her coach gave her (Settings → Player Access) and sees her own season stats
+first, then the same numbers match by match, with the team's totals beside
+her own.
+
+It reads exactly one document — `playerAccess/{code}`, a top-level collection
+the coach's app writes on Publish — and never touches `teams/{code}/…`. A
+published document deliberately carries no team code, roster, lineups or
+other player's line, and a short name ("Joy B.") rather than a full one.
+Deploy it as its own Vercel project with root directory `player-stats`, then
+point `PLAYER_STATS_URL` in `src/App.jsx` at the deployment. See
+`player-stats/README.md`.
