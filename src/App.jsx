@@ -39,7 +39,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.17c";
+const APP_VERSION = "2026.10.17d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -4913,14 +4913,28 @@ function LiveScreen({
             disabled={!currentPlayerId}
             onClick={() => recordStat(s.key)}
             style={{
-              padding: "12px 4px",
+              // Bigger type in the same box, which is what a coach glancing
+              // down mid-rally actually needs. The size is measured, not
+              // guessed: at the narrowest phone that matters (375px) each
+              // button has 100px of text room once the side padding drops to
+              // 2px, and the longest label ("Service Att.", 91.8px at 16px
+              // bold) clears it by 8px — with the webfont blocked, too, which
+              // is the normal offline state in a gym. 17px fits a 390px screen
+              // but leaves barely 3px, which is not enough to trust across
+              // devices. Vertical padding comes down to hold the button at the
+              // same 40px it has always been.
+              padding: "9px 2px",
               borderRadius: 10,
               border: `1.5px solid ${COLORS[s.colorKey]}`,
               background: `${COLORS[s.colorKey]}${COLORS.tintHex}`,
               color: COLORS.chalk,
-              fontSize: 11,
+              fontSize: 16,
               fontWeight: 700,
               textAlign: "center",
+              // The block must not grow, and a wrapped label is the only thing
+              // that would make it. nowrap makes that impossible regardless of
+              // font metrics on a device we haven't measured.
+              whiteSpace: "nowrap",
               opacity: currentPlayerId ? 1 : 0.4,
               cursor: currentPlayerId ? "pointer" : "not-allowed",
             }}

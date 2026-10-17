@@ -1152,6 +1152,19 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   **nothing in the app ever reads**, so Simple mode writes `slot: null`
   with no downstream effect — box score, season stats and Player Eval all
   key off `playerId`/`matchId`/`setNumber`.
+- **The Live screen's stat buttons are 16px in a 40px block, and the size was
+  measured rather than chosen.** The coach asked for bigger type without bigger
+  blocks. At the narrowest phone that matters (375px) each button has 100px of
+  text room once the side padding is 2px, and the longest label
+  ("Service Att." — "Passing Err" is a close second, so shortening one wouldn't
+  buy much) needs 91.8px at 16px bold: an 8px margin. 17px fits a 390px screen
+  with 3px to spare, which is not enough to trust on a device nobody measured.
+  Checked with the webfont BLOCKED too, since uncached Google Fonts is the
+  normal offline state in a gym. Vertical padding dropped 12px -> 9px to hold
+  the block at the 40px it always was, and `whiteSpace: nowrap` makes it
+  impossible for a wrapped label to grow the block on some font stack we
+  haven't seen. Verified at 375/390/414px, both Simple and Full mode, with and
+  without the webfont: every block still 40px, nothing clipped.
 - **Two separate stat lists**, both team data in `mainDoc`, edited through
   one Settings section ("Stats") with a Track/Print toggle:
   - `trackStatKeys` → which stat buttons appear on the Live screen (both
