@@ -667,6 +667,24 @@ non-obvious things that look like they could be "simplified" but are load-bearin
     documents per page, so a seed that assigns `teams/X/data/main` wholesale
     **replaces** the roster, lineups and schedule, and the app then renders an
     empty team that looks like a bug in the app. The stub merges per path now.
+  - **Two holes an audit found, neither of them in use** (2026-10-18), both
+    the same shape — a control nobody thought of as an exposure because it
+    only READS:
+    - **Export All Data was not gated.** Restore was, Export wasn't, and the
+      backup file carries the TEAM CODE (in the JSON and in the filename),
+      every player's stats access code, the assistant code and the whole
+      roster. A device that can read everything can also save everything;
+      read-only tabs were never the protection. Gated now, and the harness
+      asserts both Export and Restore are absent.
+    - **A `?code=` deep link didn't clear the device's access mode.** That
+      path sets the team code directly and never goes through
+      `TeamGate.onLinked`, so a phone that used to be an assistant, was
+      unlinked, and then joined by link came up LIMITED while holding the
+      team code — silently defeating the one documented way to hand a device
+      full access. The deep-link join now marks the device "coach", and
+      "Switch Team" clears the mode as well as the team.
+    The lesson worth keeping: when auditing this, don't only ask what a
+    device can CHANGE. Ask what it can carry away.
   - Still honest about what it is: guard rails against mis-taps, not access
     control. `assistantAccess/{code}` has to hold the team code or the code
     couldn't resolve to a team, so someone who opens devtools on the helper's
@@ -1410,6 +1428,30 @@ so a change that broke every write in production passed every test here.
 If you build such a stub, make it enforce the real service's constraints
 (nested arrays, field-name rules, document size), not just its shape.
 Anything the stub doesn't enforce, you haven't actually tested.
+
+**An audit pass is worth running after a burst of feature work**, and the
+first one (2026-10-18, after player access, `player-stats/` and the assistant
+rework) is the template. What it covered, in the order that found things:
+
+- **Exposure first, since that's what was new.** `nodecheck/exposure.mjs`
+  checks a published player document against an ALLOWLIST of keys at every
+  depth, rather than asserting the absence of fields someone thought of —
+  that inversion is the point, because the first test can only catch what its
+  author imagined. It also sweeps for values that must never appear at all
+  (the team code, a full last name, a phone number, another player's code,
+  the app passcode) and asserts a benched player's card leaks no fixture
+  list. Clean.
+- **The UI surface, by grepping every use of `teamCode` above the component
+  layer** and asking which are reachable on an assistant device. That is what
+  turned up Export — not a test, a grep.
+- **Mechanical: `no-undef` over all three apps, every harness script
+  re-run, and the data-shape fuzz sweep** (`pwcheck/fuzzshapes.mjs`, 15
+  malformed shapes of the five fields added since the last sweep ×
+  coach/assistant, asserting no crash and no `ErrorBoundary`). All clean,
+  which is the useful half of a result like this.
+- Watch for the harness scripts drifting apart on PORTS (some point at 5185,
+  the newer ones at 5188) — run two dev servers from the one config rather
+  than editing the scripts.
 
 ## Player Access, and the seams left for charging money
 

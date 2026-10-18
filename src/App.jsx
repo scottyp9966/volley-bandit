@@ -46,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.18c";
+const APP_VERSION = "2026.10.18d";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -9464,6 +9464,7 @@ function SettingsSheet({
   setTeamCode,
   setUnlockedWith,
   exportAllData,
+  onUnlinkDevice,
   restoreFromBackup,
   restoreReport,
   orphanedMatches,
@@ -9830,7 +9831,7 @@ function SettingsSheet({
             either way — it lands on the join screen, which needs a code. */}
         {actionBtn(() => {
           if (window.confirm("Unlink this device from its current team? You'll be asked to create or join a team again.")) {
-            setTeamCode("");
+            onUnlinkDevice();
           }
         }, "Switch Team")}
         {/* Not on an assistant device: this link carries the team code in a
@@ -9842,10 +9843,19 @@ function SettingsSheet({
             "Open Player Eval ↗",
             { border: `1px solid ${COLORS.orange}`, background: COLORS.accentSoft }
           )}
-        {actionBtn(exportAllData, "Export All Data (Backup)", {
-          border: `1px solid ${COLORS.blue}`,
-          background: COLORS.blueSoft,
-        })}
+        {/* NOT on an assistant device, and this is the one that matters most
+            on this screen. The backup is the whole team in a file a helper
+            could keep: the TEAM CODE (in the JSON and in the filename), every
+            player's stats access code, the assistant code, the roster, the
+            lineups, the lot. Read-only tabs were never the point — a device
+            that can read everything can also save everything. Restore was
+            already gated; Export was not, which was the gap.
+            Found in the audit on 2026-10-18, not by anyone using it. */}
+        {!assistantMode &&
+          actionBtn(exportAllData, "Export All Data (Backup)", {
+            border: `1px solid ${COLORS.blue}`,
+            background: COLORS.blueSoft,
+          })}
         {!assistantMode && (
         <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "2px 0 8px" }}>
           Restoring replaces this team's roster, lineups, matches and stats with
@@ -10347,7 +10357,17 @@ function AppInner() {
   // passcode-lock check below since hooks can't be called conditionally;
   // it still only takes effect once the coach is past that screen, since
   // this component doesn't render past the lock check until then anyway.
-  const deepLink = useDeepLinkJoin(teamCode, setTeamCode);
+  // A `?code=` deep link always carries a TEAM code (it's generated from the
+  // coach's own Settings), so a device that joins this way is a coach device.
+  // It has to say so: without this, a phone that used to be an assistant and
+  // was then unlinked still holds `vb-access-mode: "assistant"`, and joining
+  // by link would leave it limited — silently defeating the one documented
+  // way to hand a device full access. Found in the audit, not in use.
+  const deepLink = useDeepLinkJoin(teamCode, (code) => {
+    setAccessMode("coach");
+    setAccessCode("");
+    setTeamCode(code);
+  });
 
   const MAIN_DEFAULT = {
     roster: [],
@@ -11964,6 +11984,14 @@ function AppInner() {
             trackStatKeys={trackStatKeys}
             setTrackStatKeys={setTrackStatKeys}
             teamCode={teamCode}
+            onUnlinkDevice={() => {
+              // Clear what this device joined AS, not just which team. An
+              // unlinked device is not an assistant device, and leaving the
+              // mode behind is how a later join could come up limited.
+              setAccessMode("");
+              setAccessCode("");
+              setTeamCode("");
+            }}
             setTeamCode={setTeamCode}
             setUnlockedWith={setUnlockedWith}
             exportAllData={exportAllData}
