@@ -106,7 +106,13 @@ const ERROR_KEYS = new Set(["serveErr", "attackErr", "recErr", "passingErr", "bl
 // before the last three characters — otherwise "32JB8TY" reads as a wrong
 // code when it is the right one typed plainly.
 function codeCandidates(raw) {
-  const clean = String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+  // Strip to the characters a code can actually contain. This is tidiness for
+  // a typo, and one more thing besides: the result becomes a Firestore path
+  // SEGMENT, and a segment holding "/" silently addresses a deeper path than
+  // intended. It can't escape the `playerAccess` collection it's nested
+  // under, so nothing of the team's is reachable this way — but a lookup
+  // should resolve the code someone typed, not a path they built.
+  const clean = String(raw || "").trim().toUpperCase().replace(/[^A-Z0-9-]/g, "");
   if (!clean) return [];
   const out = [clean];
   if (!clean.includes("-") && clean.length > 3) {

@@ -685,6 +685,14 @@ non-obvious things that look like they could be "simplified" but are load-bearin
       "Switch Team" clears the mode as well as the team.
     The lesson worth keeping: when auditing this, don't only ask what a
     device can CHANGE. Ask what it can carry away.
+  - **A superseded assistant code is refused at the join screen.** Replacing
+    a code writes the new `assistantAccess` document before deleting the old
+    one, so a failed delete (no signal, a closed tab) leaves a stale document
+    pointing at a live team. `checkAndJoin` therefore requires
+    `teams/{code}/data/main.assistantCode === typedCode`, not merely that the
+    `assistantAccess` document exists — otherwise a device could join on the
+    stale code and be evicted a second later by the mismatch check, which
+    looks like a bug and quietly undoes a revoke.
   - Still honest about what it is: guard rails against mis-taps, not access
     control. `assistantAccess/{code}` has to hold the team code or the code
     couldn't resolve to a team, so someone who opens devtools on the helper's
@@ -1449,6 +1457,16 @@ rework) is the template. What it covered, in the order that found things:
   malformed shapes of the five fields added since the last sweep ×
   coach/assistant, asserting no crash and no `ErrorBoundary`). All clean,
   which is the useful half of a result like this.
+- **Pass 3, the adversarial read of the new modules**, found three things,
+  none of them reachable by a user today but all cheap to close: the code
+  generators used `Math.random` (see the randomness bullet under Player
+  Access); a superseded assistant code could still be joined with; and
+  `player-stats`'s `codeCandidates` didn't strip the characters a code can't
+  contain, so a typed code became a Firestore path SEGMENT that could address
+  a deeper path. That last one can't escape the `playerAccess` collection it
+  is nested under, so nothing of the team's was reachable — it is tidiness
+  with a sharp edge, not a hole, and it's worth being precise about which it
+  was rather than inflating it.
 - Watch for the harness scripts drifting apart on PORTS (some point at 5185,
   the newer ones at 5188) — run two dev servers from the one config rather
   than editing the scripts.
@@ -1480,6 +1498,21 @@ they are cheap now and expensive later, so don't undo them casually.
   name ("Joy B.") — not a full name, because this is the one artefact here a
   stranger might hold and the players are minors. There is a Node test
   asserting exactly this; keep it passing if you add a field.
+- **Every code comes from WebCrypto, not `Math.random`** —
+  `src/randomCode.js`, shared by `playerAccess.js` and `teamAccess.js`. These
+  codes ARE the credential, and V8's `Math.random` is xorshift128+: a handful
+  of consecutive outputs is enough to recover the state and predict the rest.
+  That matters here specifically because `generateCodes` mints a whole
+  roster's worth in one pass from one generator and hands every one of them to
+  a teenager — a player holding two or three team-mates' codes is exactly the
+  input that attack wants, and the app already warns that the `jersey` style
+  is teammate-derivable. It would be a poor joke if `random` and `hybrid` were
+  too, just less visibly. `makePicker` also rejects the tail of the byte range
+  rather than taking a modulo, because neither alphabet (30 and 31) divides
+  256 and a plain `% n` would favour the first few letters. Every generator
+  still accepts an explicit `rng` so tests can pin output;
+  `nodecheck/randomness.mjs` asserts that stubbing `Math.random` does NOT
+  change what comes out, which is what actually holds this in place.
 - **Codes are global names** because one URL serves every organisation, so
   `generateCodes` is handed the codes already taken and never reissues one. It
   also never re-rolls an existing code: reissuing would silently kill a code a

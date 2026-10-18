@@ -27,6 +27,8 @@
 // before sign-in exists, this stops mis-taps and casual poking, not a
 // determined person. Say that out loud rather than implying otherwise.
 
+import { randomFrom } from "./randomCode.js";
+
 // Same alphabet as team codes: no 0/O, no 1/I/L. It gets read off one screen
 // and typed into another, often by someone who isn't invested in getting it
 // right first time.
@@ -36,12 +38,11 @@ export const ASSISTANT_CODE_LENGTH = 6;
 // Deliberately random, NOT derived from the team code. A derived code would
 // hand the team code to anyone who worked out the pattern, which is the one
 // thing this is supposed to hold back.
-export function generateAssistantCode(rng = Math.random) {
-  let out = "";
-  for (let i = 0; i < ASSISTANT_CODE_LENGTH; i += 1) {
-    out += CODE_CHARS[Math.floor(rng() * CODE_CHARS.length)];
-  }
-  return out;
+//
+// Drawn from WebCrypto, not `Math.random` — see randomCode.js. `rng` is still
+// accepted so a test can pin the output.
+export function generateAssistantCode(rng) {
+  return randomFrom(CODE_CHARS, ASSISTANT_CODE_LENGTH, rng);
 }
 
 // The tabs a coach can hand to an assistant. "live" is the reason the feature

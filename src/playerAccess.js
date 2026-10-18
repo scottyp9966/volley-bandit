@@ -40,6 +40,8 @@
 // `CODE_STYLE_NOTES` carries that warning into the UI so the choice is made
 // with the trade-off visible, not buried here.
 
+import { randomFrom } from "./randomCode.js";
+
 // No 0/O/1/I/L/5/S — a code gets read off a screen and typed by a 14-year-old.
 const CODE_ALPHABET = "23467989ABCDEFGHJKMNPQRTUVWXYZ";
 // Six characters, not four. Four is ~1M combinations, which is plenty for one
@@ -65,10 +67,11 @@ export const CODE_STYLE_NOTES = {
   },
 };
 
+// WebCrypto, not Math.random — see randomCode.js for why that matters when a
+// whole roster's codes come out of one generator and every one of them is
+// handed to a teenager.
 function randomChars(n, rng) {
-  let out = "";
-  for (let i = 0; i < n; i += 1) out += CODE_ALPHABET[Math.floor(rng() * CODE_ALPHABET.length)];
-  return out;
+  return randomFrom(CODE_ALPHABET, n, rng);
 }
 
 // Initials from whatever the roster actually holds. A player with no last
@@ -79,7 +82,7 @@ function initialsOf(player) {
   return (a + b).toUpperCase() || "X";
 }
 
-export function codeFor(player, style, taken, rng = Math.random) {
+export function codeFor(player, style, taken, rng) {
   const num = String(player?.num ?? "").replace(/[^0-9A-Za-z]/g, "") || "0";
   const base =
     style === "jersey" ? `${num}${initialsOf(player)}`
@@ -103,7 +106,7 @@ export function codeFor(player, style, taken, rng = Math.random) {
 // Codes for everyone on the roster who doesn't already have one. Existing
 // codes are KEPT: reissuing would silently invalidate a code a player has
 // already been given, with no sign anything changed.
-export function generateCodes(roster, style, existing = [], globallyTaken = [], rng = Math.random) {
+export function generateCodes(roster, style, existing = [], globallyTaken = [], rng) {
   const byPlayer = new Map(existing.filter((e) => e && e.code).map((e) => [e.playerId, e.code]));
   const taken = new Set([...globallyTaken, ...byPlayer.values()]);
   const out = [];

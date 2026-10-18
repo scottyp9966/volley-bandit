@@ -46,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.18d";
+const APP_VERSION = "2026.10.18e";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -8781,7 +8781,14 @@ function TeamGate({ onLinked, initialJoinCode, initialJoinError }) {
         // The team the code points at can be deleted or re-made; don't link a
         // device to a team that isn't there.
         const teamSnap = await getDoc(doc(db, "teams", linkedTeam, "data", "main"));
-        if (teamSnap.exists()) {
+        // And the code has to be the team's CURRENT one. Replacing a code
+        // writes the new `assistantAccess` document before deleting the old,
+        // so a failed delete (no signal, a closed tab) leaves a stale one
+        // pointing at a live team. Without this check a device could join on
+        // that stale code and then be evicted a second later by the mismatch
+        // check in AppInner — a confusing flicker that looks like a bug and
+        // quietly undoes a revoke. Accept only the live code.
+        if (teamSnap.exists() && teamSnap.data()?.assistantCode === code) {
           onLinked(linkedTeam, "assistant", code);
           return;
         }
