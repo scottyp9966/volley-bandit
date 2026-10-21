@@ -1435,7 +1435,13 @@ without real network access, and it happily accepted a nested array —
 so a change that broke every write in production passed every test here.
 If you build such a stub, make it enforce the real service's constraints
 (nested arrays, field-name rules, document size), not just its shape.
-Anything the stub doesn't enforce, you haven't actually tested.
+Anything the stub doesn't enforce, you haven't actually tested. It happened again,
+in the worst way, with `codes: undefined` (see Player Access): a bug that
+broke the feature 100% of the time in production while every check here
+passed. Where a write's validity is what's in question, don't model
+Firestore — hand the real SDK the real payload and let its own client-side
+validation answer. `nodecheck/firestorewrite.mjs` is the pattern, and it
+needs no network.
 
 **An audit pass is worth running after a burst of feature work**, and the
 first one (2026-10-18, after player access, `player-stats/` and the assistant
@@ -1526,6 +1532,28 @@ they are cheap now and expensive later, so don't undo them casually.
   appear on a player's phone. Revoking deletes the published documents AND
   drops the codes, so a handed-out code stops working rather than going quiet
   and reviving at the next publish.
+- **Never write a field as `codes: undefined` to say it is absent** —
+  Firestore rejects an undefined field value outright (`Unsupported field
+  value: undefined (found in field codes)`), and one such field fails the
+  whole `set`, which fails the whole batch. `buildPublishedDoc` ended its
+  return object with exactly that, as a piece of documentation, so **Player
+  Access never published at all** — the coach got "Could not publish" every
+  time, for as long as the feature existed, and it was reported from the field
+  rather than caught here (2026-10-21). What is absent is now said in a
+  comment above the return, where it cannot be sent anywhere. Three things
+  let it through, all closed now, and all worth keeping closed:
+  - the harness Firestore stub accepted an undefined value (it now rejects
+    one the same way it rejects a nested array — `assertWritable`);
+  - `nodecheck/exposure.mjs`'s allowlist walk had `if (v === undefined)
+    return;`, so it skipped the one property that mattered. It collects them
+    and asserts there are none;
+  - nothing ever handed the REAL SDK a real published document.
+    `nodecheck/firestorewrite.mjs` does: it runs `buildPublishedSet`'s output
+    through the actual `writeBatch(...).set()` the app calls, for all three
+    code styles and for an empty season / no stat list / no jersey number / a
+    deleted match, and asserts the SDK still refuses an undefined field. No
+    network is needed — `set()` validates client-side before sending. Prefer
+    this shape of test to any stub when a write's VALIDITY is the question.
 
 **STILL OPEN — the lock-down.** With no authentication anywhere (confirmed:
 neither app imports `firebase/auth`), Firestore rules CANNOT distinguish the

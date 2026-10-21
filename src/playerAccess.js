@@ -187,6 +187,12 @@ export function buildPublishedDoc({ player, teamName, codes, log, matches, statK
   });
   perMatch.sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
+  // Note what is deliberately absent and must stay absent: the team code, the
+  // roster, any other player's code, a full last name. Don't express that as
+  // an explicit `codes: undefined` — Firestore rejects an undefined field
+  // value outright (`Unsupported field value: undefined`), which failed every
+  // write of every document in the batch. That shipped, and publishing never
+  // worked until it was removed.
   return {
     v: 1,
     teamName: teamName || "",
@@ -198,7 +204,6 @@ export function buildPublishedDoc({ player, teamName, codes, log, matches, statK
     matches: perMatch,
     statKeys: keys,
     publishedAt: now,
-    codes: undefined, // never: a published doc must not carry other players' codes
   };
 }
 
