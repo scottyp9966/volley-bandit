@@ -8,7 +8,7 @@ import { registerSW } from "virtual:pwa-register";
 import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
 import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
-import { generateCodes, buildPublishedSet, entitlementsOf, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
+import { generateCodes, buildPublishedSet, entitlementsOf, playerInviteMessage, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
 import {
   generateAssistantCode,
   assistantAccessOf,
@@ -46,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.21a";
+const APP_VERSION = "2026.10.21b";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -9508,6 +9508,35 @@ function SettingsSheet({
   const restoreFileRef = useRef(null);
   const [crashes, setCrashes] = useState(() => readCrashLog());
   const [copiedCrashes, setCopiedCrashes] = useState(false);
+  // Which player's invite was just put on the clipboard, so the row can say
+  // so. One field, not a per-row flag: only ever one is the latest.
+  const [invite, setInvite] = useState(null); // { code, state: "sent"|"copied"|"failed" }
+
+  // Hand the player's message to the share sheet when there is one — that is
+  // one tap to Messages — and fall back to the clipboard when there isn't,
+  // or when the share is refused for any reason other than the coach backing
+  // out of it. A cancelled share must read as nothing happening, not as a
+  // failure. Anything that throws here still has to leave a visible result:
+  // a button that silently does nothing is the "dead tap" this app has been
+  // bitten by before.
+  const shareInvite = async (player, code) => {
+    const text = playerInviteMessage({ player, code, url: PLAYER_STATS_URL });
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        setInvite({ code, state: "sent" });
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") return; // he backed out; say nothing
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setInvite({ code, state: "copied" });
+    } catch (err) {
+      setInvite({ code, state: "failed" });
+    }
+  };
   // `key` is passed because this is rendered from inside STAT_BUTTONS.map —
   // without it React logs a keyless-list warning for every stat, which both
   // costs reconciliation and buries any real warning in the console.
@@ -10032,13 +10061,37 @@ function SettingsSheet({
                 {playerCodes.map((c) => {
                   const p = roster.find((r) => r.id === c.playerId);
                   if (!p) return null;
+                  const mine = invite && invite.code === c.code ? invite.state : null;
                   return (
-                    <div key={c.code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12 }}>
-                      <span style={{ color: COLORS.chalkDim }}>#{jerseyLabel(p)} {fullName(p)}</span>
+                    <div key={c.code} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12 }}>
+                      <span style={{ color: COLORS.chalkDim, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        #{jerseyLabel(p)} {fullName(p)}
+                      </span>
                       <span style={{ fontFamily: "monospace", fontWeight: 700, letterSpacing: 1 }}>{c.code}</span>
+                      <button
+                        onClick={() => shareInvite(p, c.code)}
+                        style={{
+                          flexShrink: 0,
+                          padding: "3px 8px",
+                          borderRadius: 6,
+                          border: `1px solid ${mine === "failed" ? COLORS.red : COLORS.line}`,
+                          background: mine && mine !== "failed" ? COLORS.greenSoft : "transparent",
+                          color: mine === "failed" ? COLORS.red : COLORS.chalk,
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {mine === "sent" ? "Sent" : mine === "copied" ? "Copied" : mine === "failed" ? "Failed" : navigator.share ? "Send" : "Copy"}
+                      </button>
                     </div>
                   );
                 })}
+                <div style={{ fontSize: 10, color: COLORS.chalkDim, paddingTop: 4, lineHeight: 1.4 }}>
+                  {navigator.share ? "Send" : "Copy"} writes that player's own message — the
+                  link, her code, and what she'll see. Each code opens one card, so send
+                  them one at a time rather than posting the list to a team chat.
+                </div>
               </div>
             )}
 

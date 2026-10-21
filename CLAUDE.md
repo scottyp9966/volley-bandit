@@ -1532,6 +1532,22 @@ they are cheap now and expensive later, so don't undo them casually.
   appear on a player's phone. Revoking deletes the published documents AND
   drops the codes, so a handed-out code stops working rather than going quiet
   and reviving at the next publish.
+- **Each code row in Settings has its own Send/Copy button**, which hands the
+  share sheet (or the clipboard, where there isn't one) that player's whole
+  message — built by `playerInviteMessage` in `playerAccess.js`, not typed out
+  per player. It leads with the `?code=` DEEP LINK, because the code a player
+  retypes from memory is the one she gets wrong (the hyphen in a `hybrid` code
+  is exactly what gets dropped — `codeCandidates` in `player-stats/` exists to
+  forgive that), and repeats the site and the bare code underneath for a thread
+  that mangles links. It carries no team name and no last name: this is the one
+  message here that gets forwarded.
+  - A cancelled share (`AbortError`) reads as nothing happening; a refused
+    clipboard reads "Failed" on the row. Neither may be a silent no-op — see
+    the dead-tap history in this file.
+  - Verified in the harness (`pwcheck/invite.mjs`), with the share sheet
+    present and absent and with the clipboard refusing: tapping the SECOND row
+    produces a message addressed to that player, carrying her deep link and no
+    other player's code, no team code and no full last name.
 - **Never write a field as `codes: undefined` to say it is absent** —
   Firestore rejects an undefined field value outright (`Unsupported field
   value: undefined (found in field codes)`), and one such field fails the

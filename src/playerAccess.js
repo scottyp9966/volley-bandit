@@ -158,6 +158,34 @@ function shortName(player) {
   return initial ? `${first} ${initial.toUpperCase()}.` : first;
 }
 
+// The text a coach sends a player, built here rather than typed out per
+// player at 10pm. It leads with the DEEP LINK (`?code=…`), which the player
+// app strips from the address bar once it has joined, because the code a
+// player retypes from memory is the one she gets wrong — the hyphen in a
+// `hybrid` code is exactly what gets dropped (see `codeCandidates` in
+// `player-stats/`, which exists to forgive that). The code is also spelled
+// out underneath, for a thread that mangles links.
+//
+// It says the link is hers alone, because it is the credential: whoever holds
+// it sees that card. No team name, no last name, nothing about the team —
+// this is a message that gets forwarded, and the coach's own phone supplies
+// all the context the player needs.
+export function playerInviteMessage({ player, code, url }) {
+  const first = (player?.firstName || "").trim();
+  const base = String(url || "").replace(/\/+$/, "");
+  return [
+    `${first ? `Hi ${first} — y` : "Y"}ou can see your volleyball stats on your phone now:`,
+    "",
+    `${base}/?code=${encodeURIComponent(code)}`,
+    "",
+    "Tap that and it'll remember you, so after the first time just open it again. You'll see your season totals first, then the same numbers match by match, with the team's totals beside your own. I'll update it after each match.",
+    "",
+    `If the link won't open, go to ${base.replace(/^https?:\/\//, "")} and enter your code: ${code}`,
+    "",
+    "That code is yours — it opens your card and nobody else's, so please keep it to yourself.",
+  ].join("\n");
+}
+
 export function buildPublishedDoc({ player, teamName, codes, log, matches, statKeys, now = Date.now() }) {
   const keys = statKeys && statKeys.length ? statKeys : [];
   const tally = (entries) => {
