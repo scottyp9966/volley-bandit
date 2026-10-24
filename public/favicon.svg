@@ -1,20 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <clipPath id="round">
-      <rect width="64" height="64" rx="14"/>
-    </clipPath>
-  </defs>
-  <g clip-path="url(#round)">
-    <rect width="64" height="32" fill="#255E42"/>
-    <rect y="32" width="64" height="32" fill="#F5F3EE"/>
-    <text x="32" y="24" font-family="Arial, sans-serif" font-weight="bold" font-size="20" fill="#F5F3EE" text-anchor="middle">VB</text>
-    <line x1="10" y1="38" x2="10" y2="58" stroke="#255E42" stroke-width="2.4"/>
-    <line x1="54" y1="38" x2="54" y2="58" stroke="#255E42" stroke-width="2.4"/>
-    <line x1="10" y1="38" x2="54" y2="38" stroke="#255E42" stroke-width="3"/>
-    <line x1="20" y1="38" x2="20" y2="58" stroke="#255E42" stroke-width="1.2"/>
-    <line x1="32" y1="38" x2="32" y2="58" stroke="#255E42" stroke-width="1.2"/>
-    <line x1="44" y1="38" x2="44" y2="58" stroke="#255E42" stroke-width="1.2"/>
-    <line x1="10" y1="45" x2="54" y2="45" stroke="#255E42" stroke-width="1.2"/>
-    <line x1="10" y1="52" x2="54" y2="52" stroke="#255E42" stroke-width="1.2"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 64 64">
+  <defs><clipPath id="r"><rect width="64" height="64" rx="14"/></clipPath></defs>
+  <image clip-path="url(#r)" width="64" height="64" xlink:href="data:image/png;base64,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"/>
 </svg>

@@ -1658,6 +1658,46 @@ unless the coach says so.
   device". Both far from any live-match path, which is why they survived the
   sweep that replaced the rest.
 
+## App icons
+
+All three apps share one mark — the Thrift Bandit raccoon over a volleyball —
+and **the background colour is what says which app it is**: Volley Bandit
+`#255E42` (green), Player Eval `#1F4E79` (blue), Player Stats `#5D3A7A`
+(plum). That rule comes from Thrift Bandit, the coach's other app, which is
+the same raccoon on orange. Before this they all shipped the *identical* "VB"
+tile, so two of them installed on one phone were indistinguishable.
+
+- The ball's seam lines take the background colour too, so each tile is one
+  colour plus bone (`#F5F3EE`) and nothing looks pasted on.
+- Player Stats deliberately does NOT use its own accent (`#ff7a3d`) — that is
+  the same orange family as Thrift Bandit and the two tiles would be hard to
+  tell apart. It is also the only app a player opens, so it is the one worth
+  making unmistakable.
+- **The PNGs are full-bleed squares with no alpha.** The manifest declares
+  `icon-512` as `purpose: maskable` as well as `any`, and a maskable icon must
+  fill the square — the platform applies its own mask. Baked-in rounded
+  corners get clipped twice and leave artefacts. `favicon.svg` IS rounded,
+  because nothing masks a favicon for us; it wraps a 64px PNG as a data URI so
+  the tab matches without needing an index.html change.
+- **Quantise to 128 colours.** Straight out of the compositor the 512 was
+  147KB of 16-bit PNG; at 128 colours it is 35KB and measurably identical
+  (RMSE 0.66%, checked rather than assumed). This app must not get heavier —
+  it loads on gym wifi and is deliberately not code-split.
+- The raccoon was lifted from a **screenshot** of the Thrift Bandit icon (~168
+  px of real artwork, upscaled ~2x), so it is slightly soft at 512 with a faint
+  orange fringe on its outline. The ball came from a 771px source and is sharp.
+  If the original raccoon asset ever turns up it is a drop-in replacement —
+  re-run the compositing with the same geometry, nothing else changes.
+- **The volleyball came from a Vecteezy stock image** the coach supplied. It
+  was raised with him that Vecteezy's licence restricts commercial use and
+  that he intends to sell this; he chose to proceed. If this ever ships
+  commercially, that licence needs settling or the ball needs replacing.
+  Hand-drawn SVG volleyballs were tried first and all read as beach balls or
+  globes — see the git history of this change if tempted to try again.
+- All three apps use the same three filenames (`icon-512.png`, `icon-192.png`,
+  `favicon.svg`) in their own `public/`, so changing an icon is a file swap
+  with no config or HTML edit.
+
 ## Workflow note
 
 **When walking the coach through something outside the codebase** (a Vercel
