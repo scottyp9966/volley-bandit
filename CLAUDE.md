@@ -1688,12 +1688,25 @@ tile, so two of them installed on one phone were indistinguishable.
   orange fringe on its outline. The ball came from a 771px source and is sharp.
   If the original raccoon asset ever turns up it is a drop-in replacement —
   re-run the compositing with the same geometry, nothing else changes.
-- **The volleyball came from a Vecteezy stock image** the coach supplied. It
-  was raised with him that Vecteezy's licence restricts commercial use and
-  that he intends to sell this; he chose to proceed. If this ever ships
-  commercially, that licence needs settling or the ball needs replacing.
-  Hand-drawn SVG volleyballs were tried first and all read as beach balls or
-  globes — see the git history of this change if tempted to try again.
+- **The volleyball is a line-art PNG the coach supplied**, replacing a
+  Vecteezy stock image that shipped for one day. Vecteezy's licence restricts
+  commercial use and he intends to sell this, so he swapped the source as soon
+  as that was raised. The provenance of the replacement has NOT been verified
+  either — it looks like clipart-site line art, which often carries its own
+  terms, and that was flagged to him. If this ever ships commercially, confirm
+  the ball is free to use.
+  - That source was a flattened export with a **transparency checkerboard
+    baked in as light-grey squares**, not real alpha — `alpha mean` reads 1.
+    Mapping white to bone directly would have printed that grid onto the ball.
+    It is cleaned with `-colorspace gray -level 18%,88%`: the lines are
+    `#242021` and everything else is >= 93%, so that crush separates them and
+    still keeps the antialiasing. Check for this on any replacement.
+  - The cleaned art is black-on-white, so it goes through the same
+    `+level-colors <bg>,#F5F3EE` recolour as before and is masked to its own
+    circle (trimmed to 838x838, exactly square). Note `+level-colors` takes
+    ONE comma-joined argument — passing two separate argv entries fails.
+  - Hand-drawn SVG volleyballs were tried first and all read as beach balls or
+    globes — see the git history of this change if tempted to try again.
 - All three apps use the same three filenames (`icon-512.png`, `icon-192.png`,
   `favicon.svg`) in their own `public/`, so changing an icon is a file swap
   with no config or HTML edit.
