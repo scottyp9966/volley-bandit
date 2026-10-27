@@ -1720,12 +1720,12 @@ tile, so two of them installed on one phone were indistinguishable.
     render of the SVG, the only differences are antialiasing along stroke
     edges.
 - **The raccoon (`design/icons/raccoon.png`) is the coach's own Thrift Bandit
-  character**, cut from a *screenshot* of that app's icon (~168px of real
-  artwork, upscaled ~2x), so it is slightly soft at 512 with a faint orange
-  fringe on its outline. If the original asset turns up, replace that file
-  and re-run `build.py` — nothing else changes. It was extracted by
-  flood-filling the orange from the corners, not colour-keying: the tile has
-  a gradient, and a 30% key on that orange also matched the grey fur.
+  character** — the original asset, byte-identical to
+  `public/raccoon-transparent-1024.png` in the `scottyp9966/thrift-bandit`
+  repo (1024x758, real alpha). It replaced a ~168px crop cut out of a
+  screenshot of that app's icon, which was soft at 512 with an orange fringe
+  on its outline. If Thrift Bandit's raccoon ever changes, copy the new file
+  over this one and re-run `build.py` — nothing else needs touching.
 - All three apps use the same three filenames (`icon-512.png`, `icon-192.png`,
   `favicon.svg`) in their own `public/`, so changing an icon is a file swap
   with no config or HTML edit.

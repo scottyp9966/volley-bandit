@@ -7,10 +7,9 @@ Writes icon-512.png, icon-192.png and favicon.svg into each app's public/.
 
 Sources:
   volleyball.py  — the ball, generated from its geometry (original artwork)
-  raccoon.png    — the Thrift Bandit raccoon, the coach's own character,
-                   cut from a screenshot of that app's icon (~168px of real
-                   artwork, so it is soft at 512; drop in the original asset
-                   here if it turns up and re-run — nothing else changes)
+  raccoon.png    — the Thrift Bandit raccoon, the coach's own character:
+                   public/raccoon-transparent-1024.png from the thrift-bandit
+                   repo, copied unchanged
 
 Every app gets the same mark; the background colour is what says which app
 it is. See CLAUDE.md, "App icons", for why each choice below was made.
