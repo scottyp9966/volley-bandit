@@ -1683,30 +1683,49 @@ tile, so two of them installed on one phone were indistinguishable.
   147KB of 16-bit PNG; at 128 colours it is 35KB and measurably identical
   (RMSE 0.66%, checked rather than assumed). This app must not get heavier —
   it loads on gym wifi and is deliberately not code-split.
-- The raccoon was lifted from a **screenshot** of the Thrift Bandit icon (~168
-  px of real artwork, upscaled ~2x), so it is slightly soft at 512 with a faint
-  orange fringe on its outline. The ball came from a 771px source and is sharp.
-  If the original raccoon asset ever turns up it is a drop-in replacement —
-  re-run the compositing with the same geometry, nothing else changes.
-- **The volleyball is a line-art PNG the coach supplied**, replacing a
-  Vecteezy stock image that shipped for one day. Vecteezy's licence restricts
-  commercial use and he intends to sell this, so he swapped the source as soon
-  as that was raised. The provenance of the replacement has NOT been verified
-  either — it looks like clipart-site line art, which often carries its own
-  terms, and that was flagged to him. If this ever ships commercially, confirm
-  the ball is free to use.
-  - That source was a flattened export with a **transparency checkerboard
-    baked in as light-grey squares**, not real alpha — `alpha mean` reads 1.
-    Mapping white to bone directly would have printed that grid onto the ball.
-    It is cleaned with `-colorspace gray -level 18%,88%`: the lines are
-    `#242021` and everything else is >= 93%, so that crush separates them and
-    still keeps the antialiasing. Check for this on any replacement.
-  - The cleaned art is black-on-white, so it goes through the same
-    `+level-colors <bg>,#F5F3EE` recolour as before and is masked to its own
-    circle (trimmed to 838x838, exactly square). Note `+level-colors` takes
-    ONE comma-joined argument — passing two separate argv entries fails.
-  - Hand-drawn SVG volleyballs were tried first and all read as beach balls or
-    globes — see the git history of this change if tempted to try again.
+- **Everything is regenerated from `design/icons/`** — `python3
+  design/icons/build.py`, which needs only Python and ImageMagick and writes
+  all three apps' `icon-512.png`, `icon-192.png` and `favicon.svg`. The
+  compositing used to live in a session scratchpad, which is gone the moment
+  that session ends; don't hand-edit the PNGs, change the sources and re-run.
+- **The volleyball is original artwork, generated rather than drawn:
+  `design/icons/volleyball.py`** (and its output `volleyball.svg`, 871 bytes
+  of exact curves). It replaced two third-party balls in a row — a Vecteezy
+  stock image whose licence restricts commercial use, then clipart of unknown
+  provenance — because the coach intends to sell this. A *traced* copy of
+  either would not have fixed that; a ball built from a real volleyball's own
+  geometry does, and still looks almost identical, because every line drawing
+  of a volleyball shows the same panel pattern.
+  - The construction: one junction, three seams from it to the rim, and in
+    each sector two more seams that start ON one boundary and run alongside
+    the next one round, turned outward a few degrees because on a sphere they
+    diverge away from the junction. Each is extended past its end and cut
+    exactly at the rim, so every seam meets the one it starts on. That is the
+    whole difference from the earlier hand-placed SVG attempts, which all
+    read as beach balls or globes: their seams were parallel and ended in
+    mid-air.
+  - Each seam is ONE exact quadratic even after extension: the segment of a
+    quadratic from 0 to any s — s > 1 included — is a quadratic with control
+    point `(1-s)*p0 + s*c`. That is why the SVG is 871 bytes rather than the
+    41KB of sampled points the first version wrote.
+  - The parameters were tuned against the clipart by overlaying the two and
+    reading the gaps on a 10% grid — junction position, three boundary
+    angles and bows, and each seam's start point and outward turn. Measuring
+    the layout of a generic object is not copying anyone's drawing; nothing
+    was traced. If you retune, the overlay is the way to check.
+  - **ImageMagick here cannot render SVG** (it wants `rsvg-convert`, not
+    installed) and **its policy refuses `-draw @file`**. So `volleyball.py`
+    also emits the same curves as MVG draw commands, and `build.py` passes
+    them inline. Rendered at 2x and downscaled; checked against a browser
+    render of the SVG, the only differences are antialiasing along stroke
+    edges.
+- **The raccoon (`design/icons/raccoon.png`) is the coach's own Thrift Bandit
+  character**, cut from a *screenshot* of that app's icon (~168px of real
+  artwork, upscaled ~2x), so it is slightly soft at 512 with a faint orange
+  fringe on its outline. If the original asset turns up, replace that file
+  and re-run `build.py` — nothing else changes. It was extracted by
+  flood-filling the orange from the corners, not colour-keying: the tile has
+  a gradient, and a 30% key on that orange also matched the grey fur.
 - All three apps use the same three filenames (`icon-512.png`, `icon-192.png`,
   `favicon.svg`) in their own `public/`, so changing an icon is a file swap
   with no config or HTML edit.

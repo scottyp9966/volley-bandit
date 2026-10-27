@@ -11,3 +11,6 @@ dist-ssr
 # root so Vite can resolve itself and the React plugin, but they hardcode a
 # session-specific scratchpad path and are never part of the app.
 vite.harness.*.tmp.js
+
+# Python bytecode from design/icons/build.py importing volleyball.py
+__pycache__/
