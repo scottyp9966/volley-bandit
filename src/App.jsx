@@ -46,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.27b";
+const APP_VERSION = "2026.10.31a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -413,6 +413,140 @@ function scoreLabel(name, fallback) {
   const first = String(name || "").trim().split(/\s+/)[0] || "";
   const clean = first.replace(/[^A-Za-z0-9'-]/g, "");
   return clean ? clean.slice(0, 10).toUpperCase() : fallback;
+}
+
+// Which match the box score is showing — and so which one its print sheets
+// print. Explicit pick, then the active match, then the most recent match that
+// has stats (the one just ended). Module scope because PrintArea needs it too.
+function resolveBoxMatchId(statsView, activeMatchId, matches, log) {
+  const pick = statsView?.boxMatchId;
+  if (pick !== undefined && pick !== null) return pick;
+  if (activeMatchId != null) return activeMatchId;
+  const withStats = (matches || [])
+    .filter((m) => (log || []).some((e) => e.matchId === m.id))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  return withStats.length ? withStats[0].id : null;
+}
+
+// One match's score, set by set, for DISPLAY. Read from the point log rather
+// than from match.setScores, because setScores is only written when the match
+// is ended — reading it alone, a match in progress would show nothing. The
+// point log has every tapped point, so this is right mid-match and after. The
+// stored setScores is only a fallback, for a match whose points are gone.
+// `liveSet` is the set still being played (active match, not yet ended): it is
+// marked in progress and counts as neither won nor lost.
+function setScoreRows(matchId, pointLog, stored, liveSet = null) {
+  const scores = {};
+  if (matchId != null) {
+    (pointLog || []).forEach((e) => {
+      if (e.matchId !== matchId || (e.team !== "us" && e.team !== "opp")) return;
+      const key = String(e.setNumber ?? 1);
+      if (!scores[key]) scores[key] = { us: 0, opp: 0 };
+      scores[key][e.team] += 1;
+    });
+  }
+  const source = Object.keys(scores).length ? scores : stored || {};
+  return Object.keys(source)
+    .map(Number)
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b)
+    .map((n) => {
+      const s = source[String(n)] || {};
+      const us = s.us || 0;
+      const opp = s.opp || 0;
+      const inProgress = liveSet != null && n === liveSet;
+      return { set: n, us, opp, inProgress, won: inProgress || us === opp ? null : us > opp };
+    });
+}
+
+// Sets won by each side, counting only finished sets.
+function setsWon(rows) {
+  return rows.reduce(
+    (acc, r) => (r.won === true ? { ...acc, us: acc.us + 1 } : r.won === false ? { ...acc, opp: acc.opp + 1 } : acc),
+    { us: 0, opp: 0 }
+  );
+}
+
+// The set-by-set score card on the Box Score. `final` is whether the match
+// has been ended — only then is the result called a win or a loss; before
+// that it is the running count of sets.
+function SetScoresCard({ rows, usLabel, oppLabel, final }) {
+  if (!rows.length) return null;
+  const won = setsWon(rows);
+  const anyFinished = rows.some((r) => r.won !== null);
+  const result = final
+    ? won.us > won.opp
+      ? `Won ${won.us}–${won.opp}`
+      : won.us < won.opp
+      ? `Lost ${won.us}–${won.opp}`
+      : `Split ${won.us}–${won.opp}`
+    : anyFinished
+    ? `Sets ${won.us}–${won.opp} so far`
+    : null;
+  return (
+    <div
+      style={{
+        background: COLORS.bgRaised,
+        border: `1px solid ${COLORS.line}`,
+        borderRadius: 10,
+        padding: "8px 12px",
+        marginBottom: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+          fontSize: 10,
+          color: COLORS.chalkDim,
+          letterSpacing: 0.5,
+          marginBottom: 4,
+        }}
+      >
+        <span>SET SCORES</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {usLabel} – {oppLabel}
+        </span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.set} style={{ display: "flex", alignItems: "center", padding: "3px 0", fontSize: 13 }}>
+          <span style={{ width: 52, color: COLORS.chalkDim }}>Set {r.set}</span>
+          <span style={{ flex: 1, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+            {r.us} – {r.opp}
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: r.inProgress
+                ? COLORS.gold
+                : r.won === true
+                ? COLORS.green
+                : r.won === false
+                ? COLORS.red
+                : COLORS.chalkDim,
+            }}
+          >
+            {r.inProgress ? "LIVE" : r.won === true ? "W" : r.won === false ? "L" : "–"}
+          </span>
+        </div>
+      ))}
+      {result && (
+        <div
+          style={{
+            borderTop: `1px solid ${COLORS.line}`,
+            marginTop: 4,
+            paddingTop: 5,
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          {result}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const LIBERO_ROLE_LABEL = { any: "ANY", receive: "RECEIVE", serve: "SERVE" };
@@ -4344,6 +4478,48 @@ function LiveScreen({
         />
       </div>
 
+      {/* Sets already played this match, under the scoreboard — the current
+          set is the big numbers above, so it is left out here. Read from the
+          point log, which is how it can show before the match is ended. */}
+      {(() => {
+        if (activeMatchId == null) return null;
+        const done = setScoreRows(activeMatchId, pointLog, null).filter((r) => r.set < setNumber);
+        if (!done.length) return null;
+        const won = setsWon(done);
+        return (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "2px 12px",
+              padding: "5px 14px",
+              background: COLORS.bgRaised,
+              borderBottom: `1px solid ${COLORS.line}`,
+              fontSize: 11,
+              color: COLORS.chalkDim,
+            }}
+          >
+            {done.map((r) => (
+              <span key={r.set} style={{ whiteSpace: "nowrap" }}>
+                Set {r.set}{" "}
+                <span
+                  style={{
+                    fontWeight: 700,
+                    color: r.won === true ? COLORS.green : r.won === false ? COLORS.red : COLORS.chalk,
+                  }}
+                >
+                  {r.us}–{r.opp}
+                </span>
+              </span>
+            ))}
+            <span style={{ marginLeft: "auto", fontWeight: 700, color: COLORS.chalk, whiteSpace: "nowrap" }}>
+              Sets {won.us}–{won.opp}
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Everything from here down to the rotation strip is the full
           match-management surface — sub counters, rotation advance, sub
           suggestions, the court. Simple mode hides all of it; the score
@@ -5467,7 +5643,7 @@ function ScoreCounter({ label, value, onChange, color, disabled }) {
 }
 
 // ---- Box score screen: current match, a specific past match, or full season ----
-function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, statsView, setStatsView, pointLog, trendSubject, setTrendSubject, onEndMatch, assistant }) {
+function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, statsView, setStatsView, pointLog, trendSubject, setTrendSubject, onEndMatch, assistant, usLabel, liveSetNumber }) {
   const section = statsView?.section || "boxscore";
   const insightsMatchId = statsView?.insightsMatchId ?? null;
   const [editMode, setEditMode] = useState(false);
@@ -5482,18 +5658,7 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
   // fine. Insights always had a picker; the box score now has the same one.
   // Explicit pick wins, then the active match, then the most recent match
   // that actually has stats — which is the one you just ended.
-  const boxMatchPick = statsView?.boxMatchId;
-  const boxMatchId =
-    boxMatchPick !== undefined && boxMatchPick !== null
-      ? boxMatchPick
-      : activeMatchId != null
-      ? activeMatchId
-      : (() => {
-          const withStats = matches
-            .filter((m) => log.some((e) => e.matchId === m.id))
-            .sort((a, b) => (a.date < b.date ? 1 : -1));
-          return withStats.length ? withStats[0].id : null;
-        })();
+  const boxMatchId = resolveBoxMatchId(statsView, activeMatchId, matches, log);
   const selectBoxMatch = (matchId) =>
     setStatsView((prev) => ({ ...(prev || {}), section: "boxscore", boxMatchId: matchId }));
 
@@ -5517,6 +5682,20 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
     [log, boxMatchId]
   );
   const boxRows = useMemo(() => groupByPlayer(boxLog), [boxLog, roster]);
+  // Set scores for whichever match the box score is showing. The set still
+  // being played is only "live" on the active match, and only until it ends.
+  const boxSetRows = useMemo(
+    () =>
+      boxMatch
+        ? setScoreRows(
+            boxMatch.id,
+            pointLog,
+            boxMatch.setScores,
+            boxMatch.id === activeMatchId && !boxMatch.completedAt ? liveSetNumber : null
+          )
+        : [],
+    [boxMatch, pointLog, activeMatchId, liveSetNumber]
+  );
 
   // --- Insights: pick any match (current or past) for its breakdowns ---
   const insightsMatch = insightsMatchId != null ? matches.find((m) => m.id === insightsMatchId) : null;
@@ -5824,6 +6003,12 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
               ))}
             </div>
           )}
+          <SetScoresCard
+            rows={boxSetRows}
+            usLabel={usLabel}
+            oppLabel={scoreLabel(boxMatch?.opponent, "OPP")}
+            final={!!boxMatch?.completedAt}
+          />
           {editMode && (
             <div style={{ fontSize: 10, color: COLORS.chalkDim, marginBottom: 10 }}>
               Tap a stat to remove one instance of it for that player.
@@ -7430,7 +7615,7 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
 
 // ---- Print area: standard black-on-white formats, one per document type.
 // Hidden on screen; shown via @media print CSS with everything else hidden.
-const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainIds, teamName, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys, roleSystem }) {
+const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activeLineupId, log, score, matches, captainIds, teamName, teamAbbr, coachName, activeMatchId, teamLogo, statsView, trendSubject, pointLog, includePairingsRoster, includePairingsLineup, printStatKeys, roleSystem }) {
   const activeLineupForPrint = lineups.find((l) => l.id === activeLineupId) || lineups[0];
   const setNumber = activeLineupForPrint?.setNumber || 1;
   const activeMatch = matches.find((m) => m.id === activeMatchId) || null;
@@ -7440,11 +7625,29 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
   const boxSection = statsView?.section || "boxscore";
   // Follows the box score's own match picker, not activeMatchId — otherwise
   // printing a finished match's sheet silently prints the live one instead.
-  const boxPrintMatchId =
-    statsView?.boxMatchId !== undefined && statsView?.boxMatchId !== null
-      ? statsView.boxMatchId
-      : activeMatchId;
+  // Same resolver as the screen: after End Match there is no active match, and
+  // falling back to activeMatchId alone printed an empty sheet for the match
+  // the screen was showing.
+  const boxPrintMatchId = resolveBoxMatchId(statsView, activeMatchId, matches, log);
   const boxLog = log.filter((e) => (e.matchId ?? null) === (boxPrintMatchId ?? null));
+  // The match the box score sheets are ABOUT. Both sheets used to title
+  // themselves from activeMatch while printing boxPrintMatchId's stats, so a
+  // match printed after End Match (which clears the active match) came out
+  // headed "Set 1 · Us 0 – 0 Opponent" over that match's real numbers.
+  const boxPrintMatch = boxPrintMatchId != null ? matches.find((m) => m.id === boxPrintMatchId) || null : null;
+  const boxPrintSubtitle = boxPrintMatch
+    ? `vs. ${boxPrintMatch.opponent}${boxPrintMatch.date ? ` · ${boxPrintMatch.date}` : ""}`
+    : null;
+  const boxSetRows = boxPrintMatch
+    ? setScoreRows(
+        boxPrintMatch.id,
+        pointLog,
+        boxPrintMatch.setScores,
+        boxPrintMatch.id === activeMatchId && !boxPrintMatch.completedAt ? setNumber : null
+      )
+    : [];
+  const printUs = scoreLabel(teamAbbr || teamName, "US");
+  const printOpp = scoreLabel(boxPrintMatch?.opponent, "OPP");
 
   const boxRows = (() => {
     const byPlayer = {};
@@ -7554,6 +7757,55 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
   const td = { padding: "6px 8px", borderBottom: "1px solid #999", fontSize: 12 };
   const h1 = { fontSize: 20, fontWeight: 700, marginBottom: 2 };
   const h2 = { fontSize: 12, color: "#444", marginBottom: 16 };
+
+  // The set scores as a scoresheet grid — one column per set, each side's
+  // points, the set winner's number in bold, sets won at the end. Black on
+  // white like every other sheet: PrintArea never uses COLORS, so a sheet
+  // printed from dark mode doesn't come out in dark-mode hues on paper.
+  const SetScoreGrid = ({ rows }) => {
+    if (!rows.length) return null;
+    const won = setsWon(rows);
+    const live = rows.some((r) => r.inProgress);
+    const cell = { padding: "4px 10px", borderBottom: "1px solid #999", fontSize: 13, textAlign: "center" };
+    const head = { ...cell, borderBottom: "2px solid #000", fontSize: 11, fontWeight: 700 };
+    const side = (key, label) => (
+      <tr>
+        <td style={{ ...cell, textAlign: "left", fontWeight: 700 }}>{label}</td>
+        {rows.map((r) => (
+          <td
+            key={r.set}
+            style={{ ...cell, fontWeight: (key === "us" ? r.won === true : r.won === false) ? 800 : 400 }}
+          >
+            {r[key]}
+          </td>
+        ))}
+        <td style={{ ...cell, fontWeight: 800, borderLeft: "2px solid #000" }}>{won[key]}</td>
+      </tr>
+    );
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <table style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={{ ...head, textAlign: "left" }}>Set scores</th>
+              {rows.map((r) => (
+                <th key={r.set} style={head}>
+                  Set {r.set}
+                  {r.inProgress ? "*" : ""}
+                </th>
+              ))}
+              <th style={{ ...head, borderLeft: "2px solid #000" }}>Sets</th>
+            </tr>
+          </thead>
+          <tbody>
+            {side("us", printUs)}
+            {side("opp", printOpp)}
+          </tbody>
+        </table>
+        {live && <div style={{ fontSize: 10, color: "#444", marginTop: 3 }}>* set still in progress when printed</div>}
+      </div>
+    );
+  };
 
   const PrintHeader = ({ title, subtitle }) => (
     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 2 }}>
@@ -8153,12 +8405,9 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
       <div className={`print-section${target === "box" && boxSection === "boxscore" ? " active" : ""}`}>
         <PrintHeader
           title="Box Score — Full Match"
-          subtitle={
-            activeMatch
-              ? `vs. ${activeMatch.opponent}${activeMatch.date ? ` · ${activeMatch.date}` : ""}`
-              : `Set ${setNumber} · Us ${score.us} – ${score.opp} Opponent`
-          }
+          subtitle={boxPrintSubtitle || `Set ${setNumber} · Us ${score.us} – ${score.opp} Opponent`}
         />
+        <SetScoreGrid rows={boxSetRows} />
         {(() => {
           const visibleStats = STAT_BUTTONS.filter((s) => (printStatKeys || []).includes(s.key));
           return (
@@ -8199,8 +8448,9 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
       <div className={`print-section${target === "boxperset" ? " active" : ""}`}>
         <PrintHeader
           title="Box Score — By Set"
-          subtitle={activeMatch ? `vs. ${activeMatch.opponent}${activeMatch.date ? ` · ${activeMatch.date}` : ""}` : "Current match"}
+          subtitle={boxPrintSubtitle || "Current match"}
         />
+        <SetScoreGrid rows={boxSetRows} />
         {(() => {
           const visibleStats = STAT_BUTTONS.filter((s) => (printStatKeys || []).includes(s.key));
           const setNumbers = [...new Set(boxLog.map((e) => e.setNumber || 1))].sort((a, b) => a - b);
@@ -8211,7 +8461,19 @@ const PrintArea = React.memo(function PrintArea({ target, roster, lineups, activ
             const setRows = groupStatsByPlayer(boxLog.filter((e) => (e.setNumber || 1) === sn), roster);
             return (
               <div key={sn} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Set {sn}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+                  Set {sn}
+                  {(() => {
+                    const r = boxSetRows.find((x) => x.set === sn);
+                    if (!r) return null;
+                    return (
+                      <span style={{ fontWeight: 400, fontSize: 13, color: "#444" }}>
+                        {" "}— {printUs} {r.us}, {printOpp} {r.opp}
+                        {r.inProgress ? " (in progress)" : r.won === true ? " · won" : r.won === false ? " · lost" : ""}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
@@ -11756,6 +12018,7 @@ function AppInner() {
         matches={matches}
         captainIds={captainIds}
         teamName={teamName}
+        teamAbbr={teamAbbr}
         coachName={coachName}
         activeMatchId={activeMatchId}
         teamLogo={teamLogo}
@@ -12169,6 +12432,8 @@ function AppInner() {
             setTrendSubject={setTrendSubject}
             onEndMatch={endMatch}
             assistant={assistantMode}
+            usLabel={scoreLabel(teamAbbr || teamName, "US")}
+            liveSetNumber={(lineups.find((l) => l.id === activeLineupId) || lineups[0])?.setNumber || 1}
           />
         )}
         {tab === "schedule" && (

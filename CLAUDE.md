@@ -1172,6 +1172,28 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   roster, ghost pairings, ghost snapshots, odd point log) — that sweep is
   worth repeating after data-shape changes; only the empty-lineups case
   crashed, and it now renders an empty court instead.
+- **Set scores are derived from the point log, live, by `setScoreRows`**
+  (module scope, beside `scoreLabel`). `match.setScores` is only written at
+  End Match (and by the two recovery paths), so reading it alone showed
+  nothing during a match — and the only place it showed at all was the
+  locked lineup record of a finished match. `setScoreRows(matchId, pointLog,
+  stored, liveSet)` counts points per set and falls back to the stored
+  `setScores` only when the point log has nothing for that match. `liveSet`
+  marks the set being played as in progress so a 7–5 lead isn't counted as
+  a win. Shown in four places: a strip of FINISHED sets under the Live
+  scoreboard (the current set is the scoreboard itself, so it's left out),
+  a `SetScoresCard` at the top of Stats → Box Score ("Sets 1–1 so far"
+  until End Match, then "Won 2–1"), a scoresheet-style grid on both printed
+  box scores (in-progress set starred), and each set's score beside its
+  heading on the By Set sheet. Labels are `scoreLabel` names, same as the
+  scoreboard.
+- **The box score sheets print the match the box score SHOWS** —
+  `resolveBoxMatchId` (module scope) is shared by `BoxScoreScreen` and
+  `PrintArea`. Before, the screen fell back to "most recent match with
+  stats" but the print fell back only to `activeMatchId`, which `endMatch()`
+  clears — so printing right after End Match with no explicit pick gave an
+  empty sheet headed "Set 1 · Us 0 – 0 Opponent". Both sheets now head
+  themselves `vs. {opponent} · {date}` from that match.
 - **The box score has its own match picker (`statsView.boxMatchId`), not
   `activeMatchId`.** It used to filter on `activeMatchId` directly, which
   made a just-finished match unreachable: `endMatch()` clears
