@@ -1187,6 +1187,15 @@ non-obvious things that look like they could be "simplified" but are load-bearin
   box scores (in-progress set starred), and each set's score beside its
   heading on the By Set sheet. Labels are `scoreLabel` names, same as the
   scoreboard.
+  The Schedule list shows each match's RESULT only — WON/LOST plus sets
+  won–lost, no per-set scores, as the coach asked — via `matchResult`
+  (module scope). A match counts as over when it has `completedAt` or is
+  dated before today and isn't active (so matches never formally ended
+  still get a result); the active match reads "In progress · Sets 1–1".
+  Tapping an ended match now opens its Insights even when it was played
+  TODAY (`goToMatch` used a date test alone, so a match ended this evening
+  opened lineup prep), and Insights leads with the same `SetScoresCard`.
+  Verified by `pwcheck/schedresult.mjs` in both themes.
 - **The box score sheets print the match the box score SHOWS** —
   `resolveBoxMatchId` (module scope) is shared by `BoxScoreScreen` and
   `PrintArea`. Before, the screen fell back to "most recent match with

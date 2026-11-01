@@ -46,7 +46,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.10.31a";
+const APP_VERSION = "2026.11.01a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -465,6 +465,26 @@ function setsWon(rows) {
     (acc, r) => (r.won === true ? { ...acc, us: acc.us + 1 } : r.won === false ? { ...acc, opp: acc.opp + 1 } : acc),
     { us: 0, opp: 0 }
   );
+}
+
+// A match's result in one line for the Schedule list: "W" / "L" / "T" plus
+// sets won–lost. Called a result only once the match is over — ended
+// (completedAt), or dated before today and not the active match (matches
+// played before End Match existed, or never ended). The active match shows
+// the running count instead, with the set being played (liveSet) left out.
+function matchResult(match, pointLog, activeMatchId, liveSet, today) {
+  const isActive = match.id === activeMatchId && !match.completedAt;
+  const rows = setScoreRows(match.id, pointLog, match.setScores, isActive ? liveSet : null);
+  if (isActive) {
+    const w = setsWon(rows);
+    return { final: false, ...w, label: w.us + w.opp ? `In progress · Sets ${w.us}–${w.opp}` : "In progress" };
+  }
+  if (!rows.length) return null;
+  const isOver = !!match.completedAt || (!!match.date && match.date < today);
+  if (!isOver) return null;
+  const w = setsWon(rows);
+  const outcome = w.us > w.opp ? "W" : w.us < w.opp ? "L" : "T";
+  return { final: true, outcome, ...w, label: `${outcome} ${w.us}–${w.opp}` };
 }
 
 // The set-by-set score card on the Box Score. `final` is whether the match
@@ -6105,6 +6125,19 @@ function BoxScoreScreen({ log, setLog, roster, matches, lineups, activeMatchId, 
             vs. {insightsMatch?.opponent}
             {insightsMatch?.date ? ` · ${insightsMatch.date}` : ""}
           </div>
+          {insightsMatch && (
+            <SetScoresCard
+              rows={setScoreRows(
+                insightsMatch.id,
+                pointLog,
+                insightsMatch.setScores,
+                insightsMatch.id === activeMatchId && !insightsMatch.completedAt ? liveSetNumber : null
+              )}
+              usLabel={usLabel}
+              oppLabel={scoreLabel(insightsMatch.opponent, "OPP")}
+              final={!!insightsMatch.completedAt || insightsMatch.id !== activeMatchId}
+            />
+          )}
 
           {matchInsights ? (
             <div
@@ -7031,7 +7064,7 @@ function UnassignedGroupRow({ group, matches, onAssign }) {
   );
 }
 
-function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, unassignedEntries, onOpenSettings, assistant }) {
+function ScheduleScreen({ matches, pointLog, liveSetNumber, setMatches, activeMatchId, setActiveMatchId, setTab, setStatsView, matchIdsWithStats, orphanedMatches, unassignedEntries, onOpenSettings, assistant }) {
   const [matchSheet, setMatchSheet] = useState(null); // null | { mode: 'add' } | { mode: 'edit', id }
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ date: "", opponent: "", location: "", homeAway: "Home" });
@@ -7073,10 +7106,13 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
   };
 
   // Tap a match to jump straight to the right place: an upcoming match sets
-  // it active and opens Lineup for prep; a past match opens its Insights.
+  // it active and opens Lineup for prep; a past or ended match opens its
+  // Insights, which leads with the set scores.
+  const todayStr = todayISO();
   const goToMatch = (m) => {
-    const todayStr = todayISO();
-    const isPast = m.date && m.date < todayStr;
+    // An ended match is over even if it was played today — open its stats
+    // (and set scores) rather than lineup prep.
+    const isPast = !!m.completedAt || (m.date && m.date < todayStr);
     if (isPast) {
       setStatsView({ section: "insights", insightsMatchId: m.id });
       setTab("box");
@@ -7271,6 +7307,33 @@ function ScheduleScreen({ matches, setMatches, activeMatchId, setActiveMatchId, 
               <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 15, fontWeight: 600 }}>
                 vs. {m.opponent}
               </div>
+              {(() => {
+                const r = matchResult(m, pointLog, activeMatchId, liveSetNumber, todayStr);
+                if (!r) return null;
+                const color = !r.final ? COLORS.gold : r.outcome === "W" ? COLORS.green : r.outcome === "L" ? COLORS.red : COLORS.chalkDim;
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                    {r.final && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color,
+                          border: `1px solid ${color}`,
+                          borderRadius: 4,
+                          padding: "0 5px",
+                          lineHeight: "16px",
+                        }}
+                      >
+                        {r.outcome === "W" ? "WON" : r.outcome === "L" ? "LOST" : "TIED"}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: r.final ? COLORS.chalk : color }}>
+                      {r.final ? `${r.us}–${r.opp} in sets` : r.label}
+                    </span>
+                  </div>
+                );
+              })()}
               {m.location && (
                 <div style={{ fontSize: 11, color: COLORS.chalkDim }}>{m.location}</div>
               )}
@@ -12439,6 +12502,8 @@ function AppInner() {
         {tab === "schedule" && (
           <ScheduleScreen
             matches={matches}
+            pointLog={pointLog}
+            liveSetNumber={(lineups.find((l) => l.id === activeLineupId) || lineups[0])?.setNumber || 1}
             setMatches={setMatches}
             matchIdsWithStats={matchIdsWithStats}
             orphanedMatches={orphanedMatches}
