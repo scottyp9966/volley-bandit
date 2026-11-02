@@ -53,8 +53,8 @@ export function newSet(number, { left = "V", firstServe = "V", target = 25 } = {
     firstServe,
     target,
     teams: {
-      H: { lineup: ["", "", "", "", "", ""], libero: "", noLibero: false, captain: "" },
-      V: { lineup: ["", "", "", "", "", ""], libero: "", noLibero: false, captain: "" },
+      H: { lineup: ["", "", "", "", "", ""], libero: "", libero2: "", noLibero: false, captain: "" },
+      V: { lineup: ["", "", "", "", "", ""], libero: "", libero2: "", noLibero: false, captain: "" },
     },
     events: [],
     startTime: null,
@@ -77,6 +77,9 @@ export function lineupProblems(team, label = "") {
   });
   const lib = num(team.libero);
   if (lib && nums.includes(lib)) out.push(`${label}the libero #${lib} is also in the six`);
+  const lib2 = num(team.libero2);
+  if (lib2 && nums.includes(lib2)) out.push(`${label}the second libero #${lib2} is also in the six`);
+  if (lib2 && lib2 === lib) out.push(`${label}L1 and L2 are the same number`);
   if (!lib && !team.noLibero) out.push(`${label}no libero listed — ask the coach (mark "no libero" if they aren't using one)`);
   if (!num(team.captain)) out.push(`${label}no captain marked`);
   return out;
@@ -104,6 +107,15 @@ export function replay(set, prior = []) {
     out: { H: new Map(), V: new Map() }, // DQ / concussed this match: number -> reason
     setOver: null,
     lastEvent: set.events[set.events.length - 1] || null,
+    // ── libero tracking (the MIAA libero tracking sheet) ──
+    lib: { H: null, V: null }, // on court: { libero, row, player }
+    liberoServeRow: { H: null, V: null }, // the one serving position she may serve in
+    rallies: 0, // completed rallies — a libero replacement needs one in between
+    lastLibChange: { H: -1, V: -1 },
+    track: { H: [], V: [] }, // per row: current-player entries [{ v, at }] ("L" = libero)
+    termAt: { H: [], V: [] }, // per row: event indices where a term of service began
+    switchAt: null, // event index after which the score first reached 8 (deciding-set side switch)
+    libWarnings: [], // { at, team, text } — things the libero tracker tells the R2
   };
   for (const t of teamKeys) {
     const team = set.teams[t];
@@ -113,8 +125,12 @@ export function replay(set, prior = []) {
     });
     const lib = num(team.libero);
     if (lib) st.liberos[t].push(lib);
+    st.track[t] = team.lineup.map((n) => [{ v: num(n), at: -1 }]);
+    st.termAt[t] = team.lineup.map(() => []);
   }
   st.rows[set.firstServe][0].terms = 1;
+  st.termAt[set.firstServe][0].push(-1);
+  let at = -1; // index of the event being replayed
 
   // Match-wide carry-overs from earlier sets.
   const carried = { H: [], V: [] };
@@ -139,10 +155,24 @@ export function replay(set, prior = []) {
     st.run[t][n] = type;
     st.runRound[t][n] = roundOf(t, r);
   };
+  const libWarn = (t, text) => st.libWarnings.push({ at, team: t, text });
+  // The libero serves whenever she is standing in the serving position — the
+  // tracker knows that from the replacements, so the scorer needn't tap
+  // "libero serves" as well. NFHS lets her serve in ONE position per set.
+  const autoLibero = (s, r) => {
+    const on = st.lib[s];
+    if (!on || on.row !== r) return false;
+    if (st.liberoServeRow[s] == null) st.liberoServeRow[s] = r;
+    else if (st.liberoServeRow[s] !== r)
+      libWarn(s, `Libero #${on.libero} served in position ${ROMAN[r]} — she already served in ${ROMAN[st.liberoServeRow[s]]} this set. Tell the R2.`);
+    st.rows[s][r].liberoTri = true;
+    return true;
+  };
   const rally = (winner, penalty = false) => {
     const s = st.serving;
     const r = serverRow();
-    const lib = st.liberoServing;
+    const lib = st.liberoServing || autoLibero(s, r);
+    st.rallies += 1;
     if (winner === s) {
       const n = ++st.score[s];
       if (lib) {
@@ -161,6 +191,7 @@ export function replay(set, prior = []) {
       st.reservesThisTerm = 0;
       const nr = st.nextRow[winner];
       st.rows[winner][nr].terms += 1;
+      st.termAt[winner][nr].push(at);
       const n = ++st.score[winner];
       write(winner, nr, { k: penalty ? "circle" : "box", n });
       mark(winner, n, penalty ? "circle" : "box", nr);
@@ -168,16 +199,43 @@ export function replay(set, prior = []) {
   };
 
   for (const ev of set.events) {
+    at += 1;
     if (st.setOver && ev.type !== "note") continue;
     const s = st.serving;
     switch (ev.type) {
       case "rally":
         rally(ev.winner);
         break;
-      case "liberoServe":
+      case "liberoServe": {
+        const r = serverRow();
         st.liberoServing = true;
-        st.rows[s][serverRow()].liberoTri = true;
+        st.rows[s][r].liberoTri = true;
+        if (st.liberoServeRow[s] == null) st.liberoServeRow[s] = r;
+        else if (st.liberoServeRow[s] !== r)
+          libWarn(s, `The libero served in position ${ROMAN[r]} — she already served in ${ROMAN[st.liberoServeRow[s]]} this set. Tell the R2.`);
         break;
+      }
+      case "libero": {
+        // dir "in": the libero replaces `player`; "out": `player` comes back
+        // for her; "swap": the other libero takes her place (L1 <-> L2).
+        const t = ev.team;
+        const w = liberoWarnings(st, t, ev);
+        w.forEach((text) => libWarn(t, text));
+        if (ev.dir === "in") {
+          const row = st.rows[t].findIndex((rw) => rw.numbers[rw.numbers.length - 1] === num(ev.player));
+          if (row < 0) break;
+          st.lib[t] = { libero: num(ev.libero), row, player: num(ev.player) };
+          st.track[t][row].push({ v: "L", at });
+        } else if (ev.dir === "out" && st.lib[t]) {
+          const { row } = st.lib[t];
+          st.track[t][row].push({ v: currentNumber(st, t, row), at });
+          st.lib[t] = null;
+        } else if (ev.dir === "swap" && st.lib[t]) {
+          st.lib[t] = { ...st.lib[t], libero: num(ev.libero) };
+        }
+        if (ev.dir !== "swap") st.lastLibChange[t] = st.rallies;
+        break;
+      }
       case "sub": {
         const t = ev.team;
         const pairs = [];
@@ -185,6 +243,7 @@ export function replay(set, prior = []) {
           const i = st.rows[t].findIndex((row) => row.numbers[row.numbers.length - 1] === num(p.out));
           if (i < 0) continue;
           st.rows[t][i].numbers.push(num(p.in));
+          st.track[t][i].push({ v: num(p.in), at });
           if (st.boundRow[t][num(p.in)] === undefined) st.boundRow[t][num(p.in)] = i;
           pairs.push({ in: num(p.in), out: num(p.out) });
           if (!(ev.exceptional && st.subs[t] >= SUB_LIMIT)) st.subs[t] += 1;
@@ -226,8 +285,21 @@ export function replay(set, prior = []) {
       default:
         break;
     }
+    if (st.switchAt == null && Math.max(st.score.H, st.score.V) >= 8) st.switchAt = at;
     const lead = st.score.H - st.score.V;
     if (Math.max(st.score.H, st.score.V) >= set.target && Math.abs(lead) >= 2) st.setOver = lead > 0 ? "H" : "V";
+  }
+
+  // Live prompts for the libero tracker, derived from where things stand now
+  // (never stored — they clear themselves the moment the situation does).
+  st.libPrompts = [];
+  for (const t of teamKeys) {
+    const on = st.lib[t];
+    if (!on) continue;
+    if (!backRowRows(st, t).includes(on.row))
+      st.libPrompts.push({ team: t, kind: "frontRow", text: `Libero #${on.libero} has rotated to the front row — #${currentNumber(st, t, on.row)} must come back in for her.` });
+    else if (st.serving === t && st.nextRow[t] === on.row && st.liberoServeRow[t] != null && st.liberoServeRow[t] !== on.row)
+      st.libPrompts.push({ team: t, kind: "serve", text: `Libero #${on.libero} is about to serve in position ${ROMAN[on.row]}, but she already served in ${ROMAN[st.liberoServeRow[t]]} this set — #${currentNumber(st, t, on.row)} must come back in to serve.` });
   }
 
   st.server = {
@@ -241,6 +313,34 @@ export function replay(set, prior = []) {
 export function currentNumber(st, t, r) {
   const row = st.rows[t][r];
   return row ? row.numbers[row.numbers.length - 1] : "";
+}
+
+// Serving-order rows currently in the back row (positions 1, 6 and 5). The
+// serving team's server is in position 1; a receiving team's position 1 is
+// the player who served last, one behind its next server.
+export function backRowRows(st, t) {
+  const k = st.serving === t ? st.nextRow[t] : (st.nextRow[t] + 5) % 6;
+  return [k, (k + 4) % 6, (k + 5) % 6];
+}
+
+// What the libero tracker should tell the R2 about a proposed replacement.
+// Warnings, like everything else here — the officials rule.
+export function liberoWarnings(st, t, ev) {
+  const w = [];
+  const on = st.lib[t];
+  const noRally = st.lastLibChange[t] === st.rallies && st.lastLibChange[t] >= 0;
+  if (ev.dir === "in") {
+    if (on) w.push(`Libero #${on.libero} is already on the court — two liberos can't be on together (use the L1/L2 exchange).`);
+    const row = st.rows[t].findIndex((rw) => rw.numbers[rw.numbers.length - 1] === num(ev.player));
+    if (row >= 0 && !backRowRows(st, t).includes(row)) w.push(`#${num(ev.player)} is in the front row — the libero may only replace a back-row player.`);
+    if (noRally) w.push("There must be a completed rally between libero replacements.");
+  } else if (ev.dir === "out") {
+    if (!on) w.push("The libero isn't on the court.");
+    else if (ev.player && num(ev.player) !== currentNumber(st, t, on.row))
+      w.push(`Only #${currentNumber(st, t, on.row)}, the player she replaced, may come back in for the libero.`);
+    if (on && noRally && backRowRows(st, t).includes(on.row)) w.push("There must be a completed rally between libero replacements.");
+  }
+  return w;
 }
 
 export function onCourt(st, t) {
@@ -270,6 +370,8 @@ export function subWarnings(st, t, pairs, { exceptional = false, roster = null }
     const pout = num(p.out);
     if (!pin || !pout) return;
     if (!court.includes(pout)) w.push(`#${pout} is not on the court for this team.`);
+    if (st.lib[t] && st.lib[t].player === pout)
+      w.push(`#${pout} is off the court — libero #${st.lib[t].libero} is in for her. Bring #${pout} back for the libero first.`);
     if (court.includes(pin)) w.push(`#${pin} is already on the court.`);
     if (libs.includes(pin) || libs.includes(pout)) w.push(`#${libs.includes(pin) ? pin : pout} is the libero — a libero replacement isn't a substitution.`);
     const bound = st.boundRow[t][pin];

@@ -35,3 +35,9 @@ repo, set **Root Directory** to `scoresheet`, framework Vite. Name the project
 `volley-bandit-scoresheet.vercel.app` — that's the URL Volley Bandit's link
 points at (`SCORE_SHEET_URL` in `src/scoreSheetLink.js` at the repo root). If
 Vercel gives it a different address, change that constant to match.
+
+## Libero tracking
+
+The same app keeps the libero tracking sheet (laid out like the MIAA form):
+tap "Libero in" / "L out" as replacements happen, and the PDF gets a portrait
+tracking page after the score sheets. `test/libero.test.mjs` covers the rules.

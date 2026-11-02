@@ -4,8 +4,11 @@ import {
   ROMAN,
   SUB_LIMIT,
   TIMEOUT_LIMIT,
+  backRowRows,
+  liberoWarnings,
   lineupCheck,
   lineupProblems,
+  currentNumber,
   matchTally,
   newSet,
   num,
@@ -14,6 +17,7 @@ import {
   subWarnings,
 } from "./engine.js";
 import Sheet, { SHEET_H, SHEET_W, fmtTime } from "./Sheet.jsx";
+import TrackerSheet, { TRACK_W } from "./Tracker.jsx";
 import { exportPdf } from "./pdf.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +38,7 @@ import { exportPdf } from "./pdf.js";
 // The rules live in engine.js; this file is screens.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION = "2026.11.02a";
+const APP_VERSION = "2026.11.02b";
 const STORE_KEY = "vbs-matches-v1";
 
 const C = {
@@ -214,7 +218,7 @@ function Seg({ options, value, onChange }) {
 
 // Scales the paper sheet down to the width it's given. Tap to see it at
 // full size (scrolls sideways on a phone), tap again to fit.
-function ScaledSheet(props) {
+function ScaledSheet({ pageWidth = SHEET_W, children, ...props }) {
   const ref = useRef(null);
   const inner = useRef(null);
   const [w, setW] = useState(360);
@@ -232,13 +236,13 @@ function ScaledSheet(props) {
     setW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
-  const k = zoom ? 1 : Math.min(1, w / SHEET_W);
+  const k = zoom ? 1 : Math.min(1, w / pageWidth);
   return (
     <>
       <div style={{ fontSize: 11, color: C.dim, margin: "0 0 4px" }}>{k < 1 ? "Tap the sheet to see it full size" : zoom ? "Tap to fit the screen" : ""}</div>
       <div ref={ref} onClick={() => setZoom((z) => !z)} style={{ width: "100%", height: h * k, overflowX: zoom ? "auto" : "hidden", overflowY: "hidden", borderRadius: 6, cursor: "zoom-in" }}>
-        <div ref={inner} style={{ transform: `scale(${k})`, transformOrigin: "top left", width: SHEET_W }}>
-          <Sheet {...props} />
+        <div ref={inner} style={{ transform: `scale(${k})`, transformOrigin: "top left", width: pageWidth }}>
+          {children || <Sheet {...props} />}
         </div>
       </div>
     </>
@@ -332,6 +336,7 @@ export default function App() {
           {printing.sets.map((s, i) =>
             s.startTime ? <Sheet key={i} match={printing} set={s} st={replay(s, printing.sets.slice(0, i))} /> : null
           )}
+          <TrackerSheet match={printing} />
         </div>
       )}
     </div>
@@ -539,6 +544,14 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
               <option value="3-15">Best of 3, 3rd set to 15</option>
             </select>
           </label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: C.dim, gridColumn: "1 / -1" }}>
+            <input
+              type="checkbox"
+              checked={match.switchAt8 !== false}
+              onChange={(e) => updateMatch(match.id, (m) => ({ ...m, switchAt8: e.target.checked }))}
+            />
+            Deciding set to 15: teams switch sides at 8 (MIAA)
+          </label>
         </div>
       </div>
     </>
@@ -610,25 +623,30 @@ function SetupScreen({ match, idx, updateMatch, setView }) {
             </button>
           </div>
         ))}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-          <span style={{ width: 30, fontSize: 11, color: C.dim, fontWeight: 700 }}>LIB</span>
-          <input
-            style={{ ...input, flex: 1, opacity: team.noLibero ? 0.4 : 1 }}
-            inputMode="numeric"
-            value={team.libero}
-            placeholder="Libero #"
-            disabled={team.noLibero}
-            onChange={(e) => setTeam(t, (x) => ({ ...x, libero: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) }))}
-          />
-          <button
-            onClick={() => setTeam(t, (x) => ({ ...x, captain: num(x.libero) && x.captain !== num(x.libero) ? num(x.libero) : "" }))}
-            style={btn(team.captain && team.captain === num(team.libero) ? C.accent : C.card2, team.captain && team.captain === num(team.libero) ? "#1a0a0f" : C.dim, { padding: "8px 12px" })}
-          >
-            c
-          </button>
-        </div>
+        {[
+          ["libero", "L1", "Libero #"],
+          ["libero2", "L2", "Second libero (optional)"],
+        ].map(([key, tag, ph]) => (
+          <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: key === "libero" ? 10 : 6 }}>
+            <span style={{ width: 30, fontSize: 11, color: C.dim, fontWeight: 700 }}>{tag}</span>
+            <input
+              style={{ ...input, flex: 1, opacity: team.noLibero ? 0.4 : 1 }}
+              inputMode="numeric"
+              value={team[key] || ""}
+              placeholder={ph}
+              disabled={team.noLibero}
+              onChange={(e) => setTeam(t, (x) => ({ ...x, [key]: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) }))}
+            />
+            <button
+              onClick={() => setTeam(t, (x) => ({ ...x, captain: num(x[key]) && x.captain !== num(x[key]) ? num(x[key]) : "" }))}
+              style={btn(team.captain && team.captain === num(team[key]) ? C.accent : C.card2, team.captain && team.captain === num(team[key]) ? "#1a0a0f" : C.dim, { padding: "8px 12px" })}
+            >
+              c
+            </button>
+          </div>
+        ))}
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 13, color: C.dim }}>
-          <input type="checkbox" checked={team.noLibero} onChange={(e) => setTeam(t, (x) => ({ ...x, noLibero: e.target.checked, libero: e.target.checked ? "" : x.libero }))} />
+          <input type="checkbox" checked={team.noLibero} onChange={(e) => setTeam(t, (x) => ({ ...x, noLibero: e.target.checked, libero: e.target.checked ? "" : x.libero, libero2: e.target.checked ? "" : x.libero2 }))} />
           Coach marked X — not playing with a libero this set
         </label>
       </div>
@@ -685,6 +703,8 @@ function describe(ev, name) {
       return "Replay";
     case "liberoServe":
       return "Libero serving";
+    case "libero":
+      return ev.dir === "in" ? `Libero #${ev.libero} in for #${ev.player}` : ev.dir === "out" ? `#${ev.player} back for the libero` : `Libero exchange #${ev.libero}`;
     case "comment":
       return `${ev.code === "NOTE" ? ev.text || "Comment" : ev.code} ${name(ev.team)}`;
     default:
@@ -721,18 +741,32 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
   const prior = useMemo(() => match.sets.slice(0, idx), [match.sets, idx]);
   const st = useMemo(() => (set ? replay(set, prior) : null), [set, prior]);
   const [panel, setPanel] = useState(null);
+  const [sheetView, setSheetView] = useState("score"); // "score" | "libero"
   useWakeLock(!!set && !set.ended);
   if (!set || !st) return null;
 
   const name = (t) => (t === "H" ? match.header.home || "Home" : match.header.visitor || "Visitor");
-  const L = set.left;
+  // Deciding set: from the first 8 the teams have switched sides, so the
+  // screen swaps too (the paper score sheet doesn't — it's by team).
+  const deciding = set.number === (match.bestOf || 5);
+  const switched = deciding && set.target === 15 && match.switchAt8 !== false && st.switchAt != null;
+  const justSwitched = switched && st.switchAt === set.events.length - 1;
+  const L = switched ? other(set.left) : set.left;
   const R = other(L);
   const patch = (fn) => updateMatch(match.id, (m) => ({ ...m, sets: m.sets.map((s, i) => (i === idx ? fn(s) : s)) }));
   const push = (ev) => patch((s) => ({ ...s, events: [...s.events, { ...ev, at: Date.now() }] }));
   const undo = () => patch((s) => ({ ...s, events: s.events.slice(0, -1) }));
   const last = set.events[set.events.length - 1];
   const s = st.serving;
-  const hasLibero = (t) => !set.teams[t].noLibero && st.liberos[t].length > 0;
+  const liberosOf = (t) => (set.teams[t].noLibero ? [] : [st.liberos[t][st.liberos[t].length - 1], num(set.teams[t].libero2)].filter(Boolean));
+  const hasLibero = (t) => liberosOf(t).length > 0;
+  // A libero replacement records straight away when it's clean, and opens a
+  // panel to confirm when the tracker should tell the R2 something first.
+  const liberoAct = (ev) => {
+    const w = liberoWarnings(st, ev.team, ev);
+    if (w.length) setPanel({ kind: "liberoWarn", ev, warnings: w });
+    else push(ev);
+  };
   const over = !!st.setOver;
   const locked = set.ended;
 
@@ -810,6 +844,21 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
         </div>
       ) : (
         <>
+          {justSwitched && (
+            <div style={{ background: C.goldSoft, border: `1px solid ${C.gold}`, borderRadius: 12, padding: 10, marginBottom: 8, fontWeight: 800, color: C.gold, textAlign: "center" }}>
+              8 points — teams switch sides. The screen has switched with them.
+            </div>
+          )}
+          {st.libPrompts.map((p, i) => (
+            <div key={i} style={{ background: C.goldSoft, border: `1px solid ${C.gold}`, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 13, color: C.gold, fontWeight: 700, marginBottom: 8 }}>
+                {name(p.team)}: {p.text}
+              </div>
+              <button style={btn(C.gold, "#1a1406", { width: "100%" })} onClick={() => push({ type: "libero", team: p.team, dir: "out", player: currentNumber(st, p.team, st.lib[p.team].row) })}>
+                Record #{currentNumber(st, p.team, st.lib[p.team].row)} back in for the libero
+              </button>
+            </div>
+          ))}
           <div style={{ fontSize: 11, color: C.dim, textAlign: "center", marginBottom: 4 }}>RALLY WON BY</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             {[L, R].map((t) => (
@@ -828,6 +877,27 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
             {act(st.liberoServing ? "Libero serving ✓" : "Libero serves", () => push({ type: "liberoServe" }), { disabled: st.liberoServing || !hasLibero(s), on: st.liberoServing })}
             {act("Card / comment", () => setPanel({ kind: "comment", team: L }))}
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+            {[L, R].map((t) => {
+              const on = st.lib[t];
+              if (!hasLibero(t)) return <div key={t} style={{ fontSize: 11, color: C.dim, textAlign: "center", alignSelf: "center" }}>{name(t).slice(0, 14)}: no libero</div>;
+              if (!on) return <React.Fragment key={t}>{act(`Libero in · ${name(t).slice(0, 10)}`, () => setPanel({ kind: "liberoIn", team: t }))}</React.Fragment>;
+              const back = currentNumber(st, t, on.row);
+              const other2 = liberosOf(t).find((x) => x !== on.libero);
+              return (
+                <div key={t} style={{ display: "flex", gap: 4 }}>
+                  <button style={btn(C.accentSoft, C.accent, { flex: 1, padding: "9px 4px", fontSize: 12, borderColor: C.accent })} onClick={() => liberoAct({ type: "libero", team: t, dir: "out", player: back })}>
+                    L{on.libero} out · #{back} in
+                  </button>
+                  {other2 && (
+                    <button style={btn(C.card2, C.text, { padding: "9px 6px", fontSize: 12 })} onClick={() => push({ type: "libero", team: t, dir: "swap", libero: other2 })} title={`Libero exchange: #${other2} for #${on.libero}`}>
+                      ⇄{other2}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
 
@@ -840,7 +910,33 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
         </button>
       </div>
 
-      <ScaledSheet match={match} set={set} st={st} />
+      <div style={{ marginBottom: 8 }}>
+        <Seg options={[["score", "Score sheet"], ["libero", "Libero tracking"]]} value={sheetView} onChange={setSheetView} />
+      </div>
+      {sheetView === "score" ? (
+        <ScaledSheet match={match} set={set} st={st} />
+      ) : (
+        <ScaledSheet pageWidth={TRACK_W}>
+          <TrackerSheet match={match} />
+        </ScaledSheet>
+      )}
+
+      {panel?.kind === "liberoIn" && (
+        <LiberoInPanel st={st} team={panel.team} liberos={liberosOf(panel.team)} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />
+      )}
+      {panel?.kind === "liberoWarn" && (
+        <Panel title="Libero replacement" onClose={() => setPanel(null)}>
+          <Warnings list={panel.warnings} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={btn(C.card2, C.text, { flex: 1 })} onClick={() => setPanel(null)}>
+              Don't record
+            </button>
+            <button style={btn(C.card2, C.gold)} onClick={() => { push(panel.ev); setPanel(null); }}>
+              Record anyway
+            </button>
+          </div>
+        </Panel>
+      )}
 
       {panel?.kind === "sub" && <SubPanel st={st} team={panel.team} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />}
       {panel?.kind === "comment" && <CommentPanel match={match} idx={idx} st={st} first={panel.team} L={L} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />}
@@ -885,7 +981,8 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
                   "{chk.lead} is <b>#{chk.order[0]}</b>, followed by {chk.order.slice(1).map((n) => `#${n}`).join(", ")}."
                 </div>
                 <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>
-                  Libero: {set.teams[t].noLibero ? "none" : st.liberos[t].length ? `#${st.liberos[t][st.liberos[t].length - 1]}` : "not listed"}
+                  Libero: {set.teams[t].noLibero ? "none" : liberosOf(t).length ? liberosOf(t).map((x) => `#${x}`).join(" / ") : "not listed"}
+                  {st.lib[t] && ` — #${st.lib[t].libero} on court for #${currentNumber(st, t, st.lib[t].row)} (${ROMAN[st.lib[t].row]})`}
                 </div>
               </div>
             );
@@ -947,6 +1044,46 @@ function SubPanel({ st, team, name, onClose, onRecord }) {
       <Warnings list={warnings} />
       <button disabled={!ready.length} style={btn(ready.length ? (warnings.length ? C.gold : C.accent) : C.card2, ready.length ? "#1a0a0f" : C.dim, { width: "100%", padding: 14, marginTop: 6 })} onClick={() => onRecord({ type: "sub", team, pairs: ready, exceptional })}>
         {warnings.length ? "Record anyway (tell the R2)" : `Record substitution${ready.length > 1 ? "s" : ""}`}
+      </button>
+    </Panel>
+  );
+}
+
+function LiberoInPanel({ st, team, liberos, name, onClose, onRecord }) {
+  const back = backRowRows(st, team);
+  const [player, setPlayer] = useState("");
+  const [libero, setLibero] = useState(liberos[0] || "");
+  const ev = { type: "libero", team, dir: "in", player, libero };
+  const warnings = player ? liberoWarnings(st, team, ev) : [];
+  return (
+    <Panel title={`Libero in — ${name(team)}`} onClose={onClose}>
+      <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>
+        Not a substitution — it doesn't count toward the 18. On the tracking sheet the player is crossed out and an L written in.
+      </div>
+      {liberos.length > 1 && (
+        <>
+          <span style={label}>Which libero</span>
+          <Seg options={liberos.map((l, i) => [l, `L${i + 1} #${l}`])} value={libero} onChange={setLibero} />
+        </>
+      )}
+      <span style={{ ...label, marginTop: 10 }}>Replacing (back row)</span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+        {back.map((r) => {
+          const n = currentNumber(st, team, r);
+          return (
+            <button key={r} onClick={() => setPlayer(n)} style={btn(player === n ? C.accent : C.card2, player === n ? "#1a0a0f" : C.text, { padding: "12px 0" })}>
+              <div style={{ fontSize: 9, fontFamily: "Georgia, serif", opacity: 0.7 }}>{ROMAN[r]}</div>#{n}
+            </button>
+          );
+        })}
+      </div>
+      <Warnings list={warnings} />
+      <button
+        disabled={!player || !libero}
+        style={btn(player ? (warnings.length ? C.gold : C.accent) : C.card2, player ? "#1a0a0f" : C.dim, { width: "100%", padding: 14, marginTop: 10 })}
+        onClick={() => onRecord(ev)}
+      >
+        {warnings.length ? "Record anyway (tell the R2)" : player ? `Libero #${libero} in for #${player}` : "Pick the player she replaces"}
       </button>
     </Panel>
   );

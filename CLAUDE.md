@@ -1718,6 +1718,45 @@ this. Crimson icon (`#8C1C3A`), built by `design/icons/build.py` like the rest.
 - **Live at `volley-bandit-scoresheet.vercel.app`** once the coach creates the
   Vercel project (root directory `scoresheet`) — `SCORE_SHEET_URL` assumes that
   name. Not deployed as of this writing; this environment can't reach Vercel.
+- **Libero tracking is built in, laid out like the MIAA "Volleyball Libero
+  Tracking Sheet" (VB Form #3, 8/24/26)** — `src/Tracker.jsx`, one portrait
+  page for the whole match, appended to the PDF after the score sheets. The
+  coach supplied the blank form and a summary of an MIAA tutorial video:
+  - Per team per set: Service (one tally per TERM of service, not per point
+    — `termAt` in the replay), SP (starting player), CP (current players —
+    every change in order, all but the last crossed out: `L` when a libero
+    replaces her, her number again when she returns, a sub's number on a sub),
+    L1/L2, an S circled for the team that served first, Subs 1–18.
+  - Libero replacements are their own event (`{ type: "libero", team, dir:
+    "in"|"out"|"swap", player, libero }`) and never touch the sub count or the
+    score sheet's player-number column — the handbook says the scorer doesn't
+    record libero replacements, only her serves.
+  - **The libero's serve is detected, not tapped**: when she is standing in
+    the serving position (she replaced that row's player) every rally is a
+    triangle automatically. The manual "Libero serves" button remains for a
+    scorer not tracking replacements.
+  - Warnings (to tell the R2), all derived in `liberoWarnings`/`libPrompts`:
+    replacing a front-row player, two liberos on at once, no completed rally
+    between replacements, someone other than the replaced player coming back,
+    serving in a second serving position (NFHS: one position per set), and a
+    live prompt with a one-tap fix when her position rotates to the front row.
+    `backRowRows` is the rotation maths: a receiving team's position 1 is the
+    player who served LAST, one behind its next server.
+  - **Deciding set to 15, switch at 8 (MIAA)**: the form's set 5 has three
+    blocks, and the coach's video says to transfer positions at the 8-point
+    switch. `match.switchAt8` (default on; Match → Format), `st.switchAt` marks
+    the event; the live screen swaps sides there with a banner, and the
+    tracking sheet's third block starts from whoever was on court at the
+    switch. Off for a deciding set to 25. NFHS itself says no switch in the
+    deciding set (handbook p. 25) — this is the MIAA adoption, hence a setting.
+  - Verified: `test/libero.test.mjs` (rules, CP column, tallies, the switch),
+    and in a browser through the real buttons — panel offers only back-row
+    players, front-row prompt and its fix, L1↔L2 exchange, side swap at 8, and
+    a PDF of five landscape score sheets plus one portrait tracking page.
+  - NOT verified against a filled-in MIAA example — the coach supplied the
+    blank form and a video summary, not a worked example like the scoring
+    handbook's. Whether the S box takes an X or a circle, and exactly how the
+    tracker marks a libero-for-libero exchange, were judgment calls.
 - **Not built yet** (the "second pass" agreed with the coach): removing points
   for an improper server or illegal player (X over points, handbook pp. 21–23),
   forfeits (p. 24). Late/inaccurate lineup and roster ARE in, as notes that can

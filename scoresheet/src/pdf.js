@@ -10,16 +10,19 @@ export async function exportPdf(root, match) {
   if (!root) throw new Error("Nothing to print yet.");
   const pages = Array.from(root.querySelectorAll(".sheet-page"));
   if (!pages.length) throw new Error("No set has started yet.");
-  const pdf = new jsPDF("l", "pt", "letter");
-  const pw = pdf.internal.pageSize.getWidth();
-  const ph = pdf.internal.pageSize.getHeight();
+  // Score sheets are landscape; the libero tracking sheet (data-orient="p")
+  // is portrait, like the MIAA form.
+  const orient = (el) => (el.dataset.orient === "p" ? "p" : "l");
+  const pdf = new jsPDF(orient(pages[0]), "pt", "letter");
   for (let i = 0; i < pages.length; i++) {
     const canvas = await html2canvas(pages[i], { scale: 2, backgroundColor: "#ffffff", logging: false });
     const img = canvas.toDataURL("image/jpeg", 0.92);
+    if (i) pdf.addPage("letter", orient(pages[i]));
+    const pw = pdf.internal.pageSize.getWidth();
+    const ph = pdf.internal.pageSize.getHeight();
     const k = Math.min(pw / canvas.width, ph / canvas.height);
     const w = canvas.width * k;
     const h = canvas.height * k;
-    if (i) pdf.addPage("letter", "l");
     pdf.addImage(img, "JPEG", (pw - w) / 2, (ph - h) / 2, w, h);
   }
   const h = match.header;
