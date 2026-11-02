@@ -1,4 +1,4 @@
-"""Regenerate all three apps' icons from the sources in this folder.
+"""Regenerate every app's icons from the sources in this folder.
 
     python3 design/icons/build.py
 
@@ -25,6 +25,7 @@ APPS = [  # (public dir, background)
     ("public", "#255E42"),               # Volley Bandit — green
     ("player-eval/public", "#1F4E79"),   # Player Eval   — blue
     ("player-stats/public", "#5D3A7A"),  # Player Stats  — plum
+    ("scoresheet/public", "#8C1C3A"),    # Score Sheet   — crimson
 ]
 BONE = "#F5F3EE"
 TILE, BALL, COON = 512, 440, 320   # raccoon centred, ball a touch larger

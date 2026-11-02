@@ -1664,6 +1664,65 @@ from this repo's `src/`, same as Player Eval.
   plugins relative to the config file), named `vite.harness.*.tmp.js` so it
   stays gitignored.
 
+## The scorer's app (`scoresheet/`)
+
+A fourth Vite + React app: an interactive NFHS score sheet for the scorer's
+table, built from the Wildfire Sports "Scoring Handbook for NFHS Volleyball
+Matches" the coach supplied (the makers of VolleyWrite, a commercial scoring
+app). The NFHS notation is the public standard every scorer uses; the screens
+and wording here are our own — keep it that way, the coach intends to sell
+this. Crimson icon (`#8C1C3A`), built by `design/icons/build.py` like the rest.
+
+- **Separate app, no sign-in, no team code, no Firestore.** The scorer is
+  usually a parent volunteer or the OTHER school's scorer, so it must work for
+  anyone and expose nothing. Matches live in localStorage (`vbs-matches-v1`),
+  written on every tap; the whole app is precached. The official record is the
+  PDF (`src/pdf.js`, one landscape letter page per set, same share/download
+  fallback as the main app's print).
+- **Event-sourced.** A set is its setup plus an append-only list of events
+  (rally, sub, time-out, re-serve, replay, libero serve, comment).
+  `replay(set, priorSets)` in `src/engine.js` derives EVERY mark on the sheet
+  from scratch. Undo is popping the last event; the screen, the running score
+  and the PDF cannot disagree because they are one replay. Don't add state
+  that isn't derivable from the events — that is what would make Undo lie.
+- **Verified against the handbook itself**: `scoresheet/test/engine.test.mjs`
+  replays the handbook's worked example (pp. 26–31 — charged sub, concussion,
+  red card, exceptional sub, redesignated libero, libero serve, double
+  re-serve, two delay penalties) and asserts all twelve rows, both number
+  columns, sub counts, time-out boxes and comments match the finished sheet on
+  p. 31 exactly. The rendered sheet was also compared by eye against p. 31.
+  `npm test` in `scoresheet/`.
+- **Warnings, never refusals.** Re-entry into a second serving position, a
+  third time-out, a 15th+/19th sub, a DQ'd/concussed/exceptionally-subbed
+  player coming back, a second re-serve — the app tells the scorer to alert
+  the R2 and still lets them record what the officials actually ruled. A rule
+  this app gets wrong must never stop a match.
+- **Delay sanctions are the R1's call, not computed.** The scorer picks YUD or
+  RUD from what the R1 shows; the panel lists the team's earlier delays in the
+  match as a reminder. Whether NFHS delays accumulate across sets wasn't
+  something to guess at.
+- **Carry-over**: YC/RC/DQ/CM are re-written on every later set's sheet with
+  ", Set N" (handbook p. 16–19); DQ and CM players are flagged if subbed back
+  in any later set.
+- **The sheet is 1056 px wide (letter landscape at 96 dpi) with a MIN height**,
+  not a fixed one: a set with many subs grows the page rather than clipping the
+  footer, and the PDF scales it to fit.
+- **Volley Bandit → Score Sheet link** (`src/scoreSheetLink.js` at the repo
+  root, Settings → "Open Score Sheet with our lineups"): base64url JSON in the
+  `#fragment` with the team name, opponent/date/site and per set the jersey
+  numbers in SERVING ORDER (I = P1 when the lineup's `servesFirst` is "us";
+  I = P2, right front, when it's "opp"), the libero (her libero jersey, via
+  `jerseyFor`) and the captain. Never the team code, never a name —
+  `scoresheet/test/link.test.mjs` walks the payload against an allow-list of
+  keys. Shown on assistant devices too, since it carries nothing of the team's.
+- **Live at `volley-bandit-scoresheet.vercel.app`** once the coach creates the
+  Vercel project (root directory `scoresheet`) — `SCORE_SHEET_URL` assumes that
+  name. Not deployed as of this writing; this environment can't reach Vercel.
+- **Not built yet** (the "second pass" agreed with the coach): removing points
+  for an improper server or illegal player (X over points, handbook pp. 21–23),
+  forfeits (p. 24). Late/inaccurate lineup and roster ARE in, as notes that can
+  award a penalty point or charge a sub.
+
 ## Open — deferred, not bugs to fix unasked
 
 Things a session has noticed, raised with the coach, and been asked to leave
@@ -1694,7 +1753,7 @@ unless the coach says so.
 All three apps share one mark — the Thrift Bandit raccoon over a volleyball —
 and **the background colour is what says which app it is**: Volley Bandit
 `#255E42` (green), Player Eval `#1F4E79` (blue), Player Stats `#5D3A7A`
-(plum). That rule comes from Thrift Bandit, the coach's other app, which is
+(plum), Score Sheet `#8C1C3A` (crimson). That rule comes from Thrift Bandit, the coach's other app, which is
 the same raccoon on orange. Before this they all shipped the *identical* "VB"
 tile, so two of them installed on one phone were indistinguishable.
 

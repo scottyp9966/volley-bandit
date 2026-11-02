@@ -8,6 +8,7 @@ import { registerSW } from "virtual:pwa-register";
 import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
 import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
+import { buildScoreSheetPayload, scoreSheetUrl } from "./scoreSheetLink.js";
 import { generateCodes, buildPublishedSet, entitlementsOf, playerInviteMessage, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
 import {
   generateAssistantCode,
@@ -46,7 +47,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.11.01a";
+const APP_VERSION = "2026.11.02a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -9823,6 +9824,7 @@ function SettingsSheet({
   issueAssistantCode,
   revokeAssistantCode,
   assistantCodeError,
+  openScoreSheet,
 }) {
   const [statListMode, setStatListMode] = useState("track"); // "track" | "print"
   const [mergeKeepId, setMergeKeepId] = useState("");
@@ -10204,6 +10206,20 @@ function SettingsSheet({
             "Open Player Eval ↗",
             { border: `1px solid ${COLORS.orange}`, background: COLORS.accentSoft }
           )}
+        {/* Fine on an assistant device: the link carries jersey numbers and
+            a team name only — never the team code (see scoreSheetLink.js). */}
+        {openScoreSheet &&
+          actionBtn(openScoreSheet, "Open Score Sheet with our lineups ↗", {
+            border: `1px solid ${COLORS.orange}`,
+            background: COLORS.accentSoft,
+          })}
+        {openScoreSheet && (
+          <div style={{ fontSize: 11, color: COLORS.chalkDim, margin: "2px 0 8px" }}>
+            The NFHS score sheet for the scorer's table, filled in with this
+            match's lineups (jersey numbers only). Hand the link to whoever is
+            keeping the book.
+          </div>
+        )}
         {/* NOT on an assistant device, and this is the one that matters most
             on this screen. The backup is the whole team in a file a helper
             could keep: the TEAM CODE (in the JSON and in the filename), every
@@ -11688,6 +11704,27 @@ function AppInner() {
   const tourneyPrintRef = useRef(null);
   const [tourneyPrinting, setTourneyPrinting] = useState(false);
   const [tourneyReady, setTourneyReady] = useState(false);
+  // Opens the Score Sheet app with this team's lineups, for the active match
+  // (or the next one on the schedule). The link carries jersey numbers and a
+  // team name only — see scoreSheetLink.js for why never the team code.
+  const openScoreSheet = () => {
+    const today = todayISO();
+    const match =
+      matches.find((m) => m.id === activeMatchId) ||
+      [...matches].filter((m) => m.date && m.date >= today).sort((a, b) => (a.date < b.date ? -1 : 1))[0] ||
+      null;
+    const payload = buildScoreSheetPayload({
+      teamName,
+      match,
+      lineups,
+      roster,
+      captainIds,
+      rawSlots: (l) => computeRawRotationSlots(l, 1),
+      jersey: jerseyFor,
+    });
+    window.open(scoreSheetUrl(payload), "_blank", "noopener,noreferrer");
+  };
+
   const handlePrint = async (explicitTarget) => {
     if (printing) return;
     setPrinting(true);
@@ -12407,6 +12444,7 @@ function AppInner() {
             issueAssistantCode={issueAssistantCode}
             revokeAssistantCode={revokeAssistantCode}
             assistantCodeError={assistantCodeError}
+            openScoreSheet={openScoreSheet}
           />
         )}
         {tab === "roster" && (
