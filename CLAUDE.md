@@ -1749,6 +1749,16 @@ this. Crimson icon (`#8C1C3A`), built by `design/icons/build.py` like the rest.
     tracking sheet's third block starts from whoever was on court at the
     switch. Off for a deciding set to 25. NFHS itself says no switch in the
     deciding set (handbook p. 25) — this is the MIAA adoption, hence a setting.
+    **The officials don't always switch**, so it's also per set:
+    `set.noSwitch`, set by a "The teams did NOT switch" button on the switch
+    banner or a checkbox under the scoreboard in that set (both undoable).
+    Everything asks `sidesSwitch(match, set)` in `engine.js` rather than
+    reading the flags itself; the tracking sheet notes "teams did not switch
+    sides" on set 5.
+  - **The live screen has three views** (top toggle): Scoring, Score sheet,
+    Libero sheet — the two sheet views are the real paper sheets full width
+    with no controls, for when an official wants to see the record. The
+    Scoring view keeps a small score-sheet preview under the buttons.
   - Verified: `test/libero.test.mjs` (rules, CP column, tallies, the switch),
     and in a browser through the real buttons — panel offers only back-row
     players, front-row prompt and its fix, L1↔L2 exchange, side swap at 8, and

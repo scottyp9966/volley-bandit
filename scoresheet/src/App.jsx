@@ -8,6 +8,7 @@ import {
   liberoWarnings,
   lineupCheck,
   lineupProblems,
+  sidesSwitch,
   currentNumber,
   matchTally,
   newSet,
@@ -38,7 +39,7 @@ import { exportPdf } from "./pdf.js";
 // The rules live in engine.js; this file is screens.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION = "2026.11.02b";
+const APP_VERSION = "2026.11.02c";
 const STORE_KEY = "vbs-matches-v1";
 
 const C = {
@@ -741,7 +742,9 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
   const prior = useMemo(() => match.sets.slice(0, idx), [match.sets, idx]);
   const st = useMemo(() => (set ? replay(set, prior) : null), [set, prior]);
   const [panel, setPanel] = useState(null);
-  const [sheetView, setSheetView] = useState("score"); // "score" | "libero"
+  // What fills the screen: the scoring controls, or the live paper sheets
+  // full size — for showing the officials what's actually on the record.
+  const [mode, setMode] = useState("controls"); // "controls" | "score" | "libero"
   useWakeLock(!!set && !set.ended);
   if (!set || !st) return null;
 
@@ -749,7 +752,8 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
   // Deciding set: from the first 8 the teams have switched sides, so the
   // screen swaps too (the paper score sheet doesn't — it's by team).
   const deciding = set.number === (match.bestOf || 5);
-  const switched = deciding && set.target === 15 && match.switchAt8 !== false && st.switchAt != null;
+  const switchRule = deciding && set.target === 15 && match.switchAt8 !== false;
+  const switched = sidesSwitch(match, set) && st.switchAt != null;
   const justSwitched = switched && st.switchAt === set.events.length - 1;
   const L = switched ? other(set.left) : set.left;
   const R = other(L);
@@ -811,10 +815,37 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
         </div>
       </div>
 
+      <div style={{ marginBottom: 10 }}>
+        <Seg options={[["controls", "Scoring"], ["score", "Score sheet"], ["libero", "Libero sheet"]]} value={mode} onChange={setMode} />
+      </div>
+
+      {mode !== "controls" ? (
+        <>
+          <div style={{ display: "flex", justifyContent: "center", gap: 14, fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
+            <span>{name(L)} {st.score[L]}</span>
+            <span style={{ color: C.dim }}>–</span>
+            <span>{st.score[R]} {name(R)}</span>
+          </div>
+          {mode === "score" ? (
+            <ScaledSheet match={match} set={set} st={st} />
+          ) : (
+            <ScaledSheet pageWidth={TRACK_W}>
+              <TrackerSheet match={match} />
+            </ScaledSheet>
+          )}
+        </>
+      ) : (
+      <>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         {teamHead(L)}
         {teamHead(R)}
       </div>
+      {switchRule && (
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: C.dim, marginBottom: 10 }}>
+          <input type="checkbox" checked={!!set.noSwitch} onChange={(e) => patch((x) => ({ ...x, noSwitch: e.target.checked }))} />
+          Teams did not switch sides at 8 this set
+        </label>
+      )}
 
       {locked ? (
         <div style={{ background: C.card, border: `1px solid ${C.green}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
@@ -847,6 +878,9 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
           {justSwitched && (
             <div style={{ background: C.goldSoft, border: `1px solid ${C.gold}`, borderRadius: 12, padding: 10, marginBottom: 8, fontWeight: 800, color: C.gold, textAlign: "center" }}>
               8 points — teams switch sides. The screen has switched with them.
+              <button style={btn(C.card2, C.text, { width: "100%", marginTop: 8, fontSize: 13 })} onClick={() => patch((x) => ({ ...x, noSwitch: true }))}>
+                The teams did NOT switch
+              </button>
             </div>
           )}
           {st.libPrompts.map((p, i) => (
@@ -910,15 +944,8 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
         </button>
       </div>
 
-      <div style={{ marginBottom: 8 }}>
-        <Seg options={[["score", "Score sheet"], ["libero", "Libero tracking"]]} value={sheetView} onChange={setSheetView} />
-      </div>
-      {sheetView === "score" ? (
-        <ScaledSheet match={match} set={set} st={st} />
-      ) : (
-        <ScaledSheet pageWidth={TRACK_W}>
-          <TrackerSheet match={match} />
-        </ScaledSheet>
+      <ScaledSheet match={match} set={set} st={st} />
+      </>
       )}
 
       {panel?.kind === "liberoIn" && (

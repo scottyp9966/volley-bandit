@@ -315,6 +315,14 @@ export function currentNumber(st, t, r) {
   return row ? row.numbers[row.numbers.length - 1] : "";
 }
 
+// Whether the deciding-set side switch at 8 applies to this set: a deciding
+// set to 15, the match's MIAA option on (the default), and nobody having
+// marked that the teams stayed put this time. The officials don't always
+// switch, so `set.noSwitch` is the scorer saying what actually happened.
+export function sidesSwitch(match, set) {
+  return set.number === (match.bestOf || 5) && set.target === 15 && match.switchAt8 !== false && !set.noSwitch;
+}
+
 // Serving-order rows currently in the back row (positions 1, 6 and 5). The
 // serving team's server is in position 1; a receiving team's position 1 is
 // the player who served last, one behind its next server.

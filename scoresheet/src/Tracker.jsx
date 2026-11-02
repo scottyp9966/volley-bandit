@@ -1,5 +1,5 @@
 import React from "react";
-import { ROMAN, SUB_LIMIT, other, replay } from "./engine.js";
+import { ROMAN, SUB_LIMIT, other, replay, sidesSwitch } from "./engine.js";
 
 // The libero tracking sheet, laid out like the MIAA form (VB Form #3): every
 // set of the match on one portrait page, each team a block of six serving
@@ -144,7 +144,7 @@ function SetRow({ match, idx }) {
   if (deciding) {
     let blocks = [{}, {}, {}];
     if (st) {
-      const sw = match.switchAt8 !== false ? st.switchAt : null;
+      const sw = sidesSwitch(match, set) ? st.switchAt : null;
       if (sw == null) {
         blocks = [teamProps(match, set, st, L), teamProps(match, set, st, R), { name: "" }];
       } else {
@@ -161,7 +161,8 @@ function SetRow({ match, idx }) {
       <div style={{ border: `1.5px solid ${RULE}`, marginTop: 6 }}>
         <div style={{ textAlign: "center", fontWeight: 800, fontSize: 15, borderBottom: `1.5px solid ${RULE}`, padding: 2 }}>
           SET {n}
-          {st && match.switchAt8 !== false && st.switchAt != null && <span style={{ fontSize: 10, fontWeight: 600, color: BLUE }}> · sides switched at 8</span>}
+          {st && sidesSwitch(match, set) && st.switchAt != null && <span style={{ fontSize: 10, fontWeight: 600, color: BLUE }}> · sides switched at 8</span>}
+          {set?.noSwitch && <span style={{ fontSize: 10, fontWeight: 600, color: BLUE }}> · teams did not switch sides</span>}
         </div>
         <div style={{ display: "flex", gap: 0 }}>
           {blocks.map((b, i) => (

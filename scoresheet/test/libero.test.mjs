@@ -2,7 +2,7 @@
 // the score sheet's replay.
 //
 //   node test/libero.test.mjs
-import { newSet, replay, backRowRows, liberoWarnings, marksText } from "../src/engine.js";
+import { newSet, replay, backRowRows, liberoWarnings, marksText, sidesSwitch } from "../src/engine.js";
 
 let fails = 0;
 const eq = (got, want, msg) => {
@@ -100,6 +100,13 @@ for (let i = 0; i < 7; i++) { R(d, "V"); R(d, "H"); }
 eq(replay(d).switchAt, null, "7 - 7: no switch yet");
 R(d, "H");
 eq(replay(d).switchAt, d.events.length - 1, "first to 8: the switch is marked at that rally");
+
+const m5 = { bestOf: 5 };
+eq(sidesSwitch(m5, d), true, "deciding set to 15: switch at 8 applies by default");
+eq(sidesSwitch({ ...m5, switchAt8: false }, d), false, "match option off: no switch");
+eq(sidesSwitch(m5, { ...d, noSwitch: true }), false, "scorer marked the teams didn't switch: no switch");
+eq(sidesSwitch(m5, { ...d, number: 4 }), false, "not the deciding set: no switch");
+eq(sidesSwitch({ bestOf: 3 }, { ...d, number: 3, target: 25 }), false, "deciding set to 25: no switch");
 
 console.log(fails ? `\n${fails} FAILURES` : "\nall checks passed");
 process.exit(fails ? 1 : 0);
