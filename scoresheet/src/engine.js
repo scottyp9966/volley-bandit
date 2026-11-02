@@ -264,6 +264,9 @@ export function replay(set, prior = []) {
         st.reservesThisTerm += 1;
         if (ev.lost) rally(other(s));
         break;
+      case "switch":
+        if (st.switchAt == null) st.switchAt = at;
+        break;
       case "replay":
         write(s, serverRow(), { k: "r" });
         break;
@@ -285,6 +288,11 @@ export function replay(set, prior = []) {
       default:
         break;
     }
+    // A libero tracker's set (`trackerOnly`) records SIDE-OUTS, not points —
+    // the tracker follows rotations, and the scorer keeps the score. Its
+    // "score" is a count of side-outs, so it must never end a set or mark the
+    // switch at 8; the tracker taps those ("switch" event, End set).
+    if (set.trackerOnly) continue;
     if (st.switchAt == null && Math.max(st.score.H, st.score.V) >= 8) st.switchAt = at;
     const lead = st.score.H - st.score.V;
     if (Math.max(st.score.H, st.score.V) >= set.target && Math.abs(lead) >= 2) st.setOver = lead > 0 ? "H" : "V";

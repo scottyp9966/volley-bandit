@@ -20,6 +20,8 @@ import {
 import Sheet, { SHEET_H, SHEET_W, fmtTime } from "./Sheet.jsx";
 import TrackerSheet, { TRACK_W } from "./Tracker.jsx";
 import { exportPdf } from "./pdf.js";
+import jsQR from "jsqr";
+import { encodeSetHandoff, handoffFromText, handoffUrl, qrSvg } from "./handoff.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Volley Bandit Score Sheet — an interactive NFHS score sheet for the
@@ -39,7 +41,7 @@ import { exportPdf } from "./pdf.js";
 // The rules live in engine.js; this file is screens.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION = "2026.11.02c";
+const APP_VERSION = "2026.11.02d";
 const STORE_KEY = "vbs-matches-v1";
 
 const C = {
@@ -255,17 +257,29 @@ export default function App() {
   const [data, update] = useStore();
   const [view, setView] = useState({ name: "home" });
   const [pendingImport, setPendingImport] = useState(readImport);
+  const [pendingTrack, setPendingTrack] = useState(() => handoffFromText(window.location.hash));
   const [printing, setPrinting] = useState(null); // match being exported
   const [printError, setPrintError] = useState("");
 
+  // Links arrive two ways: on a fresh load, and — when the app is already
+  // open in that tab — as a bare #fragment change with no reload at all.
+  // Read both, then strip the fragment so a refresh doesn't offer it again.
   useEffect(() => {
-    if (window.location.hash.includes("import=")) {
+    const take = () => {
+      const h = window.location.hash;
+      if (!h.includes("import=") && !h.includes("track=")) return;
+      if (h.includes("track=")) setPendingTrack(handoffFromText(h));
+      if (h.includes("import=")) setPendingImport(readImport());
+      setView({ name: "home" });
       try {
         window.history.replaceState(null, "", window.location.pathname + window.location.search);
       } catch {
         /* ignore */
       }
-    }
+    };
+    take();
+    window.addEventListener("hashchange", take);
+    return () => window.removeEventListener("hashchange", take);
   }, []);
 
   const match = view.matchId ? data.matches.find((m) => m.id === view.matchId) : null;
@@ -288,6 +302,36 @@ export default function App() {
     setView({ name: "match", matchId: m.id });
   };
 
+  // A libero tracker's tablet takes one set's setup from the scorer's QR code.
+  // Same scorer match (sourceId) -> same tracker match, set by set; a set
+  // already being tracked keeps its events and only takes the new setup.
+  const importTrack = (pl) => {
+    let targetId = null;
+    update((d) => {
+      const existing = d.matches.find((m) => m.mode === "tracker" && pl.sourceId && m.sourceId === pl.sourceId);
+      const base =
+        existing ||
+        {
+          ...makeMatch({ level: LEVEL_FORMAT[pl.header.level] ? pl.header.level : "Varsity", header: pl.header }),
+          mode: "tracker",
+          sourceId: pl.sourceId,
+        };
+      const idx = pl.set.number - 1;
+      const sets = base.sets.slice();
+      for (let k = sets.length; k < idx; k++) sets.push({ ...newSet(k + 1), trackerOnly: true, ended: true, notTracked: true });
+      const prev = sets[idx];
+      const fresh = { ...newSet(pl.set.number, pl.set), teams: pl.set.teams, trackerOnly: true, startTime: Date.now() };
+      sets[idx] = prev && prev.events?.length ? { ...prev, left: pl.set.left, firstServe: pl.set.firstServe, target: pl.set.target, teams: pl.set.teams } : fresh;
+      const m = { ...base, header: { ...base.header, ...pl.header }, bestOf: pl.bestOf, decidingTarget: pl.decidingTarget, switchAt8: pl.switchAt8, sets };
+      targetId = m.id;
+      return { ...d, matches: existing ? d.matches.map((x) => (x.id === m.id ? m : x)) : [m, ...d.matches] };
+    });
+    setPendingTrack(null);
+    // update() runs its updater synchronously inside setData, so targetId is
+    // set by now on every React version this app builds against.
+    setTimeout(() => targetId && setView({ name: "live", matchId: targetId, setIdx: pl.set.number - 1 }), 0);
+  };
+
   const runExport = async (m) => {
     setPrintError("");
     setPrinting(m);
@@ -303,11 +347,16 @@ export default function App() {
 
   let body;
   if (view.name === "match" && match) {
-    body = <MatchScreen match={match} updateMatch={updateMatch} setView={setView} onExport={() => runExport(match)} exporting={!!printing} />;
+    body = <MatchScreen match={match} updateMatch={updateMatch} setView={setView} onExport={() => runExport(match)} exporting={!!printing} onScanned={importTrack} />;
   } else if (view.name === "setup" && match) {
     body = <SetupScreen match={match} idx={view.setIdx} updateMatch={updateMatch} setView={setView} />;
   } else if (view.name === "live" && match) {
-    body = <LiveScreen match={match} idx={view.setIdx} updateMatch={updateMatch} setView={setView} onExport={() => runExport(match)} exporting={!!printing} />;
+    body =
+      match.mode === "tracker" ? (
+        <TrackerLiveScreen match={match} idx={view.setIdx} updateMatch={updateMatch} setView={setView} onExport={() => runExport(match)} exporting={!!printing} onScanned={importTrack} />
+      ) : (
+        <LiveScreen match={match} idx={view.setIdx} updateMatch={updateMatch} setView={setView} onExport={() => runExport(match)} exporting={!!printing} />
+      );
   } else {
     body = (
       <HomeScreen
@@ -317,6 +366,10 @@ export default function App() {
         pendingImport={pendingImport}
         onImport={startImport}
         onDismissImport={() => setPendingImport(null)}
+        pendingTrack={pendingTrack}
+        onTrack={() => importTrack(pendingTrack)}
+        onDismissTrack={() => setPendingTrack(null)}
+        onScanned={importTrack}
       />
     );
   }
@@ -334,9 +387,8 @@ export default function App() {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 14px calc(30px + env(safe-area-inset-bottom))" }}>{body}</div>
       {printing && (
         <div id="print-root" style={{ position: "fixed", left: -30000, top: 0 }}>
-          {printing.sets.map((s, i) =>
-            s.startTime ? <Sheet key={i} match={printing} set={s} st={replay(s, printing.sets.slice(0, i))} /> : null
-          )}
+          {printing.mode !== "tracker" &&
+            printing.sets.map((s, i) => (s.startTime ? <Sheet key={i} match={printing} set={s} st={replay(s, printing.sets.slice(0, i))} /> : null))}
           <TrackerSheet match={printing} />
         </div>
       )}
@@ -345,7 +397,8 @@ export default function App() {
 }
 
 // ── home ────────────────────────────────────────────────────────────────────
-function HomeScreen({ data, update, setView, pendingImport, onImport, onDismissImport }) {
+function HomeScreen({ data, update, setView, pendingImport, onImport, onDismissImport, pendingTrack, onTrack, onDismissTrack, onScanned }) {
+  const [scanning, setScanning] = useState(false);
   const create = () => {
     const m = makeMatch();
     update((d) => ({ ...d, matches: [m, ...d.matches] }));
@@ -378,9 +431,32 @@ function HomeScreen({ data, update, setView, pendingImport, onImport, onDismissI
           </div>
         </div>
       )}
-      <button style={btn(C.accent, "#1a0a0f", { width: "100%", padding: 14, fontSize: 16, marginBottom: 18 })} onClick={create}>
-        + New match
-      </button>
+      {pendingTrack && (
+        <div style={{ background: C.accentSoft, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>Libero tracking — set {pendingTrack.set.number}</div>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            {pendingTrack.header.visitor || "Visitor"} at {pendingTrack.header.home || "Home"}
+            {pendingTrack.header.date ? ` · ${pendingTrack.header.date}` : ""} — both lineups from the scorer's tablet
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={btn(C.accent, "#1a0a0f", { flex: 1 })} onClick={onTrack}>
+              Start tracking
+            </button>
+            <button style={btn()} onClick={onDismissTrack}>
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        <button style={btn(C.accent, "#1a0a0f", { flex: 1, padding: 14, fontSize: 16 })} onClick={create}>
+          + New match
+        </button>
+        <button style={btn(C.card2, C.text, { flex: 1, padding: 14, fontSize: 15 })} onClick={() => setScanning(true)}>
+          Libero tracker: scan QR
+        </button>
+      </div>
+      {scanning && <ScanPanel onClose={() => setScanning(false)} onResult={(pl) => { setScanning(false); onScanned(pl); }} />}
       {data.matches.length === 0 && <div style={{ color: C.dim, textAlign: "center", marginTop: 30 }}>No matches yet.</div>}
       {data.matches.map((m) => {
         const won = matchTally(m);
@@ -389,6 +465,7 @@ function HomeScreen({ data, update, setView, pendingImport, onImport, onDismissI
           <div key={m.id} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }} onClick={() => setView({ name: "match", matchId: m.id })}>
               <div style={{ fontSize: 12, color: C.dim }}>
+                {m.mode === "tracker" && <span style={{ color: C.accent, fontWeight: 700 }}>LIBERO TRACKER · </span>}
                 {m.header.date} · {m.header.level}
                 {live && <span style={{ color: C.gold, fontWeight: 700 }}> · IN PROGRESS</span>}
               </div>
@@ -416,7 +493,9 @@ function HomeScreen({ data, update, setView, pendingImport, onImport, onDismissI
 }
 
 // ── match: header and sets ──────────────────────────────────────────────────
-function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
+function MatchScreen({ match, updateMatch, setView, onExport, exporting, onScanned }) {
+  const tracker = match.mode === "tracker";
+  const [scanning, setScanning] = useState(false);
   const h = match.header;
   const setH = (k, v) => updateMatch(match.id, (m) => ({ ...m, header: { ...m.header, [k]: v } }));
   const won = matchTally(match);
@@ -429,11 +508,14 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
     const n = match.sets.length + 1;
     const prev = match.sets[match.sets.length - 1];
     const deciding = n === (match.bestOf || 5);
-    const s = newSet(n, {
-      left: prev ? other(prev.left) : "V",
-      firstServe: prev ? other(prev.firstServe) : "V",
-      target: deciding ? match.decidingTarget || 15 : 25,
-    });
+    const s = {
+      ...newSet(n, {
+        left: prev ? other(prev.left) : "V",
+        firstServe: prev ? other(prev.firstServe) : "V",
+        target: deciding ? match.decidingTarget || 15 : 25,
+      }),
+      ...(tracker ? { trackerOnly: true } : {}),
+    };
     updateMatch(match.id, (m) => ({ ...m, sets: [...m.sets, s] }));
     setView({ name: "setup", matchId: match.id, setIdx: n - 1 });
   };
@@ -445,13 +527,14 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
       </button>
       <h2 style={{ margin: "0 0 12px", fontSize: 20 }}>
         {h.visitor || "Visitor"} at {h.home || "Home"}
+        {tracker && <div style={{ fontSize: 13, color: C.accent, marginTop: 2 }}>Libero tracker</div>}
       </h2>
 
       {match.sets.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           {match.sets.map((s, i) => {
             const st = replay(s, match.sets.slice(0, i));
-            const status = s.ended ? "Final" : s.startTime ? "In progress" : "Setting up";
+            const status = s.notTracked ? "Not tracked" : s.ended ? "Final" : s.startTime ? "In progress" : "Setting up";
             return (
               <button
                 key={i}
@@ -460,23 +543,30 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
               >
                 <span style={{ width: 54, color: C.dim }}>Set {s.number}</span>
                 <span style={{ flex: 1 }}>
-                  {name("H")} {st.score.H} – {st.score.V} {name("V")}
+                  {tracker ? `${name("V")} at ${name("H")}` : `${name("H")} ${st.score.H} – ${st.score.V} ${name("V")}`}
                 </span>
                 <span style={{ fontSize: 12, color: s.ended ? C.green : C.gold }}>{status}</span>
               </button>
             );
           })}
-          <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>
-            Sets won: {name("H")} {won.H} – {won.V} {name("V")}
-            {decided && <b style={{ color: C.green }}> · Match over</b>}
-          </div>
+          {!tracker && (
+            <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>
+              Sets won: {name("H")} {won.H} – {won.V} {name("V")}
+              {decided && <b style={{ color: C.green }}> · Match over</b>}
+            </div>
+          )}
         </div>
       )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
-        {(!last || last.ended) && !decided && (
-          <button style={btn(C.accent, "#1a0a0f", { flex: 1, padding: 14 })} onClick={addSet}>
-            Set up set {match.sets.length + 1}
+        {tracker && (!last || last.ended) && match.sets.length < (match.bestOf || 5) && (
+          <button style={btn(C.accent, "#1a0a0f", { flex: 1, padding: 14 })} onClick={() => setScanning(true)}>
+            Scan set {match.sets.length + 1} from the scorer
+          </button>
+        )}
+        {(!last || last.ended) && !decided && match.sets.length < Math.max(match.bestOf || 5, 1) && (
+          <button style={btn(tracker ? C.card2 : C.accent, tracker ? C.text : "#1a0a0f", { flex: 1, padding: 14 })} onClick={addSet}>
+            Set up set {match.sets.length + 1}{tracker ? " by hand" : ""}
           </button>
         )}
         {last && !last.ended && (
@@ -486,10 +576,11 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
         )}
         {match.sets.some((s) => s.startTime) && (
           <button style={btn(C.card2, C.text, { flex: 1, padding: 14 })} onClick={onExport} disabled={exporting}>
-            {exporting ? "Making PDF…" : "Save score sheets (PDF)"}
+            {exporting ? "Making PDF…" : tracker ? "Save tracking sheet (PDF)" : "Save score sheets (PDF)"}
           </button>
         )}
       </div>
+      {scanning && <ScanPanel onClose={() => setScanning(false)} onResult={(pl) => { setScanning(false); onScanned(pl); }} />}
 
       <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 }}>
         <div style={{ fontWeight: 800, marginBottom: 10 }}>Header</div>
@@ -562,6 +653,7 @@ function MatchScreen({ match, updateMatch, setView, onExport, exporting }) {
 // ── set setup: sides, first serve, lineups ──────────────────────────────────
 function SetupScreen({ match, idx, updateMatch, setView }) {
   const set = match.sets[idx];
+  const [showQr, setShowQr] = useState(false);
   if (!set) return null;
   const prev = match.sets[idx - 1];
   const name = (t) => (t === "H" ? match.header.home || "Home" : match.header.visitor || "Visitor");
@@ -684,7 +776,13 @@ function SetupScreen({ match, idx, updateMatch, setView }) {
       <button disabled={incomplete} style={btn(incomplete ? C.card2 : C.accent, incomplete ? C.dim : "#1a0a0f", { width: "100%", padding: 15, fontSize: 16, marginTop: 6 })} onClick={start}>
         {incomplete ? "Enter all six for both teams" : problems.length ? "Start the set anyway" : "Start the set (first serve)"}
       </button>
+      {match.mode !== "tracker" && (
+        <button disabled={incomplete} style={btn(C.card2, incomplete ? C.dim : C.text, { width: "100%", padding: 13, marginTop: 8, opacity: incomplete ? 0.5 : 1 })} onClick={() => setShowQr(true)}>
+          Show QR code for the libero tracker
+        </button>
+      )}
       <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>Starting records the start time. Penalties before the set (late lineup, etc.) go in as comments once it's open, at 0 – 0.</div>
+      {showQr && <QrPanel match={match} set={set} onClose={() => setShowQr(false)} />}
     </>
   );
 }
@@ -693,7 +791,9 @@ function SetupScreen({ match, idx, updateMatch, setView }) {
 function describe(ev, name) {
   switch (ev.type) {
     case "rally":
-      return `Point ${name(ev.winner)}`;
+      return ev.sideout ? `Side-out: ${name(ev.winner)} serves` : `Point ${name(ev.winner)}`;
+    case "switch":
+      return "Sides switched";
     case "sub":
       return `${ev.exceptional ? "Exceptional sub" : "Sub"} ${name(ev.team)} ${ev.pairs.map((p) => `#${p.in} for #${p.out}`).join(", ")}`;
     case "timeout":
@@ -939,6 +1039,9 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
         <button style={btn(C.card2, C.text, { flex: 1, ...small })} onClick={() => setPanel({ kind: "check" })}>
           Lineup check
         </button>
+        <button style={btn(C.card2, C.text, { flex: 1, ...small })} onClick={() => setPanel({ kind: "qr" })}>
+          QR for tracker
+        </button>
         <button disabled={!last || locked} style={btn(C.card2, last && !locked ? C.text : C.dim, { flex: 2, ...small, opacity: last && !locked ? 1 : 0.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })} onClick={undo}>
           ↶ Undo{last ? `: ${describe(last, name)}` : ""}
         </button>
@@ -948,6 +1051,7 @@ function LiveScreen({ match, idx, updateMatch, setView, onExport, exporting }) {
       </>
       )}
 
+      {panel?.kind === "qr" && <QrPanel match={match} set={set} onClose={() => setPanel(null)} />}
       {panel?.kind === "liberoIn" && (
         <LiberoInPanel st={st} team={panel.team} liberos={liberosOf(panel.team)} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />
       )}
@@ -1113,6 +1217,342 @@ function LiberoInPanel({ st, team, liberos, name, onClose, onRecord }) {
         {warnings.length ? "Record anyway (tell the R2)" : player ? `Libero #${libero} in for #${player}` : "Pick the player she replaces"}
       </button>
     </Panel>
+  );
+}
+
+// ── handing a set to the libero tracker ─────────────────────────────────────
+function QrPanel({ match, set, onClose }) {
+  const url = useMemo(() => handoffUrl(encodeSetHandoff(match, set)), [match, set]);
+  const svg = useMemo(() => qrSvg(url), [url]);
+  const name = (t) => (t === "H" ? match.header.home || "Home" : match.header.visitor || "Visitor");
+  return (
+    <Panel title={`Set ${set.number} — for the libero tracker`} onClose={onClose}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 10, width: "min(78vw, 360px)", aspectRatio: "1", margin: "0 auto 12px" }} dangerouslySetInnerHTML={{ __html: svg }} />
+      <div style={{ fontSize: 14, lineHeight: 1.45 }}>
+        On the tracker's tablet, open Score Sheet and tap <b>Libero tracker: scan QR</b> — or just point its <b>Camera app</b> at this code and open the link.
+      </div>
+      <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>
+        Carries both lineups, liberos and captains for set {set.number}, which side each team is on and who serves first ({name(set.firstServe)}). Show a new code each set — lineups change.
+      </div>
+    </Panel>
+  );
+}
+
+function ScanPanel({ onClose, onResult }) {
+  const videoRef = useRef(null);
+  const resultRef = useRef(onResult);
+  resultRef.current = onResult;
+  const [error, setError] = useState("");
+  const [wrongCode, setWrongCode] = useState(false);
+  useEffect(() => {
+    let stream = null;
+    let timer = null;
+    let dead = false;
+    let detector = null;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const stop = () => {
+      dead = true;
+      clearTimeout(timer);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("no camera API");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        if (dead) return stop();
+        const v = videoRef.current;
+        v.setAttribute("playsinline", "");
+        v.muted = true;
+        v.srcObject = stream;
+        await v.play().catch(() => {});
+        // The built-in detector where there is one (Chrome/Android); jsQR
+        // everywhere else — iPad Safari has no BarcodeDetector.
+        try {
+          if ("BarcodeDetector" in window) {
+            const formats = (await window.BarcodeDetector.getSupportedFormats?.()) || ["qr_code"];
+            if (formats.includes("qr_code")) detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+          }
+        } catch {
+          detector = null;
+        }
+        const tick = async () => {
+          if (dead) return;
+          if (v.readyState >= 2 && v.videoWidth) {
+            let text = null;
+            try {
+              if (detector) {
+                const found = await detector.detect(v);
+                text = found[0]?.rawValue || null;
+              } else {
+                const k = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+                canvas.width = Math.round(v.videoWidth * k);
+                canvas.height = Math.round(v.videoHeight * k);
+                ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+                const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                text = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" })?.data || null;
+              }
+            } catch {
+              /* a bad frame — try the next one */
+            }
+            if (text) {
+              const pl = handoffFromText(text);
+              if (pl) {
+                stop();
+                resultRef.current(pl);
+                return;
+              }
+              setWrongCode(true);
+            }
+          }
+          timer = setTimeout(tick, 150);
+        };
+        tick();
+      } catch {
+        setError("The camera isn't available here, or permission was declined.");
+      }
+    })();
+    return stop;
+  }, []);
+  return (
+    <Panel title="Scan the scorer's QR code" onClose={onClose}>
+      {error ? (
+        <Warnings
+          list={[error, "Instead: open this tablet's Camera app, point it at the code on the scorer's tablet, and open the link it shows."]}
+        />
+      ) : (
+        <>
+          <video ref={videoRef} style={{ width: "100%", borderRadius: 12, background: "#000", aspectRatio: "4 / 3", objectFit: "cover" }} />
+          <div style={{ fontSize: 13, color: wrongCode ? C.gold : C.dim, marginTop: 8 }}>
+            {wrongCode ? "That's a QR code, but not one from the Score Sheet's scorer screen." : "Point the camera at the code on the scorer's tablet (Set up → Show QR code, or QR for tracker)."}
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+// ── the libero tracker's tablet ─────────────────────────────────────────────
+// Its own screen, because the job is different: no points, no time-outs, no
+// cards. The tracker follows ROTATION by tapping each side-out (one button —
+// it's always the receiving team that takes over the serve) and records
+// libero replacements and substitutions. Same engine underneath: a side-out
+// is a rally won by the receiving team on a `trackerOnly` set, which never
+// ends on "score" (see replay).
+function TrackerLiveScreen({ match, idx, updateMatch, setView, onExport, exporting, onScanned }) {
+  const set = match.sets[idx];
+  const prior = useMemo(() => match.sets.slice(0, idx), [match.sets, idx]);
+  const st = useMemo(() => (set ? replay(set, prior) : null), [set, prior]);
+  const [panel, setPanel] = useState(null);
+  const [mode, setMode] = useState("controls");
+  useWakeLock(!!set && !set.ended);
+  if (!set || !st) return null;
+
+  const name = (t) => (t === "H" ? match.header.home || "Home" : match.header.visitor || "Visitor");
+  const deciding = set.number === (match.bestOf || 5);
+  const switchRule = deciding && set.target === 15 && match.switchAt8 !== false;
+  const switched = sidesSwitch(match, set) && st.switchAt != null;
+  const L = switched ? other(set.left) : set.left;
+  const R = other(L);
+  const patch = (fn) => updateMatch(match.id, (m) => ({ ...m, sets: m.sets.map((x, i) => (i === idx ? fn(x) : x)) }));
+  const push = (ev) => patch((x) => ({ ...x, events: [...x.events, { ...ev, at: Date.now() }] }));
+  const undo = () => patch((x) => ({ ...x, events: x.events.slice(0, -1) }));
+  const last = set.events[set.events.length - 1];
+  const s = st.serving;
+  const locked = set.ended;
+  const liberosOf = (t) => (set.teams[t].noLibero ? [] : [st.liberos[t][st.liberos[t].length - 1], num(set.teams[t].libero2)].filter(Boolean));
+  const hasLibero = (t) => liberosOf(t).length > 0;
+  const liberoAct = (ev) => {
+    const w = liberoWarnings(st, ev.team, ev);
+    if (w.length) setPanel({ kind: "liberoWarn", ev, warnings: w });
+    else push(ev);
+  };
+  const small = { padding: "11px 6px", fontSize: 13 };
+
+  const head = (t) => {
+    const chk = lineupCheck(st, t);
+    const serving = s === t;
+    const on = st.lib[t];
+    return (
+      <div key={t} style={{ flex: 1, minWidth: 0, background: serving ? C.accentSoft : C.card, border: `1px solid ${serving ? C.accent : C.line}`, borderRadius: 12, padding: 10, textAlign: "center" }}>
+        <div style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name(t)}</div>
+        <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.5, color: serving ? C.accent : C.dim, margin: "4px 0" }}>{serving ? "SERVING" : "RECEIVING"}</div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>
+          #{chk.order[0]} <span style={{ fontSize: 13, fontFamily: "Georgia, serif", color: C.dim }}>({ROMAN[st.nextRow[t]]})</span>
+        </div>
+        <div style={{ fontSize: 11, color: C.dim }}>{serving ? "serving now" : "serves next"}</div>
+        <div style={{ fontSize: 12, marginTop: 6, color: on ? C.accent : C.dim, fontWeight: on ? 700 : 400 }}>
+          {on ? `L #${on.libero} in for #${currentNumber(st, t, on.row)}` : hasLibero(t) ? "Libero off" : "No libero"}
+        </div>
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>Subs {st.subs[t]}/{SUB_LIMIT}</div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <button style={btn(C.card2, C.dim, { padding: "7px 10px", fontSize: 13 })} onClick={() => setView({ name: "match", matchId: match.id })}>
+          ‹ Match
+        </button>
+        <div style={{ flex: 1, fontWeight: 800 }}>
+          Set {set.number} <span style={{ color: C.accent, fontWeight: 600, fontSize: 13 }}>· libero tracking</span>
+        </div>
+      </div>
+      <div style={{ marginBottom: 10 }}>
+        <Seg options={[["controls", "Tracking"], ["libero", "Libero sheet"]]} value={mode} onChange={setMode} />
+      </div>
+
+      {mode === "libero" ? (
+        <ScaledSheet pageWidth={TRACK_W}>
+          <TrackerSheet match={match} />
+        </ScaledSheet>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>{[L, R].map(head)}</div>
+          {switchRule && (
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: C.dim, marginBottom: 10 }}>
+              <input type="checkbox" checked={!!set.noSwitch} onChange={(e) => patch((x) => ({ ...x, noSwitch: e.target.checked }))} />
+              Teams did not switch sides at 8 this set
+            </label>
+          )}
+          {locked ? (
+            <div style={{ background: C.card, border: `1px solid ${C.green}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, color: C.green }}>Set {set.number} done — ended {fmtTime(set.endTime)}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {set.number < (match.bestOf || 5) && (
+                  <button style={btn(C.accent, "#1a0a0f", { flex: 1 })} onClick={() => setPanel({ kind: "scan" })}>
+                    Scan set {set.number + 1}
+                  </button>
+                )}
+                <button style={btn(C.card2, C.text, { flex: 1 })} onClick={onExport} disabled={exporting}>
+                  {exporting ? "Making PDF…" : "Save tracking sheet (PDF)"}
+                </button>
+                <ConfirmButton style={btn(C.card2, C.dim)} armedLabel="Reopen it?" onConfirm={() => patch((x) => ({ ...x, ended: false, endTime: null }))}>
+                  Reopen set
+                </ConfirmButton>
+              </div>
+            </div>
+          ) : (
+            <>
+              {st.libPrompts.map((p, i) => (
+                <div key={i} style={{ background: C.goldSoft, border: `1px solid ${C.gold}`, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, color: C.gold, fontWeight: 700, marginBottom: 8 }}>
+                    {name(p.team)}: {p.text}
+                  </div>
+                  <button style={btn(C.gold, "#1a1406", { width: "100%" })} onClick={() => push({ type: "libero", team: p.team, dir: "out", player: currentNumber(st, p.team, st.lib[p.team].row) })}>
+                    Record #{currentNumber(st, p.team, st.lib[p.team].row)} back in for the libero
+                  </button>
+                </div>
+              ))}
+              {switchRule && !set.noSwitch && st.switchAt == null && (
+                <button style={btn(C.goldSoft, C.gold, { width: "100%", marginBottom: 8, borderColor: C.gold })} onClick={() => push({ type: "switch" })}>
+                  Teams switched sides (8 points)
+                </button>
+              )}
+              {switched && st.switchAt === set.events.length - 1 && (
+                <div style={{ fontSize: 13, color: C.gold, fontWeight: 700, textAlign: "center", marginBottom: 8 }}>Sides switched — the screen has switched with them.</div>
+              )}
+              <button
+                onClick={() => push({ type: "rally", winner: other(s), sideout: true })}
+                style={btn(C.blue, "#0b0f14", { width: "100%", padding: "22px 8px", fontSize: 19, marginBottom: 4 })}
+              >
+                Side-out → {name(other(s))} serves
+              </button>
+              <div style={{ fontSize: 11, color: C.dim, textAlign: "center", marginBottom: 10 }}>Tap every time the serve changes sides. Points aren't needed here — the scorer keeps those.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                {[L, R].map((t) => {
+                  const on = st.lib[t];
+                  if (!hasLibero(t)) return <div key={t} style={{ fontSize: 11, color: C.dim, textAlign: "center", alignSelf: "center" }}>{name(t).slice(0, 14)}: no libero</div>;
+                  if (!on)
+                    return (
+                      <button key={t} style={btn(C.accentSoft, C.accent, { ...small, borderColor: C.accent })} onClick={() => setPanel({ kind: "liberoIn", team: t })}>
+                        Libero in · {name(t).slice(0, 10)}
+                      </button>
+                    );
+                  const back = currentNumber(st, t, on.row);
+                  const other2 = liberosOf(t).find((x) => x !== on.libero);
+                  return (
+                    <div key={t} style={{ display: "flex", gap: 4 }}>
+                      <button style={btn(C.accentSoft, C.accent, { flex: 1, padding: "11px 4px", fontSize: 13, borderColor: C.accent })} onClick={() => liberoAct({ type: "libero", team: t, dir: "out", player: back })}>
+                        L{on.libero} out · #{back} in
+                      </button>
+                      {other2 && (
+                        <button style={btn(C.card2, C.text, { padding: "11px 6px", fontSize: 13 })} onClick={() => push({ type: "libero", team: t, dir: "swap", libero: other2 })}>
+                          ⇄{other2}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                <button style={btn(C.card2, C.text, small)} onClick={() => setPanel({ kind: "sub", team: L })}>
+                  Sub {name(L).slice(0, 10)}
+                </button>
+                <button style={btn(C.card2, C.text, small)} onClick={() => setPanel({ kind: "sub", team: R })}>
+                  Sub {name(R).slice(0, 10)}
+                </button>
+              </div>
+            </>
+          )}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <button style={btn(C.card2, C.text, { flex: 1, ...small })} onClick={() => setPanel({ kind: "check" })}>
+              Lineup check
+            </button>
+            <button disabled={!last || locked} style={btn(C.card2, last && !locked ? C.text : C.dim, { flex: 2, ...small, opacity: last && !locked ? 1 : 0.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })} onClick={undo}>
+              ↶ Undo{last ? `: ${describe(last, name)}` : ""}
+            </button>
+            {!locked && (
+              <ConfirmButton style={btn(C.card2, C.text, { flex: 1, ...small })} armedLabel={`End set ${set.number}?`} onConfirm={() => patch((x) => ({ ...x, ended: true, endTime: Date.now() }))}>
+                End set
+              </ConfirmButton>
+            )}
+          </div>
+          <ScaledSheet pageWidth={TRACK_W}>
+            <TrackerSheet match={match} />
+          </ScaledSheet>
+        </>
+      )}
+
+      {panel?.kind === "scan" && <ScanPanel onClose={() => setPanel(null)} onResult={(pl) => { setPanel(null); onScanned(pl); }} />}
+      {panel?.kind === "sub" && <SubPanel st={st} team={panel.team} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />}
+      {panel?.kind === "liberoIn" && (
+        <LiberoInPanel st={st} team={panel.team} liberos={liberosOf(panel.team)} name={name} onClose={() => setPanel(null)} onRecord={(ev) => { push(ev); setPanel(null); }} />
+      )}
+      {panel?.kind === "liberoWarn" && (
+        <Panel title="Libero replacement" onClose={() => setPanel(null)}>
+          <Warnings list={panel.warnings} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={btn(C.card2, C.text, { flex: 1 })} onClick={() => setPanel(null)}>
+              Don't record
+            </button>
+            <button style={btn(C.card2, C.gold)} onClick={() => { push(panel.ev); setPanel(null); }}>
+              Record anyway
+            </button>
+          </div>
+        </Panel>
+      )}
+      {panel?.kind === "check" && (
+        <Panel title="Lineup check" onClose={() => setPanel(null)}>
+          {[L, R].map((t) => {
+            const chk = lineupCheck(st, t);
+            return (
+              <div key={t} style={{ background: C.bg, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                  {name(t)} <span style={{ color: C.dim, fontWeight: 500 }}>· {s === t ? "serving" : "receiving"}</span>
+                </div>
+                <div style={{ fontSize: 15, lineHeight: 1.5 }}>
+                  "{chk.lead} is <b>#{chk.order[0]}</b>, followed by {chk.order.slice(1).map((n) => `#${n}`).join(", ")}."
+                </div>
+                <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>
+                  Libero: {liberosOf(t).length ? liberosOf(t).map((x) => `#${x}`).join(" / ") : "none"}
+                  {st.lib[t] && ` — #${st.lib[t].libero} on court for #${currentNumber(st, t, st.lib[t].row)} (${ROMAN[st.lib[t].row]})`}
+                </div>
+              </div>
+            );
+          })}
+        </Panel>
+      )}
+    </>
   );
 }
 

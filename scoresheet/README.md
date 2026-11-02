@@ -41,3 +41,11 @@ Vercel gives it a different address, change that constant to match.
 The same app keeps the libero tracking sheet (laid out like the MIAA form):
 tap "Libero in" / "L out" as replacements happen, and the PDF gets a portrait
 tracking page after the score sheets. `test/libero.test.mjs` covers the rules.
+
+## Two tablets
+
+The libero tracker can run on a second tablet: on the scorer's tablet, each
+set's setup has **Show QR code for the libero tracker** (and the live screen
+has **QR for tracker**). The tracker's tablet taps **Libero tracker: scan QR**
+(or points its Camera app at the code). No network needed. The tracker taps
+each side-out to follow the rotation and records libero replacements and subs.

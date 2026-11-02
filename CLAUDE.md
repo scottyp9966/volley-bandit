@@ -1767,6 +1767,51 @@ this. Crimson icon (`#8C1C3A`), built by `design/icons/build.py` like the rest.
     blank form and a video summary, not a worked example like the scoring
     handbook's. Whether the S box takes an X or a circle, and exactly how the
     tracker marks a libero-for-libero exchange, were judgment calls.
+- **Two tablets: scorer and libero tracker, joined by a QR code per set.**
+  The coach expects the libero tracker on a separate tablet so officials can
+  review each. Decided with him: live sync is a NICE-to-have, not a need —
+  the two sheets are independent records by design (the handbook has the R2
+  cross-check the lineup against the tracker, and calls the scorer's libero
+  marks a backup to the tracker), gyms often have no signal, and the app has
+  no server. What IS needed, and built:
+  - **Tracker mode** (`match.mode === "tracker"`, `TrackerLiveScreen` in
+    `App.jsx`): no points, no time-outs, no cards. One big "Side-out → X
+    serves" button (always the receiving team, so no wrong-team tap) drives
+    the rotation; libero in/out/⇄, subs, the side switch at 8 as a tap
+    (`{type:"switch"}`), End set as a ConfirmButton. Sets are
+    `trackerOnly`, which makes `replay` skip set-over and score-derived
+    switch detection — its "score" is a side-out count. The PDF is just the
+    portrait tracking page.
+  - **The handoff** (`src/handoff.js`): the scorer's set-up screen ("Show QR
+    code for the libero tracker") and live screen ("QR for tracker") show a QR
+    of `<origin>/#track=<base64url>` — header, format, and ONE set's setup
+    (sides, first serve, target, both lineups/liberos/captains; jersey numbers
+    only, no officials' or players' names). A URL so the tracker's built-in
+    Camera app can open it; the in-app "Libero tracker: scan QR" reads the
+    same code (BarcodeDetector where it exists, `jsqr` otherwise — iPad Safari
+    has no BarcodeDetector). The in-app path matters on an iPad with the app
+    installed to the home screen: the Camera app would open Safari, whose
+    storage is separate from the installed app's.
+  - Each team packs to one string ("4.2.6.1.8.7/10/12/0/10") — the JSON object
+    form made a 89x89 QR; this is 77x77 for typical names. `test/handoff.test`
+    rasterises the QR the way the app draws it and reads it back with jsQR.
+  - Imports land in the SAME tracker match via the scorer's match id
+    (`sourceId`); a set already tracked keeps its events and takes only the
+    new setup. Missing earlier sets are filled as `notTracked` placeholders so
+    set numbers and carry-over still line up.
+  - **The app listens for `hashchange`**, not just the load-time hash: a link
+    opened into a tab where the app is already running only changes the
+    fragment, with no reload — the browser check caught that the set-2 link
+    was silently ignored.
+  - Verified in two browsers at once (`pwcheck/handoff.mjs`): the scorer's
+    on-screen QR fed to the tracker as a FAKE CAMERA stream
+    (`--use-file-for-fake-video-capture` with an MJPEG built from a screenshot
+    of the code), scanned in-app; set 2 via the Camera-app link path; tracking
+    with the front-row prompt; 35 side-outs without the set ending; set 2
+    joining the same match; a one-page portrait PDF; a broken link ignored.
+  - The Volley Bandit side is unchanged: Settings → "Open Score Sheet with our
+    lineups" on the SCORER's tablet, then "Fill from Volley Bandit" per set;
+    the scorer types the opponent; the tracker gets everything from the QR.
 - **Not built yet** (the "second pass" agreed with the coach): removing points
   for an improper server or illegal player (X over points, handbook pp. 21–23),
   forfeits (p. 24). Late/inaccurate lineup and roster ARE in, as notes that can
