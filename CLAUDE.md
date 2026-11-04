@@ -1715,9 +1715,14 @@ this. Crimson icon (`#8C1C3A`), built by `design/icons/build.py` like the rest.
   `jerseyFor`) and the captain. Never the team code, never a name —
   `scoresheet/test/link.test.mjs` walks the payload against an allow-list of
   keys. Shown on assistant devices too, since it carries nothing of the team's.
-- **Live at `volley-bandit-scoresheet.vercel.app`** once the coach creates the
-  Vercel project (root directory `scoresheet`) — `SCORE_SHEET_URL` assumes that
-  name. Not deployed as of this writing; this environment can't reach Vercel.
+- **Live at `volley-bandit-scoresheet.vercel.app`** (confirmed by the coach,
+  2026-11-04) — its own Vercel project, root directory `scoresheet`, preset
+  Vite, no environment variables; matches `SCORE_SHEET_URL`. Setup gotchas
+  worth knowing next time: Vercel's importer sees this repo's several apps
+  and offers an "Import multi-service project" / vercel.json prompt — ignore
+  it and use "Import single project" under the app's folder instead; and
+  tapping that button RESETS the project name (to `volley-bandit-xxxx`), so
+  set the name after choosing the folder, not before.
 - **Libero tracking is built in, laid out like the MIAA "Volleyball Libero
   Tracking Sheet" (VB Form #3, 8/24/26)** — `src/Tracker.jsx`, one portrait
   page for the whole match, appended to the PDF after the score sheets. The
