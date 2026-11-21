@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Undo2, Plus, Minus, Check, X, Users, Activity, ClipboardList, Circle, Calendar, Copy, Trash2, ClipboardPaste, Pencil, ChevronsRight, LayoutGrid, Printer, Image as ImageIcon, HelpCircle, Settings as SettingsIcon, Repeat } from "lucide-react";
-import { doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, deleteDoc, writeBatch, query, where } from "firebase/firestore";
 import { db } from "./firebase.js";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
@@ -11457,6 +11457,21 @@ function AppInner() {
           );
         })
         .catch((err) => console.warn("Couldn't merge Player Eval ratings:", err));
+      // ...and its live pass/serve ratings, one document per tap in
+      // teams/{code}/ratings (see player-eval/src/liveRatings.js).
+      getDocs(query(collection(db, "teams", teamCode, "ratings"), where("playerId", "==", dropId)))
+        .then((snap) => {
+          const refs = [];
+          snap.forEach((d) => refs.push(d.ref));
+          const commits = [];
+          for (let i = 0; i < refs.length; i += WRITE_BATCH_LIMIT) {
+            const batch = writeBatch(db);
+            refs.slice(i, i + WRITE_BATCH_LIMIT).forEach((r) => batch.update(r, { playerId: keepId }));
+            commits.push(batch.commit());
+          }
+          return Promise.all(commits);
+        })
+        .catch((err) => console.warn("Couldn't merge Player Eval live ratings:", err));
       evalNote = " Player Eval ratings were moved across too.";
     }
 

@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { doc, getDoc, onSnapshot, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, onSnapshot, setDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 // Static, not a dynamic import — see the matching note in the main Volley
 // Bandit app: runtime chunk fetching in a constantly-redeployed PWA means a
 // stale client can request a hashed filename that no longer exists.
 import { registerSW } from "virtual:pwa-register";
-import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight, Pencil, ExternalLink } from "lucide-react";
+import { Users, ClipboardList, TrendingUp, Wand2, Plus, Trash2, X, ChevronRight, Pencil, ExternalLink, Activity } from "lucide-react";
+import LiveRate from "./LiveRate.jsx";
+import { SCALES, byPlayer, countOf, cleanRating, fmtAvg, mergeStatEntries, ratingsSince, statHighlights, statTotals, statsSince, summarize, STAT_KEYS } from "./liveRatings.js";
 
 // ---- Shared team-code data model -------------------------------------
 //
@@ -91,7 +93,8 @@ function usePersisted(key, initialValue) {
 // `roster` field, and always with `merge: true`, so Player Eval can never
 // clobber lineups/matches/score/etc. that Volley Bandit owns in that doc.
 function useVolleyBanditData(teamCode) {
-  const [data, setDataState] = useState({ roster: [], lineups: [], activeLineupId: null });
+  const EMPTY = { roster: [], lineups: [], activeLineupId: null, matches: [], activeMatchId: null };
+  const [data, setDataState] = useState(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const rosterRef = useRef(data.roster);
@@ -99,7 +102,7 @@ function useVolleyBanditData(teamCode) {
 
   useEffect(() => {
     if (!teamCode) {
-      setDataState({ roster: [], lineups: [], activeLineupId: null });
+      setDataState(EMPTY);
       setLoaded(false);
       return;
     }
@@ -109,7 +112,15 @@ function useVolleyBanditData(teamCode) {
       ref,
       (snap) => {
         const d = snap.exists() ? snap.data() : {};
-        setDataState({ roster: d.roster || [], lineups: d.lineups || [], activeLineupId: d.activeLineupId ?? null });
+        // matches/activeMatchId are read-only here, like lineups: the Live
+        // tab tags each rating with the match Volley Bandit has active.
+        setDataState({
+          roster: d.roster || [],
+          lineups: d.lineups || [],
+          activeLineupId: d.activeLineupId ?? null,
+          matches: Array.isArray(d.matches) ? d.matches : [],
+          activeMatchId: d.activeMatchId ?? null,
+        });
         setLoaded(true);
         setError(null);
       },
@@ -136,6 +147,97 @@ function useVolleyBanditData(teamCode) {
   };
 
   return [data, updateRoster, loaded, error];
+}
+
+// Live ratings: one document per tap in teams/{code}/ratings — see
+// liveRatings.js for the shape and why it isn't an array on playerEval.
+// Writes are fire-and-forget with offline persistence: the snapshot listener
+// fires straight away from the local cache (latency compensation), so a tap
+// shows up instantly with no signal and syncs when the gym's wifi comes back.
+function useRatings(teamCode) {
+  const [ratings, setRatings] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!teamCode) {
+      setRatings([]);
+      setLoaded(false);
+      return;
+    }
+    setLoaded(false);
+    const unsub = onSnapshot(
+      collection(db, "teams", teamCode, "ratings"),
+      (snap) => {
+        const next = [];
+        snap.forEach((d) => {
+          const e = cleanRating(d.data());
+          if (e) next.push(e);
+        });
+        next.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+        setRatings(next);
+        setLoaded(true);
+        setError(null);
+      },
+      (err) => {
+        console.warn("Ratings sync error:", err);
+        setLoaded(true);
+        setError("Couldn't load live ratings — check your connection.");
+      }
+    );
+    return () => unsub();
+  }, [teamCode]);
+
+  const fail = (err) => {
+    console.warn("Rating save error:", err);
+    setError("Couldn't save your last rating — check your connection.");
+  };
+  const ops = {
+    add(entry) {
+      if (!teamCode) return;
+      setDoc(doc(db, "teams", teamCode, "ratings", entry.id), entry).catch(fail);
+    },
+    remove(id) {
+      if (!teamCode) return;
+      deleteDoc(doc(db, "teams", teamCode, "ratings", id)).catch(fail);
+    },
+  };
+  return [ratings, ops, loaded, error];
+}
+
+// Volley Bandit's recorded stats, read-only: the stats collection plus any
+// legacy `log` array still sitting in data/logs (see mergeStatEntries). A
+// failure here is never fatal — Player Eval works fine without stats.
+function useVolleyBanditStats(teamCode) {
+  const [coll, setColl] = useState([]);
+  const [legacy, setLegacy] = useState([]);
+  useEffect(() => {
+    if (!teamCode) {
+      setColl([]);
+      setLegacy([]);
+      return;
+    }
+    const warn = (err) => console.warn("Stats read error:", err);
+    const u1 = onSnapshot(
+      collection(db, "teams", teamCode, "stats"),
+      (snap) => {
+        const next = [];
+        snap.forEach((d) => next.push(d.data()));
+        setColl(next);
+      },
+      warn
+    );
+    const u2 = onSnapshot(
+      doc(db, "teams", teamCode, "data", "logs"),
+      (snap) => setLegacy(snap.exists() && Array.isArray(snap.data().log) ? snap.data().log : []),
+      warn
+    );
+    return () => {
+      u1();
+      u2();
+    };
+  }, [teamCode]);
+  return useMemo(() => mergeStatEntries(legacy, coll), [legacy, coll]);
 }
 
 // The lineup app stores each lineup's slots at "rotation 1" and tracks how
@@ -786,9 +888,120 @@ function LineupRecommendList({ activeLineup, usingFallbackLineup, lineupSuggesti
   );
 }
 
+// Shown at the top of a player's evaluation: live ratings and recorded stats
+// since her previous evaluation (or all season, for a first one).
+function SinceLastCard({ data }) {
+  const { firstEval, pass, serve, highlights } = data;
+  if (!pass.count && !serve.count && !highlights.length) return null;
+  const line = (s, skill) =>
+    s.count ? (
+      <div style={{ fontSize: 13, marginTop: 4 }}>
+        {SCALES[skill].label}: <b style={{ color: "#e8622c" }}>{fmtAvg(s.avg)}</b>
+        <span style={{ color: "#6b7383" }}> / {s.max} over {countOf(s.count, skill)}</span>
+      </div>
+    ) : null;
+  return (
+    <div style={{ background: "#1a2029", border: "1px solid #2c3542", borderRadius: 10, padding: "10px 12px", marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7383", letterSpacing: 0.5 }}>
+        {firstEval ? "THIS SEASON SO FAR" : "SINCE LAST EVALUATION"}
+      </div>
+      {line(pass, "pass")}
+      {line(serve, "serve")}
+      {highlights.length > 0 && (
+        <div style={{ fontSize: 12, color: "#9aa3b2", marginTop: 4 }}>Volley Bandit: {highlights.join(" · ")}</div>
+      )}
+      <div style={{ fontSize: 11, color: "#6b7383", marginTop: 6 }}>For reference — your 1–5 ratings below are still yours to set.</div>
+    </div>
+  );
+}
+
+// Trends → Passing / Serving: season average per player from the Live tab,
+// with the share of each rating.
+function LiveTrend({ rows, skill, roster, ratings }) {
+  const scale = SCALES[skill];
+  const team = summarize(ratings, skill);
+  const byId = new Map(roster.map((p) => [p.id, p]));
+  const colorOf = (v) => (v === 0 ? "#e2504f" : v === scale.max ? "#4fae6f" : v / scale.max >= 0.5 ? "#d9a43a" : "#9aa3b2");
+  const bar = (s) => (
+    <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", background: "#1a2029" }}>
+      {[...Array(scale.max + 1).keys()].reverse().map((v) => (s.dist[v] ? <div key={v} style={{ width: `${(s.dist[v] / s.count) * 100}%`, background: colorOf(v) }} /> : null))}
+    </div>
+  );
+  if (!team.count)
+    return <div style={{ fontSize: 13, color: "#6b7383" }}>No {scale.noun} ratings yet — rate them on the Live tab during a match or practice.</div>;
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 10 }}>
+        Season {scale.noun} rating (0–{scale.max}) from the Live tab, highest first. Team:{" "}
+        <b style={{ color: "#eef0f3" }}>{fmtAvg(team.avg)}</b> over {team.count}.
+      </div>
+      <div style={{ marginBottom: 16 }}>{bar(team)}</div>
+      {rows.map((r) => {
+        const p = byId.get(r.playerId);
+        return (
+          <div key={r.playerId} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+              <span>#{p?.num ?? "?"} {p ? displayName(p) : "Removed player"}</span>
+              <span>
+                <b style={{ color: "#e8622c" }}>{fmtAvg(r.avg)}</b>
+                <span style={{ color: "#6b7383" }}> · {r.count}</span>
+              </span>
+            </div>
+            {bar(r)}
+          </div>
+        );
+      })}
+      <div style={{ fontSize: 11, color: "#6b7383", marginTop: 8 }}>
+        {scale.values.map((x) => `${x.v} ${x.short}`).join(" · ")}. A handful of {scale.plural} is a small sample — read the count too.
+      </div>
+    </div>
+  );
+}
+
+// Trends → Stats: season totals recorded in Volley Bandit's Live screen.
+function StatsTrend({ rows }) {
+  if (!rows.length)
+    return <div style={{ fontSize: 13, color: "#6b7383" }}>No stats recorded in Volley Bandit for this team yet.</div>;
+  const used = STAT_KEYS.filter(([k]) => rows.some((r) => r.totals[k]));
+  const cell = { padding: "5px 4px", textAlign: "right", borderBottom: "1px solid #232a35", whiteSpace: "nowrap" };
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 10 }}>Season totals recorded in Volley Bandit — read live, nothing to import.</div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: "100%" }}>
+          <thead>
+            <tr style={{ color: "#6b7383" }}>
+              <th style={{ ...cell, textAlign: "left" }}>Player</th>
+              {used.map(([k, label]) => (
+                <th key={k} style={{ ...cell, fontWeight: 600 }}>{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ player, totals }) => (
+              <tr key={player.id}>
+                <td style={{ ...cell, textAlign: "left" }}>#{player.num} {displayName(player)}</td>
+                {used.map(([k]) => (
+                  <td key={k} style={{ ...cell, color: totals[k] ? "#eef0f3" : "#4a5260" }}>{totals[k]}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11, color: "#6b7383", marginTop: 8 }}>
+        Volley Bandit records kills and errors but not attack attempts, so hitting % isn't shown — the Live tab's ratings fill that gap for passing and serving.
+      </div>
+    </div>
+  );
+}
+
 function AppShell({ teamCode, onSwitchTeam }) {
-  const [{ roster, lineups, activeLineupId }, updateRoster, rosterLoaded, rosterError] = useVolleyBanditData(teamCode);
+  const [{ roster, lineups, activeLineupId, matches, activeMatchId }, updateRoster, rosterLoaded, rosterError] = useVolleyBanditData(teamCode);
   const [evaluations, updateEvaluations, evalLoaded, evalError] = useEvaluations(teamCode);
+  const [ratings, ratingOps, ratingsLoaded, ratingsError] = useRatings(teamCode);
+  const vbStats = useVolleyBanditStats(teamCode);
+  const [trendView, setTrendView] = useState("evals"); // "evals" | "pass" | "serve" | "stats"
 
   const [tab, setTab] = useState("roster");
   const [showAdd, setShowAdd] = useState(false);
@@ -806,6 +1019,15 @@ function AppShell({ teamCode, onSwitchTeam }) {
   // than showing a possibly-stale-but-real one.
   const activeLineup = lineups.find((l) => l.id === activeLineupId) || lineups[0] || null;
   const usingFallbackLineup = !!activeLineup && activeLineup.id !== activeLineupId;
+  // Who's on court per Volley Bandit's live rotation, plus the liberos —
+  // the Live tab puts these first.
+  const courtIds = useMemo(() => {
+    if (!activeLineup) return [];
+    const onCourt = currentOnCourtSlots(activeLineup);
+    const ids = [...["P1", "P2", "P3", "P4", "P5", "P6"].map((k) => onCourt[k]), ...(activeLineup.liberos || [])];
+    return [...new Set(ids.filter((id) => id != null))];
+  }, [activeLineup]);
+
   const lineupSuggestions = useMemo(
     () => buildLineupSuggestions(activeLineup, roster, evaluations),
     [activeLineup, roster, evaluations]
@@ -898,7 +1120,36 @@ function AppShell({ teamCode, onSwitchTeam }) {
       .sort((a, b) => (b.stats?.overall || 0) - (a.stats?.overall || 0));
   }, [sortedPlayers, evaluations, recFilter]);
 
-  const loading = !rosterLoaded || !evalLoaded;
+  // Season-long live ratings and recorded stats, per player, for Trends.
+  const passRows = useMemo(() => byPlayer(ratings, "pass"), [ratings]);
+  const serveRows = useMemo(() => byPlayer(ratings, "serve"), [ratings]);
+  const statRows = useMemo(() => {
+    const groups = new Map();
+    vbStats.forEach((e) => {
+      if (!groups.has(e.playerId)) groups.set(e.playerId, []);
+      groups.get(e.playerId).push(e);
+    });
+    return sortedPlayers.filter((p) => groups.has(p.id)).map((p) => ({ player: p, totals: statTotals(groups.get(p.id)) }));
+  }, [vbStats, sortedPlayers]);
+
+  // What's happened since this player's last evaluation — the live ratings
+  // and Volley Bandit stats a coach wants beside the 1–5 sliders. Never
+  // folded into the ratings automatically; the coach decides what they mean.
+  const sinceLast = useMemo(() => {
+    if (!evalPlayerId) return null;
+    const prior = evaluations.filter((e) => e.playerId === evalPlayerId).map((e) => new Date(e.date).getTime()).filter(Number.isFinite);
+    const since = prior.length ? Math.max(...prior) : 0;
+    const mine = ratingsSince(ratings.filter((e) => e.playerId === evalPlayerId), since);
+    const stats = statsSince(vbStats.filter((e) => e.playerId === evalPlayerId), since);
+    return {
+      firstEval: !prior.length,
+      pass: summarize(mine, "pass"),
+      serve: summarize(mine, "serve"),
+      highlights: statHighlights(statTotals(stats)),
+    };
+  }, [evalPlayerId, evaluations, ratings, vbStats]);
+
+  const loading = !rosterLoaded || !evalLoaded || !ratingsLoaded;
 
   return (
     <div
@@ -909,7 +1160,9 @@ function AppShell({ teamCode, onSwitchTeam }) {
         color: "#eef0f3",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         minHeight: "100vh",
-        overflow: "hidden",
+        // clip, not hidden: "hidden" makes this a scroll container, which
+        // stops the Live tab's sticky rating buttons sticking to the screen.
+        overflowX: "clip",
       }}
     >
       <div style={{ padding: "20px 20px 16px", borderBottom: "1px solid #232a35" }}>
@@ -952,8 +1205,8 @@ function AppShell({ teamCode, onSwitchTeam }) {
             </button>
           </div>
         </div>
-        {(rosterError || evalError) && (
-          <div style={{ fontSize: 11, color: "#e2504f", marginTop: 10 }}>{rosterError || evalError}</div>
+        {(rosterError || evalError || ratingsError) && (
+          <div style={{ fontSize: 11, color: "#e2504f", marginTop: 10 }}>{rosterError || evalError || ratingsError}</div>
         )}
       </div>
 
@@ -1109,6 +1362,8 @@ function AppShell({ teamCode, onSwitchTeam }) {
               <button onClick={() => setEvalPlayerId(null)} aria-label="Cancel evaluation" style={ghostBtn}><X size={14} /></button>
             </div>
 
+            {sinceLast && <SinceLastCard data={sinceLast} />}
+
             <div style={{ fontSize: 12, fontWeight: 600, color: "#e8622c", marginBottom: 10 }}>CORE SKILLS</div>
             {SKILLS.map((s) => (
               <RatingRow
@@ -1147,7 +1402,55 @@ function AppShell({ teamCode, onSwitchTeam }) {
           </div>
         )}
 
+        {!loading && tab === "live" && (
+          <LiveRate
+            roster={sortedPlayers}
+            courtIds={courtIds}
+            rotation={activeLineup?.currentRotation || null}
+            matches={matches}
+            activeMatchId={activeMatchId}
+            setNumber={activeLineup?.setNumber || 1}
+            ratings={ratings}
+            ops={ratingOps}
+            displayName={displayName}
+          />
+        )}
+
         {!loading && tab === "trends" && (
+          <div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+              {[
+                { id: "evals", label: "Evaluations" },
+                { id: "pass", label: "Passing" },
+                { id: "serve", label: "Serving" },
+                { id: "stats", label: "Stats" },
+              ].map((v) => (
+                <button
+                  key={v.id}
+                  onClick={() => setTrendView(v.id)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    border: trendView === v.id ? "1px solid #e8622c" : "1px solid #2c3542",
+                    background: trendView === v.id ? "#3a2013" : "#1a2029",
+                    color: trendView === v.id ? "#e8622c" : "#9aa3b2",
+                    cursor: "pointer",
+                  }}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+            {(trendView === "pass" || trendView === "serve") && (
+              <LiveTrend rows={trendView === "pass" ? passRows : serveRows} skill={trendView} roster={roster} ratings={ratings} />
+            )}
+            {trendView === "stats" && <StatsTrend rows={statRows} />}
+          </div>
+        )}
+
+        {!loading && tab === "trends" && trendView === "evals" && (
           <div>
             <div style={{ fontSize: 13, color: "#6b7383", marginBottom: 14 }}>
               Season averages, highest first
@@ -1225,6 +1528,7 @@ function AppShell({ teamCode, onSwitchTeam }) {
       <div style={{ display: "flex", borderTop: "1px solid #232a35" }}>
         {[
           { id: "roster", label: "Roster", icon: Users },
+          { id: "live", label: "Live", icon: Activity },
           { id: "evaluate", label: "Evaluate", icon: ClipboardList },
           { id: "trends", label: "Trends", icon: TrendingUp },
           { id: "recommend", label: "Recommend", icon: Wand2 },
@@ -1338,19 +1642,42 @@ function useSWUpdate() {
   const updateRef = useRef(null);
 
   useEffect(() => {
-    updateRef.current = registerSW({
-      onRegisteredSW(swUrl, registration) {
-        if (registration) {
-          setInterval(() => registration.update(), 30 * 60 * 1000);
-        }
-      },
-      onNeedRefresh() {
-        setNeedsRefresh(true);
-      },
-    });
+    // Every level is caught. A failed update check is normal on gym wifi,
+    // and in Volley Bandit an uncaught one ("sw.js load failed") took the
+    // live match screen down every 30 minutes — see its CLAUDE.md. The Live
+    // tab now makes this app a mid-match app too.
+    try {
+      updateRef.current = registerSW({
+        onRegisteredSW(swUrl, registration) {
+          if (registration) {
+            setInterval(() => {
+              try {
+                registration.update().catch(() => {});
+              } catch {
+                // offline — try again next time
+              }
+            }, 30 * 60 * 1000);
+          }
+        },
+        onRegisterError(err) {
+          console.warn("Service worker registration failed:", err);
+        },
+        onNeedRefresh() {
+          setNeedsRefresh(true);
+        },
+      });
+    } catch (err) {
+      console.warn("Service worker setup failed:", err);
+    }
   }, []);
 
-  const applyUpdate = () => updateRef.current?.(true);
+  const applyUpdate = () => {
+    try {
+      Promise.resolve(updateRef.current?.(true)).catch(() => window.location.reload());
+    } catch {
+      window.location.reload();
+    }
+  };
   const dismiss = () => setNeedsRefresh(false);
   return { needsRefresh, applyUpdate, dismiss };
 }
@@ -1392,13 +1719,13 @@ class ErrorBoundary extends React.Component {
     console.error("Caught by ErrorBoundary:", error, info);
   }
 
+  // Window-level errors and rejections are logged, NOT shown as a crash:
+  // only a real render crash (above) means the UI is broken. Treating a
+  // failed background fetch as fatal is what cost Volley Bandit a live match
+  // screen; with the Live tab this app runs mid-match too.
   componentDidMount() {
-    this.onRejection = (e) => {
-      this.setState((s) => (s.error ? s : { error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)), info: null }));
-    };
-    this.onError = (e) => {
-      this.setState((s) => (s.error ? s : { error: e.error instanceof Error ? e.error : new Error(e.message || "Script error"), info: null }));
-    };
+    this.onRejection = (e) => console.warn("Unhandled rejection:", e.reason);
+    this.onError = (e) => console.warn("Window error:", e.error || e.message);
     window.addEventListener("unhandledrejection", this.onRejection);
     window.addEventListener("error", this.onError);
   }

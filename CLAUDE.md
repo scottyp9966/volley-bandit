@@ -43,6 +43,34 @@ but shares data with it:
   constants that wire up the cross-links in each app's header/Settings.
 - If you change the shape of `roster`, `lineups`, or `activeLineupId` here,
   Player Eval reads that same shape — check it doesn't break there too.
+  It now also reads `matches` and `activeMatchId` (to tag live ratings) and
+  Volley Bandit's stat log (`stats` collection + legacy `logs.log`, read-only).
+- **Player Eval's Live tab** (2026-11-21) rates passes 0–3 and serves 0–4
+  per contact — tap a player, tap a number. One document per tap in
+  `teams/{code}/ratings/{id}` (`{ id, playerId, skill, value, matchId,
+  setNumber, at }`), for the same reason the stat log became a collection.
+  `mergePlayers` here remaps that collection's `playerId` too — if Player
+  Eval grows another collection keyed by player, add it there as well.
+  Decisions agreed with the coach, worth keeping:
+  - Live numbers are shown BESIDE the 1–5 evaluation ("since last
+    evaluation" card), never folded into it — the coach decides what they mean.
+  - Pass clears the selected player after a rating (it's someone different
+    almost every time); serve keeps her selected (she serves until side-out).
+  - Rating with nobody selected says so — no dead taps.
+  - Ratings with no match are "practice", grouped by local day — a real use
+    (rating passes in practice), not an error state.
+  - Player Eval's `ErrorBoundary` no longer treats window-level errors as a
+    crash, and `useSWUpdate` catches at every level — the same fix Volley
+    Bandit needed, made here because the Live tab makes this a mid-match app.
+  - CSV import from other stat apps is deliberately NOT built yet: waiting
+    on a sample export from the coach so it's built against real columns.
+  - Verified with `player-eval/test/liveRatings.test.mjs` (`npm test`) and a
+    browser harness at 390px (Firestore stubbed via Vite aliases for
+    `firebase/app`, `firebase/firestore` and `virtual:pwa-register`, config
+    `player-eval/vite.harness.pe.tmp.js`): on-court tiles from the live
+    rotation, tags, undo deleting the right document, another device's
+    rating appearing, a malformed one ignored, set vs match scope, practice,
+    sticky buttons, the since-last card, and the Trends views.
 
 ## Tournament Builder ("Tourney" tab)
 

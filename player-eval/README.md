@@ -63,12 +63,40 @@ tuned once you've seen it suggest a few real swaps.
 If no active lineup exists yet for the team code (or the team only uses
 Player Eval), Recommend falls back to the flat by-position ranking.
 
+## Live tab — rate passes and serves as they happen
+
+Tap a player, tap a number. Passes are rated 0–3 (3 perfect, 2 good, 1
+poor, 0 aced/shanked/overpassed) and serves 0–4 (4 ace, 3 tough, 2 in play,
+1 easy, 0 error) — the scales most programs and rating apps use. Players on
+court (Volley Bandit's active lineup at its live rotation, plus liberos)
+come first; the rating buttons stay pinned at the bottom of the screen.
+Each rating is tagged with the match Volley Bandit has active (or
+"Practice", grouped by day) and the set, and summarised per set, per match
+and for the season (Trends → Passing / Serving). It can run on a second
+device so an assistant rates while the head coach runs Volley Bandit.
+
+Stored as one document per tap in `teams/{code}/ratings/{id}` —
+`{ id, playerId, skill, value, matchId, setNumber, at }` — never an array on
+the `playerEval` doc, so two devices rating the same match can't overwrite
+each other. Pure logic is in `src/liveRatings.js`; `npm test` checks it.
+
+## Volley Bandit's stats, read live
+
+Trends → Stats shows season totals from Volley Bandit's stat log
+(`teams/{code}/stats`, plus any legacy `log` array in `data/logs`), and an
+evaluation opens with a "since last evaluation" card: live pass/serve
+averages and Volley Bandit stats since that player was last evaluated. Both
+are reference only — nothing is folded into the 1–5 ratings automatically.
+
 ## What's not built yet
 
 Carried over from the original project brief:
 
 - **Per-set evaluation granularity** — one evaluation per player per
   session for now.
+- **CSV import from other stat apps** (MaxPreps, Hudl, Balltime, SoloStats…)
+  — waiting on a sample export, so it's built against a real file's columns.
+- **Live attack and setting ratings** — passes and serves first.
 - **Trend recency** — the Trends tab still shows a flat season average by
   design (it's meant to show the whole season); only Recommend uses the
   recency-weighted score.
