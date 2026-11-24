@@ -9,7 +9,7 @@ import TournamentBuilder from "./TournamentBuilder.jsx";
 import { Trophy } from "lucide-react";
 import { COLORS, DARK_COLORS, LIGHT_COLORS, usePersisted, displayName, fullName, todayISO, jerseyFor, jerseyLabel } from "./shared.js";
 import { buildScoreSheetPayload, scoreSheetUrl } from "./scoreSheetLink.js";
-import { generateCodes, buildPublishedSet, entitlementsOf, playerInviteMessage, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
+import { generateCodes, buildPublishedSet, entitlementsOf, playerInviteMessage, publishStatus, CODE_STYLES, CODE_STYLE_NOTES } from "./playerAccess.js";
 import {
   generateAssistantCode,
   assistantAccessOf,
@@ -47,7 +47,7 @@ const APP_PASSCODE = "volley26";
 // rather than a stale cached build — shown at the bottom of Settings. Bumped
 // with each shipped change; the date is what actually matters (compare it to
 // "today" to know whether an update has really landed on that device yet).
-const APP_VERSION = "2026.11.02a";
+const APP_VERSION = "2026.11.24a";
 
 // Two palettes, switched via a Settings toggle. COLORS itself stays a
 // mutable object (not reassigned, just its properties updated in place) so
@@ -9812,6 +9812,7 @@ function SettingsSheet({
   publishPlayerStats,
   revokePlayerAccess,
   publishReport,
+  playerCardStatus,
   entitlements,
   roster,
   mergePlayers,
@@ -10435,6 +10436,36 @@ function SettingsSheet({
                 </div>
               </div>
             )}
+
+            {playerCodes.length > 0 && playerCardStatus ? (
+              <div
+                style={{
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  marginBottom: 8,
+                  padding: playerCardStatus.upToDate ? 0 : "8px 10px",
+                  borderRadius: 8,
+                  color: playerCardStatus.upToDate ? COLORS.green : COLORS.chalk,
+                  border: playerCardStatus.upToDate ? "none" : `1px solid ${COLORS.gold}`,
+                  background: playerCardStatus.upToDate ? "transparent" : COLORS.goldSoft,
+                }}
+              >
+                {playerCardStatus.oldest == null
+                  ? "Players' cards haven't been published yet — their links open to \"not found\" until you tap Publish."
+                  : playerCardStatus.upToDate
+                  ? `Players' cards are up to date (published ${new Date(playerCardStatus.oldest).toLocaleDateString(undefined, { month: "short", day: "numeric" })}).`
+                  : [
+                      `Players are seeing stats as of ${new Date(playerCardStatus.oldest).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
+                      playerCardStatus.statsSince
+                        ? ` — ${playerCardStatus.statsSince} stat${playerCardStatus.statsSince === 1 ? "" : "s"} recorded since aren't on their cards.`
+                        : ".",
+                      playerCardStatus.missing.length
+                        ? ` ${playerCardStatus.missing.length} player${playerCardStatus.missing.length === 1 ? " has" : "s have"} a code but no card yet.`
+                        : "",
+                      " Cards only update when you tap Publish — their links and codes stay the same.",
+                    ].join("")}
+              </div>
+            ) : null}
 
             {publishReport ? (
               <div style={{ fontSize: 11, color: /^Could not/.test(publishReport) ? COLORS.red : COLORS.green, marginBottom: 8 }}>
@@ -11295,6 +11326,45 @@ function AppInner() {
   const entitlements = entitlementsOf(mainDoc);
   const [publishReport, setPublishReport] = useState("");
 
+  // When each code's card was last published, read back from the published
+  // documents themselves rather than remembered here — that is what a player
+  // actually sees, and it works for cards published before this existed.
+  // Read once per change of the code list and after every publish/revoke;
+  // a failed read (no signal) just leaves the status unknown.
+  const [publishedAt, setPublishedAt] = useState(null);
+  const [publishCheck, setPublishCheck] = useState(0);
+  const codeKey = playerCodes.map((c) => c.code).join(",");
+  useEffect(() => {
+    if (assistantMode || !playerCodes.length) {
+      setPublishedAt(null);
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      playerCodes.map((c) =>
+        getDoc(doc(db, "playerAccess", c.code)).then((snap) => [c.code, snap.exists() ? snap.data().publishedAt ?? null : null])
+      )
+    )
+      .then((pairs) => !cancelled && setPublishedAt(Object.fromEntries(pairs)))
+      .catch((err) => {
+        console.warn("Couldn't check published cards:", err);
+        if (!cancelled) setPublishedAt(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeKey, publishCheck, assistantMode]);
+  const playerCardStatus = useMemo(
+    // codes of players since removed from the roster are never republished,
+    // so they'd read as "no card yet" forever — leave them out
+    () =>
+      publishedAt
+        ? publishStatus({ codes: playerCodes.filter((c) => roster.some((p) => p.id === c.playerId)), publishedAt, log })
+        : null,
+    [publishedAt, playerCodes, roster, log]
+  );
+
   const issuePlayerCodes = (style) => {
     const next = generateCodes(roster, style, playerCodes);
     setMainDoc((prev) => ({ ...prev, playerCodes: next, playerAccessStyle: style }));
@@ -11326,6 +11396,7 @@ function AppInner() {
       setPublishReport(
         `Published ${entries.length} player${entries.length === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}.`
       );
+      setPublishCheck((n) => n + 1);
     } catch (err) {
       setPublishReport(`Could not publish: ${err?.message || err}`);
     }
@@ -11346,6 +11417,7 @@ function AppInner() {
       }
       setMainDoc((prev) => ({ ...prev, playerCodes: [] }));
       setPublishReport("Player access revoked — every code has stopped working.");
+      setPublishCheck((n) => n + 1);
     } catch (err) {
       setPublishReport(`Could not revoke: ${err?.message || err}`);
     }
@@ -12447,6 +12519,7 @@ function AppInner() {
             publishPlayerStats={publishPlayerStats}
             revokePlayerAccess={revokePlayerAccess}
             publishReport={publishReport}
+            playerCardStatus={playerCardStatus}
             entitlements={entitlements}
             roster={roster}
             mergePlayers={mergePlayers}

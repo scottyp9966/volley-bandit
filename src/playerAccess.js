@@ -246,3 +246,23 @@ export function buildPublishedSet({ roster, codes, teamName, log, matches, statK
   });
   return out;
 }
+
+// How current the players' cards are. A card is a SNAPSHOT taken when the
+// coach taps Publish — it never updates by itself — so a link sent in
+// September shows September's numbers until the next publish. That is by
+// design (a half-finished match must not appear on a phone), but it was
+// invisible: a player reported her card "didn't have the rest of the
+// season", and nothing on the coach's side said it was out of date.
+//
+// `publishedAt` maps each code to the `publishedAt` read back from its
+// published document (null when there is no document). Stat ids are
+// `Date.now() + Math.random()`, so the floor of an id is when it was
+// recorded.
+export function publishStatus({ codes, publishedAt, log }) {
+  const times = (codes || []).map((c) => publishedAt?.[c.code] ?? null);
+  const missing = (codes || []).filter((c, i) => times[i] == null).map((c) => c.playerId);
+  const known = times.filter((t) => t != null);
+  const oldest = known.length ? Math.min(...known) : null;
+  const statsSince = oldest == null ? 0 : (log || []).filter((e) => Math.floor(Number(e?.id) || 0) > oldest).length;
+  return { oldest, missing, statsSince, upToDate: known.length > 0 && missing.length === 0 && statsSince === 0 };
+}

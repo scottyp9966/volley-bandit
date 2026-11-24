@@ -1591,6 +1591,19 @@ they are cheap now and expensive later, so don't undo them casually.
   appear on a player's phone. Revoking deletes the published documents AND
   drops the codes, so a handed-out code stops working rather than going quiet
   and reviving at the next publish.
+- **A card is a snapshot from the last Publish, and Settings now says how
+  old it is** (2026-11-24). A player reported that the link she was sent
+  mid-season "didn't have the rest of the season" — the code and link were
+  fine (codes never change), the card simply hadn't been republished. Nothing
+  on the coach's side showed that. `publishStatus` (`playerAccess.js`) reads
+  `publishedAt` back from each code's published document (the truth a player
+  sees, and it works for cards published before this existed), and the Player
+  Access section shows either "up to date" or a gold line: as-of date, how
+  many stats were recorded since, how many players have a code but no card.
+  Codes for players no longer on the roster are left out of that count, since
+  publish never writes them. Auto-publishing was NOT added — the "explicit,
+  never automatic" decision above still stands unless the coach changes it.
+  Verified in the harness (`pwcheck/pubstale.mjs`).
 - **Each code row in Settings has its own Send/Copy button**, which hands the
   share sheet (or the clipboard, where there isn't one) that player's whole
   message — built by `playerInviteMessage` in `playerAccess.js`, not typed out
